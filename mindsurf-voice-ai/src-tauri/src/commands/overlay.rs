@@ -148,7 +148,7 @@ fn reposition<R: Runtime>(
     let size = window.outer_size().map_err(|error| error.to_string())?;
     let scale = window.scale_factor().unwrap_or(1.0);
     let margin = (f64::from(OVERLAY_MARGIN) * scale).round() as i32;
-    let work_area = foreground_work_area().unwrap_or_else(|| {
+    let work_area = foreground_work_area(window).unwrap_or_else(|| {
         let monitor = window
             .current_monitor()
             .ok()
@@ -213,7 +213,7 @@ fn calculate_position(
 }
 
 #[cfg(windows)]
-fn foreground_work_area() -> Option<WorkArea> {
+fn foreground_work_area<R: Runtime>(_window: &WebviewWindow<R>) -> Option<WorkArea> {
     use std::mem::size_of;
     use windows::Win32::{
         Graphics::Gdi::{
@@ -240,8 +240,24 @@ fn foreground_work_area() -> Option<WorkArea> {
 }
 
 #[cfg(not(windows))]
-fn foreground_work_area() -> Option<WorkArea> {
-    None
+fn foreground_work_area<R: Runtime>(window: &WebviewWindow<R>) -> Option<WorkArea> {
+    let cursor = window.cursor_position().ok()?;
+    let monitors = window.available_monitors().ok()?;
+    let monitor = monitors.into_iter().find(|monitor| {
+        let origin = monitor.position();
+        let size = monitor.size();
+        cursor.x >= f64::from(origin.x)
+            && cursor.x < f64::from(origin.x) + f64::from(size.width)
+            && cursor.y >= f64::from(origin.y)
+            && cursor.y < f64::from(origin.y) + f64::from(size.height)
+    })?;
+    let area = monitor.work_area();
+    Some(WorkArea {
+        left: area.position.x,
+        top: area.position.y,
+        right: area.position.x + area.size.width as i32,
+        bottom: area.position.y + area.size.height as i32,
+    })
 }
 
 #[cfg(windows)]
@@ -259,7 +275,28 @@ fn configure_nonactivating_window<R: Runtime>(window: &WebviewWindow<R>) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn configure_nonactivating_window<R: Runtime>(window: &WebviewWindow<R>) {
+    use objc2_app_kit::{NSFloatingWindowLevel, NSWindow, NSWindowCollectionBehavior};
+
+    let Ok(native_window) = window.ns_window() else {
+        return;
+    };
+    let native_window = native_window as usize;
+    let _ = window.run_on_main_thread(move || unsafe {
+        let native_window = &*(native_window as *mut NSWindow);
+        native_window.setLevel(NSFloatingWindowLevel);
+        native_window.setCollectionBehavior(
+            NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::FullScreenAuxiliary
+                | NSWindowCollectionBehavior::Transient
+                | NSWindowCollectionBehavior::IgnoresCycle,
+        );
+        native_window.setHidesOnDeactivate(false);
+    });
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn configure_nonactivating_window<R: Runtime>(_window: &WebviewWindow<R>) {}
 
 #[cfg(windows)]
@@ -284,7 +321,19 @@ fn hide_native_window<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), Strin
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn show_without_activation<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
+    use objc2_app_kit::NSWindow;
+
+    let native_window = window.ns_window().map_err(|error| error.to_string())? as usize;
+    window
+        .run_on_main_thread(move || unsafe {
+            (&*(native_window as *mut NSWindow)).orderFrontRegardless();
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn show_without_activation<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     window.show().map_err(|error| error.to_string())
 }

@@ -44,7 +44,7 @@ describe("text injection service", () => {
       ok: false,
       error: {
         code: "text_injection_unavailable",
-        message: "无法调用 Windows 文本注入功能",
+        message: "无法调用系统文本注入功能",
         recoverable: true,
       },
     });

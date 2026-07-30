@@ -64,33 +64,38 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
         .cloned()
         .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?;
 
-    TrayIconBuilder::with_id("main-tray")
+    let mut tray = TrayIconBuilder::with_id("main-tray")
         .icon(icon)
         .tooltip("MindSurf Voice AI")
         .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                show_main_window(tray.app_handle());
-            }
-        })
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "open" => show_main_window(app),
-            "page_record" => navigate(app, "record"),
-            "page_connection" => navigate(app, "connection"),
-            "page_settings" => navigate(app, "settings"),
-            "mode_dictation" => request_mode(app, MODE_DICTATION),
-            "mode_assistant" => request_mode(app, MODE_ASSISTANT),
-            "mode_mixed" => request_mode(app, MODE_MIXED),
-            "quit" => quit_application(app),
-            _ => {}
-        })
-        .build(app)?;
+        .show_menu_on_left_click(false);
+    #[cfg(target_os = "macos")]
+    {
+        tray = tray.icon_as_template(true);
+    }
+
+    tray.on_tray_icon_event(|tray, event| {
+        if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } = event
+        {
+            show_main_window(tray.app_handle());
+        }
+    })
+    .on_menu_event(|app, event| match event.id().as_ref() {
+        "open" => show_main_window(app),
+        "page_record" => navigate(app, "record"),
+        "page_connection" => navigate(app, "connection"),
+        "page_settings" => navigate(app, "settings"),
+        "mode_dictation" => request_mode(app, MODE_DICTATION),
+        "mode_assistant" => request_mode(app, MODE_ASSISTANT),
+        "mode_mixed" => request_mode(app, MODE_MIXED),
+        "quit" => quit_application(app),
+        _ => {}
+    })
+    .build(app)?;
 
     Ok(())
 }

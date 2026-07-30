@@ -66,8 +66,8 @@ onMounted(async () => {
     appInfoError.value = result.error.message;
     session.connect({
       version: "0.1.0",
-      platform: "windows",
-      arch: "x86_64",
+      platform: globalThis.navigator.userAgent.includes("Mac OS") ? "macos" : "unknown",
+      arch: "unknown",
     });
   }
 });

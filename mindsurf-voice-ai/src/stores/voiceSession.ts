@@ -96,7 +96,7 @@ const state = reactive<VoiceSessionState>({
   reconnectAttempt: 0,
   requestStatus: "idle",
   shortcutBinding: readStoredShortcut(),
-  shortcutDisplay: "Ctrl + Win",
+  shortcutDisplay: "录音快捷键",
   shortcutEnabled: true,
   shortcutError: "",
   shortcutLastEventAt: null,
@@ -423,8 +423,12 @@ export function useVoiceSessionStore() {
     }
 
     state.shortcutEnabled = false;
-    state.shortcutError = describeShortcutError(result.error.code);
-    await unregisterRecordShortcut();
+    const shortcutError = describeShortcutError(result.error.code);
+    const disabled = await unregisterRecordShortcut();
+    if (disabled.ok) {
+      applyShortcutStatus(disabled.data);
+    }
+    state.shortcutError = shortcutError;
   }
 
   async function configureRecordShortcut(binding: ShortcutBinding) {
@@ -860,7 +864,8 @@ function clearInjectionTimer() {
 function describeInjectionError(code: string) {
   const messages: Record<string, string> = {
     empty_injection_text: "没有可以注入的文本",
-    injection_blocked: "Windows 阻止了注入，目标可能以管理员权限运行或不支持模拟输入",
+    accessibility_required: "请先在系统设置中授予辅助功能权限",
+    injection_blocked: "系统阻止了文本注入，目标应用可能不支持模拟输入",
     injection_modifiers_pressed: "录音快捷键尚未完全释放，请稍后重试",
     injection_partial: "仅注入了部分文本，剩余内容已保留",
     injection_target_closed: "目标窗口已关闭，剩余内容已保留",
@@ -869,7 +874,7 @@ function describeInjectionError(code: string) {
     injection_target_unavailable: "没有可用的前台目标窗口",
     injection_text_too_long: "文本超过当前注入长度限制",
     invalid_injection_limit: "注入长度限制无效",
-    text_injection_unavailable: "Windows 文本注入功能当前不可用",
+    text_injection_unavailable: "系统文本注入功能当前不可用",
     unsupported_platform: "当前平台不支持文本注入",
   };
   return messages[code] ?? "文本注入失败，内容已保留";
@@ -882,7 +887,7 @@ function applyShortcutStatus(status: ShortcutStatus) {
   state.shortcutListenerStatus = status.listenerStatus;
   state.shortcutError =
     status.listenerStatus === "error" || status.lastError
-      ? "Windows 全局键盘监听器启动失败"
+      ? status.lastError || "系统全局键盘监听器启动失败"
       : "";
 }
 
@@ -897,8 +902,9 @@ async function refreshShortcutStatus() {
 
 function describeShortcutError(code: string) {
   const messages: Record<string, string> = {
-    shortcut_conflict: "该快捷键已被 Windows 或其他程序占用，请选择其他组合",
-    shortcut_listener_unavailable: "Windows 全局快捷键监听器不可用",
+    input_monitoring_required: "请先在系统设置中授予输入监控权限",
+    shortcut_conflict: "该快捷键已被系统或其他程序占用，请选择其他组合",
+    shortcut_listener_unavailable: "系统全局快捷键监听器不可用",
     shortcut_state_unavailable: "快捷键状态暂时不可用，请重试",
     unsupported_platform: "当前平台不支持全局快捷键",
   };

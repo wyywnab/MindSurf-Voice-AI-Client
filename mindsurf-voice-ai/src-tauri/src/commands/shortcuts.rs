@@ -18,11 +18,24 @@ pub enum ShortcutBinding {
 
 impl ShortcutBinding {
     fn display(self) -> &'static str {
-        match self {
-            Self::Win => "Ctrl + Win",
-            Self::AltSpace => "Ctrl + Alt + Space",
-            Self::ShiftSpace => "Ctrl + Shift + Space",
-            Self::WinSpace => "Ctrl + Win + Space",
+        #[cfg(target_os = "macos")]
+        {
+            match self {
+                Self::Win => "Control + Command",
+                Self::AltSpace => "Control + Option + Space",
+                Self::ShiftSpace => "Control + Shift + Space",
+                Self::WinSpace => "Control + Command + Space",
+            }
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            match self {
+                Self::Win => "Ctrl + Win",
+                Self::AltSpace => "Ctrl + Alt + Space",
+                Self::ShiftSpace => "Ctrl + Shift + Space",
+                Self::WinSpace => "Ctrl + Win + Space",
+            }
         }
     }
 }
@@ -35,6 +48,17 @@ pub struct ShortcutStatus {
     enabled: bool,
     listener_status: &'static str,
     last_error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct RecordShortcutPayload {
+    shortcut: &'static str,
+    timestamp_ms: u64,
+}
+
+#[derive(Clone, Serialize)]
+struct CancelShortcutPayload {
+    timestamp_ms: u64,
 }
 
 pub fn initialize(app: tauri::AppHandle) {
@@ -77,7 +101,6 @@ mod platform {
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use serde::Serialize;
     use tauri::Emitter;
     use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -92,7 +115,9 @@ mod platform {
         WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
 
-    use super::{AppError, ShortcutBinding, ShortcutStatus};
+    use super::{
+        AppError, CancelShortcutPayload, RecordShortcutPayload, ShortcutBinding, ShortcutStatus,
+    };
 
     const LISTENER_STARTING: u8 = 0;
     const LISTENER_RUNNING: u8 = 1;
@@ -109,17 +134,6 @@ mod platform {
         pressed: Mutex<HashSet<u32>>,
         listener_status: AtomicU8,
         last_error: Mutex<Option<String>>,
-    }
-
-    #[derive(Clone, Serialize)]
-    struct RecordShortcutPayload {
-        shortcut: &'static str,
-        timestamp_ms: u64,
-    }
-
-    #[derive(Clone, Serialize)]
-    struct CancelShortcutPayload {
-        timestamp_ms: u64,
     }
 
     pub fn initialize(app: tauri::AppHandle) {
@@ -443,7 +457,334 @@ mod platform {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+mod platform {
+    use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+    use std::sync::{Mutex, OnceLock, RwLock};
+    use std::thread;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use core_foundation::runloop::CFRunLoop;
+    use core_graphics::event::{
+        CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
+        CGEventTapPlacement, CGEventType, CallbackResult, EventField, KeyCode,
+    };
+    use objc2_core_graphics::{CGPreflightListenEventAccess, CGRequestListenEventAccess};
+    use tauri::Emitter;
+
+    use super::{
+        AppError, CancelShortcutPayload, RecordShortcutPayload, ShortcutBinding, ShortcutStatus,
+    };
+
+    const LISTENER_STARTING: u8 = 0;
+    const LISTENER_RUNNING: u8 = 1;
+    const LISTENER_ERROR: u8 = 2;
+    static STATE: OnceLock<ShortcutState> = OnceLock::new();
+
+    struct ShortcutState {
+        app: tauri::AppHandle,
+        binding: RwLock<ShortcutBinding>,
+        enabled: AtomicBool,
+        active: AtomicBool,
+        space_pressed: AtomicBool,
+        listener_status: AtomicU8,
+        listener_thread_active: AtomicBool,
+        last_error: Mutex<Option<String>>,
+    }
+
+    pub fn initialize(app: tauri::AppHandle) {
+        if STATE
+            .set(ShortcutState {
+                app,
+                binding: RwLock::new(ShortcutBinding::default()),
+                enabled: AtomicBool::new(true),
+                active: AtomicBool::new(false),
+                space_pressed: AtomicBool::new(false),
+                listener_status: AtomicU8::new(LISTENER_STARTING),
+                listener_thread_active: AtomicBool::new(false),
+                last_error: Mutex::new(None),
+            })
+            .is_err()
+        {
+            return;
+        }
+
+        if CGPreflightListenEventAccess() {
+            start_listener();
+        } else {
+            set_listener_failure("macOS 输入监控权限尚未授权；授权后即可使用全局按住说话快捷键");
+        }
+    }
+
+    pub fn status() -> Result<ShortcutStatus, AppError> {
+        let state = state()?;
+        let binding = *state.binding.read().map_err(|_| {
+            shortcut_error(
+                "shortcut_state_unavailable",
+                "shortcut state is unavailable",
+            )
+        })?;
+        let last_error = state
+            .last_error
+            .lock()
+            .map_err(|_| {
+                shortcut_error(
+                    "shortcut_state_unavailable",
+                    "shortcut state is unavailable",
+                )
+            })?
+            .clone();
+
+        Ok(ShortcutStatus {
+            binding,
+            display: binding.display(),
+            enabled: state.enabled.load(Ordering::Acquire),
+            listener_status: listener_status_label(state.listener_status.load(Ordering::Acquire)),
+            last_error,
+        })
+    }
+
+    pub fn register(binding: ShortcutBinding) -> Result<ShortcutStatus, AppError> {
+        ensure_listen_permission()?;
+        let state = state()?;
+        release_if_active(state);
+        *state.binding.write().map_err(|_| {
+            shortcut_error(
+                "shortcut_state_unavailable",
+                "shortcut state is unavailable",
+            )
+        })? = binding;
+        state.enabled.store(true, Ordering::Release);
+        start_listener();
+        status()
+    }
+
+    pub fn unregister() -> Result<ShortcutStatus, AppError> {
+        let state = state()?;
+        release_if_active(state);
+        state.enabled.store(false, Ordering::Release);
+        status()
+    }
+
+    fn ensure_listen_permission() -> Result<(), AppError> {
+        if CGPreflightListenEventAccess() || CGRequestListenEventAccess() {
+            return Ok(());
+        }
+
+        set_listener_failure("macOS 输入监控权限被拒绝；请在系统设置的隐私与安全性中允许 MindSurf");
+        Err(shortcut_error(
+            "input_monitoring_required",
+            "macOS input monitoring permission is required for global shortcuts",
+        ))
+    }
+
+    fn start_listener() {
+        let Some(state) = STATE.get() else {
+            return;
+        };
+        if state
+            .listener_thread_active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+
+        state
+            .listener_status
+            .store(LISTENER_STARTING, Ordering::Release);
+        thread::spawn(|| {
+            let result = CGEventTap::with_enabled(
+                CGEventTapLocation::Session,
+                CGEventTapPlacement::HeadInsertEventTap,
+                CGEventTapOptions::ListenOnly,
+                vec![
+                    CGEventType::KeyDown,
+                    CGEventType::KeyUp,
+                    CGEventType::FlagsChanged,
+                ],
+                |_proxy, event_type, event| {
+                    handle_key_event(event_type, event);
+                    CallbackResult::Keep
+                },
+                || {
+                    if let Some(state) = STATE.get() {
+                        state
+                            .listener_status
+                            .store(LISTENER_RUNNING, Ordering::Release);
+                        if let Ok(mut error) = state.last_error.lock() {
+                            *error = None;
+                        }
+                    }
+                    CFRunLoop::run_current();
+                },
+            );
+
+            if let Some(state) = STATE.get() {
+                state.listener_thread_active.store(false, Ordering::Release);
+                if result.is_err() {
+                    set_listener_failure("无法安装 macOS 全局键盘监听器，请检查输入监控权限");
+                }
+            }
+        });
+    }
+
+    fn handle_key_event(event_type: CGEventType, event: &CGEvent) {
+        let Some(state) = STATE.get() else {
+            return;
+        };
+        let key_code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
+        let is_down = matches!(event_type, CGEventType::KeyDown);
+        let is_up = matches!(event_type, CGEventType::KeyUp);
+
+        if key_code == KeyCode::SPACE {
+            if is_down {
+                state.space_pressed.store(true, Ordering::Release);
+            } else if is_up {
+                state.space_pressed.store(false, Ordering::Release);
+            }
+        }
+
+        if key_code == KeyCode::ESCAPE
+            && is_down
+            && event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) == 0
+        {
+            let _ = state.app.emit(
+                "shortcut://cancel",
+                CancelShortcutPayload {
+                    timestamp_ms: timestamp_ms(),
+                },
+            );
+        }
+
+        if !state.enabled.load(Ordering::Acquire) {
+            return;
+        }
+        let Ok(binding) = state.binding.read().map(|binding| *binding) else {
+            return;
+        };
+        let matches = binding_matches(
+            binding,
+            event.get_flags(),
+            state.space_pressed.load(Ordering::Acquire),
+        );
+        let active = state.active.load(Ordering::Acquire);
+
+        if matches && !active {
+            state.active.store(true, Ordering::Release);
+            let _ = state.app.emit(
+                "shortcut://record-pressed",
+                RecordShortcutPayload {
+                    shortcut: binding.display(),
+                    timestamp_ms: timestamp_ms(),
+                },
+            );
+        } else if !matches && active {
+            state.active.store(false, Ordering::Release);
+            let _ = state.app.emit(
+                "shortcut://record-released",
+                RecordShortcutPayload {
+                    shortcut: binding.display(),
+                    timestamp_ms: timestamp_ms(),
+                },
+            );
+        }
+    }
+
+    fn binding_matches(binding: ShortcutBinding, flags: CGEventFlags, space_pressed: bool) -> bool {
+        let control = flags.contains(CGEventFlags::CGEventFlagControl);
+        let option = flags.contains(CGEventFlags::CGEventFlagAlternate);
+        let shift = flags.contains(CGEventFlags::CGEventFlagShift);
+        let command = flags.contains(CGEventFlags::CGEventFlagCommand);
+
+        match binding {
+            ShortcutBinding::Win => control && command && !option && !shift,
+            ShortcutBinding::AltSpace => control && option && space_pressed && !shift && !command,
+            ShortcutBinding::ShiftSpace => control && shift && space_pressed && !option && !command,
+            ShortcutBinding::WinSpace => control && command && space_pressed && !option && !shift,
+        }
+    }
+
+    fn release_if_active(state: &ShortcutState) {
+        if state.active.swap(false, Ordering::AcqRel) {
+            let binding = state
+                .binding
+                .read()
+                .map(|binding| *binding)
+                .unwrap_or_default();
+            let _ = state.app.emit(
+                "shortcut://record-released",
+                RecordShortcutPayload {
+                    shortcut: binding.display(),
+                    timestamp_ms: timestamp_ms(),
+                },
+            );
+        }
+    }
+
+    fn set_listener_failure(message: &str) {
+        let Some(state) = STATE.get() else {
+            return;
+        };
+        state
+            .listener_status
+            .store(LISTENER_ERROR, Ordering::Release);
+        if let Ok(mut error) = state.last_error.lock() {
+            *error = Some(message.to_owned());
+        }
+    }
+
+    fn state() -> Result<&'static ShortcutState, AppError> {
+        STATE.get().ok_or_else(|| {
+            shortcut_error(
+                "shortcut_listener_unavailable",
+                "global shortcut listener is not initialized",
+            )
+        })
+    }
+
+    fn listener_status_label(status: u8) -> &'static str {
+        match status {
+            LISTENER_RUNNING => "running",
+            LISTENER_ERROR => "error",
+            _ => "starting",
+        }
+    }
+
+    fn shortcut_error(code: &str, message: impl Into<String>) -> AppError {
+        AppError::new(code, message, true)
+    }
+
+    fn timestamp_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use core_graphics::event::CGEventFlags;
+
+        use super::{binding_matches, ShortcutBinding};
+
+        #[test]
+        fn modifier_only_binding_uses_control_and_command() {
+            let flags = CGEventFlags::CGEventFlagControl | CGEventFlags::CGEventFlagCommand;
+            assert!(binding_matches(ShortcutBinding::Win, flags, false));
+        }
+
+        #[test]
+        fn space_binding_rejects_extra_modifiers() {
+            let valid = CGEventFlags::CGEventFlagControl | CGEventFlags::CGEventFlagAlternate;
+            let invalid = valid | CGEventFlags::CGEventFlagShift;
+            assert!(binding_matches(ShortcutBinding::AltSpace, valid, true));
+            assert!(!binding_matches(ShortcutBinding::AltSpace, invalid, true));
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 mod platform {
     use super::{AppError, ShortcutBinding, ShortcutStatus};
 

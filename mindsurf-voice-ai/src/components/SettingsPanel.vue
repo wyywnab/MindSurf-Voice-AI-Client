@@ -1,6 +1,14 @@
 <script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+
+import {
+  getSystemPermissionStatus,
+  openSystemPermissionSettings,
+  requestSystemPermission,
+} from "../services/permissions";
 import { useVoiceSessionStore } from "../stores/voiceSession";
 import type { AppInfo } from "../types/app";
+import type { SystemPermission, SystemPermissionState } from "../types/permissions";
 import {
   VOICE_MODE_LABELS,
   type OverlayPosition,
@@ -8,18 +16,111 @@ import {
 } from "../types/voice";
 import type { ShortcutBinding } from "../types/shortcut";
 
-defineProps<{
+const props = defineProps<{
   appInfo: AppInfo | null;
   appInfoError: string;
 }>();
 
 const session = useVoiceSessionStore();
-const shortcutOptions: Array<{ value: ShortcutBinding; label: string }> = [
-  { value: "ctrl_win", label: "Ctrl + Win" },
-  { value: "ctrl_alt_space", label: "Ctrl + Alt + Space" },
-  { value: "ctrl_shift_space", label: "Ctrl + Shift + Space" },
-  { value: "ctrl_win_space", label: "Ctrl + Win + Space" },
-];
+const isMacOS = computed(() => props.appInfo?.platform === "macos");
+const shortcutOptions = computed<Array<{ value: ShortcutBinding; label: string }>>(
+  () =>
+    isMacOS.value
+      ? [
+          { value: "ctrl_win", label: "Control + Command" },
+          { value: "ctrl_alt_space", label: "Control + Option + Space" },
+          { value: "ctrl_shift_space", label: "Control + Shift + Space" },
+          { value: "ctrl_win_space", label: "Control + Command + Space" },
+        ]
+      : [
+          { value: "ctrl_win", label: "Ctrl + Win" },
+          { value: "ctrl_alt_space", label: "Ctrl + Alt + Space" },
+          { value: "ctrl_shift_space", label: "Ctrl + Shift + Space" },
+          { value: "ctrl_win_space", label: "Ctrl + Win + Space" },
+        ],
+);
+const macPermissionStates = reactive<
+  Record<"accessibility" | "input_monitoring", SystemPermissionState>
+>({
+  accessibility: "unknown",
+  input_monitoring: "unknown",
+});
+const permissionBusy = ref<SystemPermission | null>(null);
+const permissionError = ref("");
+
+function permissionStatusLabel(status: SystemPermissionState) {
+  return {
+    granted: "已授权",
+    denied: "未授权",
+    unknown: "检查中",
+  }[status];
+}
+
+async function refreshMacPermission(permission: "accessibility" | "input_monitoring") {
+  const result = await getSystemPermissionStatus(permission);
+  if (result.ok) {
+    macPermissionStates[permission] = result.data.status;
+    if (
+      permission === "input_monitoring" &&
+      result.data.status === "granted" &&
+      session.state.shortcutListenerStatus !== "running"
+    ) {
+      await session.initializeRecordShortcut();
+    }
+  } else {
+    permissionError.value = result.error.message;
+  }
+}
+
+function refreshMacPermissions() {
+  if (!isMacOS.value) {
+    return;
+  }
+  void refreshMacPermission("accessibility");
+  void refreshMacPermission("input_monitoring");
+}
+
+async function requestMacPermission(permission: "accessibility" | "input_monitoring") {
+  permissionBusy.value = permission;
+  permissionError.value = "";
+  const result = await requestSystemPermission(permission);
+  permissionBusy.value = null;
+  if (!result.ok) {
+    permissionError.value = result.error.message;
+    return;
+  }
+  macPermissionStates[permission] = result.data.status;
+  if (permission === "input_monitoring" && result.data.status === "granted") {
+    await session.initializeRecordShortcut();
+  }
+}
+
+async function openMacPermissionSettings(
+  permission: "accessibility" | "input_monitoring",
+) {
+  const result = await openSystemPermissionSettings(permission);
+  if (!result.ok) {
+    permissionError.value = result.error.message;
+  }
+}
+
+watch(
+  isMacOS,
+  (enabled) => {
+    if (enabled) {
+      refreshMacPermissions();
+    }
+  },
+  { immediate: true },
+);
+
+onMounted(() => {
+  globalThis.addEventListener("focus", refreshMacPermissions);
+});
+
+onBeforeUnmount(() => {
+  globalThis.removeEventListener("focus", refreshMacPermissions);
+});
 
 function updateOption(kind: "asr" | "llm" | "tts" | "output_audio", event: Event) {
   session.setInferenceOption(kind, (event.target as HTMLSelectElement).value);
@@ -197,6 +298,63 @@ async function updateShortcutEnabled(event: Event) {
             <small>Unicode 字符，最大 8000</small>
           </div>
         </article>
+        <template v-if="isMacOS">
+          <h2 class="settings-category">macOS 系统权限</h2>
+          <article>
+            <span>辅助功能</span>
+            <div class="permission-setting">
+              <strong :data-status="macPermissionStates.accessibility">
+                {{ permissionStatusLabel(macPermissionStates.accessibility) }}
+              </strong>
+              <small>用于向当前应用的光标位置输入识别结果</small>
+              <div>
+                <button
+                  v-if="macPermissionStates.accessibility !== 'granted'"
+                  class="button button-primary button-compact"
+                  type="button"
+                  :disabled="permissionBusy === 'accessibility'"
+                  @click="requestMacPermission('accessibility')"
+                >
+                  请求授权
+                </button>
+                <button
+                  class="button button-secondary button-compact"
+                  type="button"
+                  @click="openMacPermissionSettings('accessibility')"
+                >
+                  打开系统设置
+                </button>
+              </div>
+            </div>
+          </article>
+          <article>
+            <span>输入监控</span>
+            <div class="permission-setting">
+              <strong :data-status="macPermissionStates.input_monitoring">
+                {{ permissionStatusLabel(macPermissionStates.input_monitoring) }}
+              </strong>
+              <small>用于在其他应用处于前台时监听按住说话快捷键</small>
+              <div>
+                <button
+                  v-if="macPermissionStates.input_monitoring !== 'granted'"
+                  class="button button-primary button-compact"
+                  type="button"
+                  :disabled="permissionBusy === 'input_monitoring'"
+                  @click="requestMacPermission('input_monitoring')"
+                >
+                  请求授权
+                </button>
+                <button
+                  class="button button-secondary button-compact"
+                  type="button"
+                  @click="openMacPermissionSettings('input_monitoring')"
+                >
+                  打开系统设置
+                </button>
+              </div>
+            </div>
+          </article>
+        </template>
         <h2 class="settings-category">语音模型</h2>
         <article>
           <span>ASR</span>
@@ -278,6 +436,9 @@ async function updateShortcutEnabled(event: Event) {
       </div>
       <p v-if="session.state.shortcutError" class="inline-error" role="alert">
         {{ session.state.shortcutError }}
+      </p>
+      <p v-if="permissionError" class="inline-error" role="alert">
+        {{ permissionError }}
       </p>
     </div>
   </section>

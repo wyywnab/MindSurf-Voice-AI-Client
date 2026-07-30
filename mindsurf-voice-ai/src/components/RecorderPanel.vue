@@ -478,7 +478,7 @@ onBeforeUnmount(() => {
           type="button"
           @click="recorder.openPermissionSettings"
         >
-          打开 Windows 麦克风设置
+          打开麦克风设置
         </button>
       </p>
 

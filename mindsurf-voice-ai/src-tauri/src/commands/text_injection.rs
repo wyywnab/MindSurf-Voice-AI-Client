@@ -6,6 +6,7 @@ use serde::Serialize;
 use crate::error::{AppError, CommandResult};
 
 const DEFAULT_MAX_CODE_POINTS: usize = 8_000;
+#[cfg(target_os = "windows")]
 const INPUTS_PER_BATCH: usize = 256;
 static INJECTION_LOCK: Mutex<()> = Mutex::new(());
 
@@ -351,7 +352,205 @@ mod platform {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+mod platform {
+    use std::thread;
+    use std::time::Duration;
+
+    use core_graphics::event::{CGEvent, CGEventTapLocation, CGKeyCode, KeyCode};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    use objc2_app_kit::NSWorkspace;
+    use objc2_core_graphics::{CGPreflightPostEventAccess, CGRequestPostEventAccess};
+
+    use super::{normalize_newlines, AppError, InjectReport, Instant, TargetWindow, TextInjector};
+
+    const CHARACTERS_PER_BATCH: usize = 128;
+
+    pub struct PlatformTextInjector;
+
+    pub fn wait_for_modifiers_released() -> Result<(), AppError> {
+        const ATTEMPTS: usize = 100;
+        const MODIFIERS: [CGKeyCode; 8] = [
+            KeyCode::CONTROL,
+            KeyCode::RIGHT_CONTROL,
+            KeyCode::SHIFT,
+            KeyCode::RIGHT_SHIFT,
+            KeyCode::OPTION,
+            KeyCode::RIGHT_OPTION,
+            KeyCode::COMMAND,
+            KeyCode::RIGHT_COMMAND,
+        ];
+
+        for _ in 0..ATTEMPTS {
+            let any_pressed = MODIFIERS.iter().any(|key_code| unsafe {
+                CGEventSourceKeyState(CGEventSourceStateID::CombinedSessionState, *key_code)
+            });
+            if !any_pressed {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        Err(AppError::new(
+            "injection_modifiers_pressed",
+            "release the recording shortcut before injecting text",
+            true,
+        ))
+    }
+
+    impl TextInjector for PlatformTextInjector {
+        fn capture_target(&self) -> Result<TargetWindow, AppError> {
+            if !CGPreflightPostEventAccess() && !CGRequestPostEventAccess() {
+                return Err(AppError::new(
+                    "accessibility_required",
+                    "macOS Accessibility permission is required for text injection",
+                    true,
+                ));
+            }
+
+            let process_id = frontmost_process_id().ok_or_else(|| {
+                AppError::new(
+                    "injection_target_unavailable",
+                    "no foreground application is available for text injection",
+                    true,
+                )
+            })?;
+            if process_id == std::process::id() as i32 {
+                return Err(AppError::new(
+                    "injection_target_is_self",
+                    "switch to the target application before injecting text",
+                    true,
+                ));
+            }
+
+            Ok(TargetWindow {
+                handle: process_id as isize,
+            })
+        }
+
+        fn inject(&self, target: &TargetWindow, text: &str) -> Result<InjectReport, AppError> {
+            let started_at = Instant::now();
+            let normalized = normalize_newlines(text);
+            let requested_code_points = normalized.chars().count();
+            let target_process_id = target.handle as i32;
+            let mut injected_code_points = 0usize;
+            let mut injected_text_end = 0usize;
+
+            for (text_start, character) in normalized.char_indices() {
+                if frontmost_process_id() != Some(target_process_id) {
+                    return Ok(partial_report(
+                        &normalized,
+                        requested_code_points,
+                        injected_code_points,
+                        injected_text_end,
+                        started_at,
+                        "injection_target_changed",
+                    ));
+                }
+
+                if let Err(error) = post_character(character) {
+                    if injected_code_points == 0 {
+                        return Err(error);
+                    }
+                    return Ok(partial_report(
+                        &normalized,
+                        requested_code_points,
+                        injected_code_points,
+                        injected_text_end,
+                        started_at,
+                        "injection_partial",
+                    ));
+                }
+                injected_code_points += 1;
+                injected_text_end = text_start + character.len_utf8();
+
+                if injected_code_points.is_multiple_of(CHARACTERS_PER_BATCH) {
+                    thread::yield_now();
+                }
+            }
+
+            Ok(InjectReport {
+                requested_code_points,
+                injected_code_points,
+                remaining_text: String::new(),
+                elapsed_ms: started_at.elapsed().as_millis(),
+                complete: true,
+                error_code: None,
+            })
+        }
+    }
+
+    fn frontmost_process_id() -> Option<i32> {
+        NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .map(|application| application.processIdentifier())
+            .filter(|process_id| *process_id > 0)
+    }
+
+    fn post_character(character: char) -> Result<(), AppError> {
+        let source =
+            CGEventSource::new(CGEventSourceStateID::CombinedSessionState).map_err(|_| {
+                AppError::new(
+                    "injection_unavailable",
+                    "unable to create a macOS keyboard event source",
+                    true,
+                )
+            })?;
+        let key_code = if character == '\n' {
+            KeyCode::RETURN
+        } else {
+            KeyCode::ANSI_A
+        };
+        let key_down =
+            CGEvent::new_keyboard_event(source.clone(), key_code, true).map_err(|_| {
+                AppError::new(
+                    "injection_unavailable",
+                    "unable to create a macOS key-down event",
+                    true,
+                )
+            })?;
+        let key_up = CGEvent::new_keyboard_event(source, key_code, false).map_err(|_| {
+            AppError::new(
+                "injection_unavailable",
+                "unable to create a macOS key-up event",
+                true,
+            )
+        })?;
+
+        if character != '\n' {
+            let text = character.to_string();
+            key_down.set_string(&text);
+        }
+        key_down.post(CGEventTapLocation::HID);
+        key_up.post(CGEventTapLocation::HID);
+        Ok(())
+    }
+
+    fn partial_report(
+        normalized: &str,
+        requested_code_points: usize,
+        injected_code_points: usize,
+        injected_text_end: usize,
+        started_at: Instant,
+        error_code: &'static str,
+    ) -> InjectReport {
+        InjectReport {
+            requested_code_points,
+            injected_code_points,
+            remaining_text: normalized[injected_text_end..].to_owned(),
+            elapsed_ms: started_at.elapsed().as_millis(),
+            complete: false,
+            error_code: Some(error_code),
+        }
+    }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventSourceKeyState(state_id: CGEventSourceStateID, key_code: CGKeyCode) -> bool;
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 mod platform {
     use super::{AppError, InjectReport, TargetWindow, TextInjector};
 

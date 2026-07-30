@@ -1039,6 +1039,37 @@ h1 {
   margin: 0;
 }
 
+.permission-setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 10px;
+}
+
+.permission-setting > strong {
+  min-width: 44px;
+}
+
+.permission-setting > strong[data-status="granted"] {
+  color: var(--success);
+}
+
+.permission-setting > strong[data-status="denied"] {
+  color: var(--danger);
+}
+
+.permission-setting > small {
+  flex: 1 1 230px;
+  color: var(--text-muted);
+  font-size: 0.64rem;
+}
+
+.permission-setting > div {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
 .shortcut-status::before {
   display: inline-block;
   width: 6px;

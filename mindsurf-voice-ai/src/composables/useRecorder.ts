@@ -189,7 +189,7 @@ export function useRecorder() {
 function describeRecorderError(error: unknown) {
   if (error instanceof DOMException) {
     if (error.name === "NotAllowedError") {
-      return "麦克风权限被拒绝，请在 Windows 设置中允许访问后重试。";
+      return "麦克风权限被拒绝，请在系统设置中允许访问后重试。";
     }
     if (error.name === "NotFoundError") {
       return "没有找到可用的麦克风设备。";

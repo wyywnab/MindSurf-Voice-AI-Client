@@ -1,7 +1,7 @@
 # MindSurf Voice AI 客户端交付说明
 
-> 更新日期：2026-07-29  
-> 交付范围：Phase 1 Windows 客户端及联调 Mock
+> 更新日期：2026-07-30
+> 交付范围：Phase 1 Windows/macOS 客户端及联调 Mock
 
 ## 1. 交付定位
 
@@ -15,7 +15,7 @@
 |---|---|
 | 桌面框架 | Tauri 2、Rust 2021 |
 | 前端 | Vue 3、TypeScript、Vite |
-| Windows 能力 | Windows API、全局快捷键、`SendInput` 文本注入 |
+| 原生桌面能力 | Windows API、macOS CoreGraphics/AppKit、全局快捷键、文本注入 |
 | 音频处理 | Web Audio API、重采样、PCM16 编码与分帧 |
 | 通信协议 | WebSocket、自定义 `mindsurf.voice.v1` 协议 |
 | 本地 Mock | Node.js、`ws`、FFmpeg |
@@ -47,6 +47,8 @@
 - TTS 音频分片缓冲、连续播放和停止。
 - Windows 全局按住说话快捷键及快捷键配置。
 - Windows Unicode 文本注入。
+- macOS 全局按住说话快捷键、Unicode 文本注入及权限引导。
+- macOS 跨 Space 非激活悬浮窗、菜单栏托盘和多显示器定位。
 - 录音悬浮窗、系统托盘、权限和错误提示。
 - 请求提交、取消及断线后的状态清理。
 - 遵循当前协议的本地 Mock 服务及测试音频输出。
@@ -56,9 +58,10 @@
 
 - 完善鉴权、`wss://` 和生产环境配置。
 - 继续优化界面、悬浮窗和快捷键交互。
-- 按需求进行macOS、Linux的跨平台适配。
+- 按需求进行 Linux 跨平台适配。
 - 接入正式服务地址，替换本地 Mock。
-- 完成安装包、版本升级、签名及发布验证。
+- 配置正式升级服务地址和更新签名公钥。
+- 使用正式 Apple Developer 凭据完成签名、公证及发布验证。
 
 ## 6. 交付内容
 

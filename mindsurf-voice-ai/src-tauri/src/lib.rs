@@ -20,7 +20,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
+            commands::permissions::get_system_permission_status,
             commands::permissions::open_permission_settings,
+            commands::permissions::request_system_permission,
             commands::shortcuts::get_record_shortcut_status,
             commands::shortcuts::register_record_shortcut,
             commands::shortcuts::unregister_record_shortcut,

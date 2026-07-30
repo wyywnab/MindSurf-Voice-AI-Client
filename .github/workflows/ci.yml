@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: ${{ matrix.name }} quality gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: mindsurf-voice-ai
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mindsurf-voice-ai/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mindsurf-voice-ai/src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check frontend
+        run: npm run check
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Check Rust formatting
+        working-directory: mindsurf-voice-ai/src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Check Rust
+        working-directory: mindsurf-voice-ai/src-tauri
+        run: cargo check --all-targets
+
+      - name: Lint Rust
+        working-directory: mindsurf-voice-ai/src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test Rust
+        working-directory: mindsurf-voice-ai/src-tauri
+        run: cargo test --all-targets
+
+  macos-bundle:
+    name: macOS application bundle
+    needs: quality
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mindsurf-voice-ai
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mindsurf-voice-ai/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mindsurf-voice-ai/src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build unsigned test bundle
+        run: npm run tauri build -- --debug --bundles app

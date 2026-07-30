@@ -13,7 +13,7 @@ const UNAVAILABLE_RESULT: CommandResult<never> = {
   ok: false,
   error: {
     code: "shortcut_listener_unavailable",
-    message: "无法调用 Windows 全局快捷键功能",
+    message: "无法调用系统全局快捷键功能",
     recoverable: true,
   },
 };
