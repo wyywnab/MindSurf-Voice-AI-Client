@@ -23,11 +23,7 @@ const tabs: readonly MainTab[] = [
   { id: "settings", label: "设置" },
 ];
 
-const macPermissions: readonly SystemPermission[] = [
-  "microphone",
-  "accessibility",
-  "input_monitoring",
-];
+const macPermissions: readonly SystemPermission[] = ["microphone", "accessibility"];
 
 const activeTab = ref<MainTabId>("record");
 const appInfo = ref<AppInfo | null>(null);
@@ -51,17 +47,15 @@ async function configureStartupPermissions(platform: string) {
   const hasMissingPermission = checks.some(
     ({ result }) => !result.ok || result.data.status !== "granted",
   );
-  const inputMonitoringGranted = checks.some(
+  const accessibilityGranted = checks.some(
     ({ permission, result }) =>
-      permission === "input_monitoring" &&
-      result.ok &&
-      result.data.status === "granted",
+      permission === "accessibility" && result.ok && result.data.status === "granted",
   );
 
   if (hasMissingPermission) {
     activeTab.value = "permissions";
   }
-  if (inputMonitoringGranted || !session.state.shortcutDesiredEnabled) {
+  if (accessibilityGranted || !session.state.shortcutDesiredEnabled) {
     await session.initializeRecordShortcut();
   }
 }

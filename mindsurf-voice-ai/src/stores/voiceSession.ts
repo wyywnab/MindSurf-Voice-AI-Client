@@ -937,7 +937,7 @@ async function refreshShortcutStatus() {
 
 function describeShortcutError(code: string) {
   const messages: Record<string, string> = {
-    input_monitoring_required: "请先在系统设置中授予输入监控权限",
+    accessibility_required: "请先在系统设置中授予辅助功能权限",
     shortcut_conflict: "该快捷键已被系统或其他程序占用，请选择其他组合",
     shortcut_listener_unavailable: "系统全局快捷键监听器不可用",
     shortcut_state_unavailable: "快捷键状态暂时不可用，请重试",

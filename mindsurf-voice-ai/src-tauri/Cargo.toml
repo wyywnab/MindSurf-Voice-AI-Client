@@ -35,7 +35,7 @@ windows = { version = "0.61.3", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
 core-foundation = "0.10.1"
-core-graphics = { version = "0.25.0", features = ["catalina"] }
+core-graphics = { version = "0.25.0", features = ["catalina", "elcapitan"] }
 objc2 = "0.6.4"
 objc2-av-foundation = { version = "0.3.2", default-features = false, features = [
   "std",

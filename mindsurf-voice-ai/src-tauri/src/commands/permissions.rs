@@ -115,10 +115,7 @@ mod platform {
     use objc2_av_foundation::{
         AVAuthorizationStatus, AVCaptureDevice, AVMediaType, AVMediaTypeAudio,
     };
-    use objc2_core_graphics::{
-        CGPreflightListenEventAccess, CGPreflightPostEventAccess, CGRequestListenEventAccess,
-        CGRequestPostEventAccess,
-    };
+    use objc2_core_graphics::{CGPreflightPostEventAccess, CGRequestPostEventAccess};
 
     use super::{AppError, CommandResult, SystemPermission, SystemPermissionStatus};
 
@@ -128,9 +125,11 @@ mod platform {
             SystemPermission::Accessibility => {
                 SystemPermissionStatus::new(permission, CGPreflightPostEventAccess())
             }
-            SystemPermission::InputMonitoring => {
-                SystemPermissionStatus::new(permission, CGPreflightListenEventAccess())
-            }
+            // macOS does not expose a reliable API for whether the application is
+            // explicitly enabled in the Input Monitoring settings pane. In
+            // particular, CGPreflightListenEventAccess may also return true when
+            // Accessibility grants equivalent event-listening capability.
+            SystemPermission::InputMonitoring => SystemPermissionStatus::unknown(permission),
         };
         CommandResult::success(status)
     }
@@ -141,9 +140,7 @@ mod platform {
             SystemPermission::Accessibility => {
                 SystemPermissionStatus::new(permission, CGRequestPostEventAccess())
             }
-            SystemPermission::InputMonitoring => {
-                SystemPermissionStatus::new(permission, CGRequestListenEventAccess())
-            }
+            SystemPermission::InputMonitoring => SystemPermissionStatus::unknown(permission),
         };
         CommandResult::success(status)
     }

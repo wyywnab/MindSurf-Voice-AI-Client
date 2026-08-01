@@ -473,7 +473,7 @@ mod platform {
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
         CGEventTapPlacement, CGEventType, CallbackResult, EventField, KeyCode,
     };
-    use objc2_core_graphics::{CGPreflightListenEventAccess, CGRequestListenEventAccess};
+    use objc2_core_graphics::{CGPreflightPostEventAccess, CGRequestPostEventAccess};
     use tauri::Emitter;
 
     use super::{
@@ -521,10 +521,10 @@ mod platform {
         }
 
         thread::spawn(move || emit_shortcut_events(app, event_receiver));
-        if CGPreflightListenEventAccess() {
+        if CGPreflightPostEventAccess() {
             start_listener();
         } else {
-            set_listener_failure("macOS 输入监控权限尚未授权；授权后即可使用全局按住说话快捷键");
+            set_listener_failure("macOS 辅助功能权限尚未授权；授权后即可使用全局按住说话快捷键");
         }
     }
 
@@ -557,7 +557,7 @@ mod platform {
     }
 
     pub fn register(binding: ShortcutBinding) -> Result<ShortcutStatus, AppError> {
-        ensure_listen_permission()?;
+        ensure_accessibility_permission()?;
         let state = state()?;
         release_if_active(state);
         *state.binding.write().map_err(|_| {
@@ -578,15 +578,15 @@ mod platform {
         status()
     }
 
-    fn ensure_listen_permission() -> Result<(), AppError> {
-        if CGPreflightListenEventAccess() || CGRequestListenEventAccess() {
+    fn ensure_accessibility_permission() -> Result<(), AppError> {
+        if CGPreflightPostEventAccess() || CGRequestPostEventAccess() {
             return Ok(());
         }
 
-        set_listener_failure("macOS 输入监控权限被拒绝；请在系统设置的隐私与安全性中允许 MindSurf");
+        set_listener_failure("macOS 辅助功能权限被拒绝；请在系统设置的隐私与安全性中允许 MindSurf");
         Err(shortcut_error(
-            "input_monitoring_required",
-            "macOS input monitoring permission is required for global shortcuts",
+            "accessibility_required",
+            "macOS Accessibility permission is required for global shortcuts",
         ))
     }
 
@@ -611,7 +611,7 @@ mod platform {
             if let Some(state) = STATE.get() {
                 state.listener_thread_active.store(false, Ordering::Release);
                 if result.is_err() {
-                    set_listener_failure("无法安装 macOS 全局键盘监听器，请检查输入监控权限");
+                    set_listener_failure("无法安装 macOS 全局键盘监听器，请检查辅助功能权限");
                 }
             }
         });
@@ -623,7 +623,7 @@ mod platform {
         let event_tap = CGEventTap::new(
             CGEventTapLocation::Session,
             CGEventTapPlacement::HeadInsertEventTap,
-            CGEventTapOptions::ListenOnly,
+            CGEventTapOptions::Default,
             vec![
                 CGEventType::KeyDown,
                 CGEventType::KeyUp,

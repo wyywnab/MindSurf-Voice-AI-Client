@@ -21,11 +21,7 @@ const isMacOS = computed(
     props.appInfo?.platform === "macos" ||
     (!props.appInfo && globalThis.navigator.userAgent.includes("Mac OS")),
 );
-const macPermissions: readonly SystemPermission[] = [
-  "microphone",
-  "accessibility",
-  "input_monitoring",
-];
+const macPermissions: readonly SystemPermission[] = ["microphone", "accessibility"];
 const permissionStates = reactive<Record<SystemPermission, SystemPermissionState>>({
   microphone: "unknown",
   accessibility: "unknown",
@@ -37,6 +33,12 @@ const permissionError = ref("");
 const microphoneProbeState = ref<"unknown" | "checking" | "ready" | "failed">(
   "unknown",
 );
+const shortcutReady = computed(
+  () =>
+    !session.state.shortcutDesiredEnabled ||
+    (session.state.shortcutRegistered &&
+      session.state.shortcutListenerStatus === "running"),
+);
 
 const permissionsReady = computed(
   () =>
@@ -44,7 +46,8 @@ const permissionsReady = computed(
       macPermissions.every(
         (permission) => permissionStates[permission] === "granted",
       )) &&
-    microphoneProbeState.value === "ready",
+    microphoneProbeState.value === "ready" &&
+    shortcutReady.value,
 );
 
 const permissionInitializationLabel = computed(() => {
@@ -85,10 +88,11 @@ async function refreshPermission(permission: SystemPermission) {
       microphoneProbeState.value = "unknown";
     }
     if (
-      permission === "input_monitoring" &&
+      permission === "accessibility" &&
       result.data.status === "granted" &&
       session.state.shortcutDesiredEnabled &&
-      !session.state.shortcutRegistered
+      (!session.state.shortcutRegistered ||
+        session.state.shortcutListenerStatus !== "running")
     ) {
       await session.initializeRecordShortcut();
     }
@@ -133,7 +137,7 @@ async function requestPermission(permission: SystemPermission) {
     await prepareWebViewMicrophone();
   }
   if (
-    permission === "input_monitoring" &&
+    permission === "accessibility" &&
     result.data.status === "granted" &&
     session.state.shortcutDesiredEnabled
   ) {
@@ -229,7 +233,7 @@ onBeforeUnmount(() => {
               {{ permissionInitializationLabel }}
             </strong>
             <small v-if="isMacOS">
-              将依次检查麦克风、辅助功能和输入监控，并验证实际录音能力。
+              将依次检查麦克风和辅助功能，并验证实际录音与全局快捷键监听器。
             </small>
             <small v-else>检查并申请麦克风权限，同时验证实际录音能力。</small>
             <button
@@ -319,32 +323,50 @@ onBeforeUnmount(() => {
             </div>
           </article>
           <article>
-            <span>输入监控</span>
+            <span>全局快捷键</span>
             <div class="permission-setting">
-              <strong :data-status="permissionStates.input_monitoring">
-                {{ permissionStatusLabel(permissionStates.input_monitoring) }}
+              <strong
+                :data-status="
+                  shortcutReady
+                    ? 'granted'
+                    : session.state.shortcutListenerStatus === 'error'
+                      ? 'denied'
+                      : 'unknown'
+                "
+              >
+                {{
+                  !session.state.shortcutDesiredEnabled
+                    ? "已关闭"
+                    : shortcutReady
+                      ? "监听器运行中"
+                      : session.state.shortcutListenerStatus === "error"
+                        ? "监听器启动失败"
+                        : "监听器启动中"
+                }}
               </strong>
-              <small>用于在其他应用处于前台时监听按住说话快捷键</small>
+              <small>
+                通过辅助功能在其他应用处于前台时监听按住说话快捷键；不再使用无法可靠查询的“输入监控”状态
+              </small>
+              <small v-if="session.state.shortcutError" class="inline-error">
+                {{ session.state.shortcutError }}
+              </small>
               <div>
                 <button
-                  v-if="permissionStates.input_monitoring !== 'granted'"
+                  v-if="session.state.shortcutDesiredEnabled && !shortcutReady"
                   class="button button-primary button-compact"
                   type="button"
-                  :disabled="
-                    permissionInitializationBusy ||
-                    permissionBusy === 'input_monitoring'
-                  "
-                  @click="requestPermission('input_monitoring')"
+                  :disabled="permissionInitializationBusy"
+                  @click="session.initializeRecordShortcut()"
                 >
-                  请求授权
+                  重新启动监听器
                 </button>
                 <button
                   class="button button-secondary button-compact"
                   type="button"
                   :disabled="permissionInitializationBusy"
-                  @click="openPermissionSettings('input_monitoring')"
+                  @click="openPermissionSettings('accessibility')"
                 >
-                  打开系统设置
+                  打开辅助功能设置
                 </button>
               </div>
             </div>

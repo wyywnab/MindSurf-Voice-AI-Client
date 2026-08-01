@@ -15,6 +15,8 @@ pub struct TargetWindow {
     handle: isize,
     #[cfg(target_os = "macos")]
     focused_element: core_foundation::base::CFTypeRef,
+    #[cfg(target_os = "macos")]
+    allow_self_frontmost: bool,
 }
 
 #[cfg(target_os = "macos")]
@@ -47,7 +49,7 @@ pub trait TextInjector: Send + Sync {
 #[tauri::command]
 pub fn prepare_text_injection_target(app: tauri::AppHandle) -> CommandResult<()> {
     #[cfg(target_os = "macos")]
-    if let Err(error) = platform::yield_focus_if_needed(&app) {
+    if let Err(error) = platform::prepare_target(&app) {
         return CommandResult::failure(error);
     }
 
@@ -98,7 +100,11 @@ pub fn inject_text(text: String, max_code_points: Option<usize>) -> CommandResul
     if let Err(error) = platform::wait_for_modifiers_released() {
         return CommandResult::failure(error);
     }
-    let target = match injector.capture_target() {
+    #[cfg(target_os = "macos")]
+    let captured_target = platform::capture_prepared_target(&injector);
+    #[cfg(not(target_os = "macos"))]
+    let captured_target = injector.capture_target();
+    let target = match captured_target {
         Ok(target) => target,
         Err(error) => return CommandResult::failure(error),
     };
@@ -378,12 +384,13 @@ mod platform {
 #[cfg(target_os = "macos")]
 mod platform {
     use std::ptr;
+    use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use core_foundation::base::{CFEqual, CFRelease, CFTypeRef, TCFType};
     use core_foundation::string::{CFString, CFStringRef};
-    use core_graphics::event::{CGEvent, CGEventTapLocation, CGKeyCode, KeyCode};
+    use core_graphics::event::{CGEvent, CGKeyCode, KeyCode};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSApplication, NSWorkspace};
@@ -392,14 +399,39 @@ mod platform {
     use super::{normalize_newlines, AppError, InjectReport, Instant, TargetWindow, TextInjector};
 
     const CHARACTERS_PER_BATCH: usize = 128;
+    const PREPARED_TARGET_MAX_AGE_MS: u64 = 120_000;
+    static PREPARED_TARGET_PID: AtomicI32 = AtomicI32::new(0);
+    static PREPARED_TARGET_AT_MS: AtomicU64 = AtomicU64::new(0);
 
     pub struct PlatformTextInjector;
 
-    pub fn yield_focus_if_needed(app: &tauri::AppHandle) -> Result<(), AppError> {
-        if frontmost_process_id() != Some(std::process::id() as i32) {
-            return Ok(());
+    pub fn prepare_target(app: &tauri::AppHandle) -> Result<(), AppError> {
+        PREPARED_TARGET_PID.store(0, Ordering::Release);
+        PREPARED_TARGET_AT_MS.store(0, Ordering::Release);
+
+        if frontmost_process_id() == Some(std::process::id() as i32) {
+            yield_focus(app)?;
         }
 
+        for _ in 0..50 {
+            if let Some(process_id) =
+                frontmost_process_id().filter(|process_id| *process_id != std::process::id() as i32)
+            {
+                PREPARED_TARGET_PID.store(process_id, Ordering::Release);
+                PREPARED_TARGET_AT_MS.store(timestamp_ms(), Ordering::Release);
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        Err(AppError::new(
+            "injection_target_is_self",
+            "switch to the target application before recording",
+            true,
+        ))
+    }
+
+    fn yield_focus(app: &tauri::AppHandle) -> Result<(), AppError> {
         if let Some(mtm) = MainThreadMarker::new() {
             NSApplication::sharedApplication(mtm).deactivate();
             return Ok(());
@@ -417,6 +449,36 @@ mod platform {
                 true,
             )
         })
+    }
+
+    pub fn capture_prepared_target(
+        injector: &PlatformTextInjector,
+    ) -> Result<TargetWindow, AppError> {
+        let prepared_process_id = PREPARED_TARGET_PID.swap(0, Ordering::AcqRel);
+        let prepared_at_ms = PREPARED_TARGET_AT_MS.swap(0, Ordering::AcqRel);
+        let current_process_id = frontmost_process_id();
+        let self_process_id = std::process::id() as i32;
+        let prepared_is_fresh = prepared_process_id > 0
+            && timestamp_ms().saturating_sub(prepared_at_ms) <= PREPARED_TARGET_MAX_AGE_MS;
+        let prepared_is_current = current_process_id == Some(prepared_process_id);
+        let mindsurf_became_frontmost = current_process_id == Some(self_process_id);
+
+        if prepared_is_fresh && (prepared_is_current || mindsurf_became_frontmost) {
+            let focused_element = focused_ui_element(prepared_process_id).ok_or_else(|| {
+                AppError::new(
+                    "injection_target_unavailable",
+                    "the prepared application no longer has a focused accessibility element",
+                    true,
+                )
+            })?;
+            return Ok(TargetWindow {
+                handle: prepared_process_id as isize,
+                focused_element,
+                allow_self_frontmost: mindsurf_became_frontmost,
+            });
+        }
+
+        injector.capture_target()
     }
 
     pub fn wait_for_modifiers_released() -> Result<(), AppError> {
@@ -485,6 +547,7 @@ mod platform {
             Ok(TargetWindow {
                 handle: process_id as isize,
                 focused_element,
+                allow_self_frontmost: false,
             })
         }
 
@@ -498,7 +561,11 @@ mod platform {
             let event_source = create_event_source()?;
 
             for (text_start, character) in normalized.char_indices() {
-                if frontmost_process_id() != Some(target_process_id) {
+                let frontmost_process_id = frontmost_process_id();
+                let target_is_active = frontmost_process_id == Some(target_process_id)
+                    || (target.allow_self_frontmost
+                        && frontmost_process_id == Some(std::process::id() as i32));
+                if !target_is_active {
                     return Ok(partial_report(
                         &normalized,
                         requested_code_points,
@@ -519,7 +586,7 @@ mod platform {
                     ));
                 }
 
-                if let Err(error) = post_character(&event_source, character) {
+                if let Err(error) = post_character(&event_source, target_process_id, character) {
                     if injected_code_points == 0 {
                         return Err(error);
                     }
@@ -600,7 +667,11 @@ mod platform {
         })
     }
 
-    fn post_character(source: &CGEventSource, character: char) -> Result<(), AppError> {
+    fn post_character(
+        source: &CGEventSource,
+        process_id: i32,
+        character: char,
+    ) -> Result<(), AppError> {
         let key_code = if character == '\n' {
             KeyCode::RETURN
         } else {
@@ -627,9 +698,16 @@ mod platform {
             let text = character.to_string();
             key_down.set_string(&text);
         }
-        key_down.post(CGEventTapLocation::HID);
-        key_up.post(CGEventTapLocation::HID);
+        key_down.post_to_pid(process_id);
+        key_up.post_to_pid(process_id);
         Ok(())
+    }
+
+    fn timestamp_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or_default()
     }
 
     fn partial_report(
