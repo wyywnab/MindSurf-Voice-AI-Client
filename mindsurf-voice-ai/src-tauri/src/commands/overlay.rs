@@ -1,8 +1,8 @@
 use std::sync::Mutex;
 
 use tauri::{
-    App, AppHandle, Manager, PhysicalPosition, Runtime, State, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
+    App, AppHandle, LogicalPosition, LogicalSize, Manager, Monitor, Runtime, State, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
 
 use crate::error::{AppError, CommandResult};
@@ -145,48 +145,43 @@ fn reposition<R: Runtime>(
     window: &WebviewWindow<R>,
     position: OverlayPosition,
 ) -> Result<(), String> {
-    let size = window.outer_size().map_err(|error| error.to_string())?;
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let margin = (f64::from(OVERLAY_MARGIN) * scale).round() as i32;
-    let work_area = foreground_work_area(window).unwrap_or_else(|| {
+    let target = foreground_display(window).unwrap_or_else(|| {
         let monitor = window
             .current_monitor()
             .ok()
             .flatten()
             .or_else(|| window.primary_monitor().ok().flatten());
-        monitor.map_or(
-            WorkArea {
-                left: 0,
-                top: 0,
-                right: 1920,
-                bottom: 1080,
+        monitor.as_ref().map_or(
+            TargetDisplay {
+                work_area: WorkArea {
+                    left: 0,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1080,
+                },
+                scale_factor: 1.0,
             },
-            |monitor| {
-                let origin = monitor.position();
-                let monitor_size = monitor.size();
-                WorkArea {
-                    left: origin.x,
-                    top: origin.y,
-                    right: origin.x + monitor_size.width as i32,
-                    bottom: origin.y + monitor_size.height as i32,
-                }
-            },
+            target_display,
         )
     });
-    let (x, y) = calculate_position(
-        work_area,
-        size.width as i32,
-        size.height as i32,
-        margin,
-        position,
-    );
+    apply_target_display(window, target, position)?;
 
-    window
-        .set_position(PhysicalPosition::new(x, y))
-        .map_err(|error| error.to_string())
+    if let Some(actual_target) = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .as_ref()
+        .map(target_display)
+        .filter(|actual| actual.work_area == target.work_area)
+    {
+        if (actual_target.scale_factor - target.scale_factor).abs() > 0.01 {
+            apply_target_display(window, actual_target, position)?;
+        }
+    }
+    Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct WorkArea {
     left: i32,
     top: i32,
@@ -194,13 +189,69 @@ struct WorkArea {
     bottom: i32,
 }
 
-#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Clone, Copy)]
+struct TargetDisplay {
+    work_area: WorkArea,
+    scale_factor: f64,
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Rectangle {
     x: f64,
     y: f64,
     width: f64,
     height: f64,
+}
+
+fn target_display(monitor: &Monitor) -> TargetDisplay {
+    let area = monitor.work_area();
+    TargetDisplay {
+        work_area: WorkArea {
+            left: area.position.x,
+            top: area.position.y,
+            right: area.position.x + area.size.width as i32,
+            bottom: area.position.y + area.size.height as i32,
+        },
+        scale_factor: valid_scale_factor(monitor.scale_factor()),
+    }
+}
+
+fn apply_target_display<R: Runtime>(
+    window: &WebviewWindow<R>,
+    target: TargetDisplay,
+    position: OverlayPosition,
+) -> Result<(), String> {
+    let (width, height, margin) = scaled_overlay_metrics(target.scale_factor);
+    let (x, y) = calculate_position(target.work_area, width, height, margin, position);
+    let scale_factor = valid_scale_factor(target.scale_factor);
+
+    window
+        .set_size(LogicalSize::new(OVERLAY_WIDTH, OVERLAY_HEIGHT))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_position(LogicalPosition::new(
+            f64::from(x) / scale_factor,
+            f64::from(y) / scale_factor,
+        ))
+        .map_err(|error| error.to_string())
+}
+
+fn scaled_overlay_metrics(scale_factor: f64) -> (i32, i32, i32) {
+    let scale_factor = valid_scale_factor(scale_factor);
+    (
+        (OVERLAY_WIDTH * scale_factor).round().max(1.0) as i32,
+        (OVERLAY_HEIGHT * scale_factor).round().max(1.0) as i32,
+        (f64::from(OVERLAY_MARGIN) * scale_factor).round() as i32,
+    )
+}
+
+fn valid_scale_factor(scale_factor: f64) -> f64 {
+    if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    }
 }
 
 fn calculate_position(
@@ -222,7 +273,7 @@ fn calculate_position(
 }
 
 #[cfg(windows)]
-fn foreground_work_area<R: Runtime>(_window: &WebviewWindow<R>) -> Option<WorkArea> {
+fn foreground_display<R: Runtime>(window: &WebviewWindow<R>) -> Option<TargetDisplay> {
     use std::mem::size_of;
     use windows::Win32::{
         Graphics::Gdi::{
@@ -239,17 +290,20 @@ fn foreground_work_area<R: Runtime>(_window: &WebviewWindow<R>) -> Option<WorkAr
         };
         GetMonitorInfoW(monitor, &mut info)
             .as_bool()
-            .then_some(WorkArea {
-                left: info.rcWork.left,
-                top: info.rcWork.top,
-                right: info.rcWork.right,
-                bottom: info.rcWork.bottom,
+            .then_some(TargetDisplay {
+                work_area: WorkArea {
+                    left: info.rcWork.left,
+                    top: info.rcWork.top,
+                    right: info.rcWork.right,
+                    bottom: info.rcWork.bottom,
+                },
+                scale_factor: window.scale_factor().unwrap_or(1.0),
             })
     }
 }
 
 #[cfg(target_os = "macos")]
-fn foreground_work_area<R: Runtime>(window: &WebviewWindow<R>) -> Option<WorkArea> {
+fn foreground_display<R: Runtime>(window: &WebviewWindow<R>) -> Option<TargetDisplay> {
     use std::ffi::c_void;
     use std::ptr;
 
@@ -336,6 +390,7 @@ fn foreground_work_area<R: Runtime>(window: &WebviewWindow<R>) -> Option<WorkAre
         .map(|monitor| {
             let origin = monitor.position();
             let size = monitor.size();
+            let scale_factor = valid_scale_factor(monitor.scale_factor());
             let area = overlap_area(
                 Rectangle {
                     x: bounds.origin.x,
@@ -343,26 +398,32 @@ fn foreground_work_area<R: Runtime>(window: &WebviewWindow<R>) -> Option<WorkAre
                     width: bounds.size.width,
                     height: bounds.size.height,
                 },
-                Rectangle {
-                    x: f64::from(origin.x),
-                    y: f64::from(origin.y),
-                    width: f64::from(size.width),
-                    height: f64::from(size.height),
-                },
+                physical_to_logical(
+                    Rectangle {
+                        x: f64::from(origin.x),
+                        y: f64::from(origin.y),
+                        width: f64::from(size.width),
+                        height: f64::from(size.height),
+                    },
+                    scale_factor,
+                ),
             );
             (monitor, area)
         })
         .max_by_key(|(_, area)| *area)
         .filter(|(_, area)| *area > 0)
-        .map(|(monitor, _)| {
-            let area = monitor.work_area();
-            WorkArea {
-                left: area.position.x,
-                top: area.position.y,
-                right: area.position.x + area.size.width as i32,
-                bottom: area.position.y + area.size.height as i32,
-            }
-        })
+        .map(|(monitor, _)| target_display(&monitor))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn physical_to_logical(rectangle: Rectangle, scale_factor: f64) -> Rectangle {
+    let scale_factor = valid_scale_factor(scale_factor);
+    Rectangle {
+        x: rectangle.x / scale_factor,
+        y: rectangle.y / scale_factor,
+        width: rectangle.width / scale_factor,
+        height: rectangle.height / scale_factor,
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -376,7 +437,7 @@ fn overlap_area(first: Rectangle, second: Rectangle) -> u64 {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn foreground_work_area<R: Runtime>(window: &WebviewWindow<R>) -> Option<WorkArea> {
+fn foreground_display<R: Runtime>(window: &WebviewWindow<R>) -> Option<TargetDisplay> {
     let cursor = window.cursor_position().ok()?;
     let monitors = window.available_monitors().ok()?;
     let monitor = monitors.into_iter().find(|monitor| {
@@ -387,13 +448,7 @@ fn foreground_work_area<R: Runtime>(window: &WebviewWindow<R>) -> Option<WorkAre
             && cursor.y >= f64::from(origin.y)
             && cursor.y < f64::from(origin.y) + f64::from(size.height)
     })?;
-    let area = monitor.work_area();
-    Some(WorkArea {
-        left: area.position.x,
-        top: area.position.y,
-        right: area.position.x + area.size.width as i32,
-        bottom: area.position.y + area.size.height as i32,
-    })
+    Some(target_display(&monitor))
 }
 
 #[cfg(windows)]
@@ -481,7 +536,10 @@ fn hide_native_window<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{calculate_position, overlap_area, OverlayPosition, Rectangle, WorkArea};
+    use super::{
+        calculate_position, overlap_area, physical_to_logical, scaled_overlay_metrics,
+        OverlayPosition, Rectangle, WorkArea,
+    };
 
     const AREA: WorkArea = WorkArea {
         left: 100,
@@ -555,6 +613,34 @@ mod tests {
                 }
             ),
             0
+        );
+    }
+
+    #[test]
+    fn scales_overlay_dimensions_for_target_display() {
+        assert_eq!(scaled_overlay_metrics(1.0), (480, 132, 20));
+        assert_eq!(scaled_overlay_metrics(2.0), (960, 264, 40));
+        assert_eq!(scaled_overlay_metrics(f64::NAN), (480, 132, 20));
+    }
+
+    #[test]
+    fn converts_monitor_bounds_to_quartz_logical_coordinates() {
+        assert_eq!(
+            physical_to_logical(
+                Rectangle {
+                    x: 2880.0,
+                    y: 0.0,
+                    width: 2880.0,
+                    height: 1800.0,
+                },
+                2.0,
+            ),
+            Rectangle {
+                x: 1440.0,
+                y: 0.0,
+                width: 1440.0,
+                height: 900.0,
+            }
         );
     }
 }

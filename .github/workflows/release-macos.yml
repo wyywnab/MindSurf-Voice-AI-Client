@@ -30,6 +30,24 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
+      - name: Validate release version
+        working-directory: mindsurf-voice-ai
+        shell: bash
+        run: |
+          app_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          package_version="$(node -p "require('./package.json').version")"
+          cargo_version="$(cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).packages[0].version")"
+
+          if [[ "$package_version" != "$app_version" || "$cargo_version" != "$app_version" ]]; then
+            echo "Version mismatch: tauri=$app_version package=$package_version cargo=$cargo_version" >&2
+            exit 1
+          fi
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$app_version" ]]; then
+            echo "Release tag $GITHUB_REF_NAME must equal v$app_version" >&2
+            exit 1
+          fi
+
       - name: Install frontend dependencies
         working-directory: mindsurf-voice-ai
         run: npm ci

@@ -34,6 +34,11 @@ macOS 文本注入会同时校验前台应用和 focused Accessibility 元素。
 切换窗口、标签页或输入框时，注入会停止并保留剩余文本。悬浮窗优先跟随前台
 应用最前方窗口所在的显示器，无法读取窗口信息时再回退到应用当前显示器。
 
+每次文本注入任务只创建并复用一个 `CGEventSource`。悬浮窗选择目标显示器时，
+会先把 Tauri 的物理显示器边界转换为 Quartz 逻辑坐标，再使用目标显示器的
+scale factor 计算物理尺寸和边距；窗口最终通过逻辑坐标移动和调整大小，避免
+读取旧显示器缩放造成 Retina 与非 Retina 混合环境下的偏移。
+
 ## 本地验证
 
 ```bash
@@ -77,7 +82,9 @@ npm run tauri build -- --target universal-apple-darwin --bundles app,dmg
 ## 签名与公证
 
 根目录 `.github/workflows/release-macos.yml` 会构建、签名、公证并创建草稿
-GitHub Release。仓库需要配置以下 Actions secrets：
+GitHub Release。tag 发布前会校验 tag、`tauri.conf.json`、`package.json` 和
+`Cargo.toml` 的版本一致；例如应用版本为 `0.1.0` 时只能使用 `v0.1.0` tag。
+仓库需要配置以下 Actions secrets：
 
 - `APPLE_CERTIFICATE`
 - `APPLE_CERTIFICATE_PASSWORD`
@@ -86,5 +93,7 @@ GitHub Release。仓库需要配置以下 Actions secrets：
 - `APPLE_PASSWORD`
 - `APPLE_TEAM_ID`
 
-发布前还应在常用编辑器、浏览器输入框、Terminal、多显示器和全屏 Space 中
-手工验证快捷键、中文/英文/emoji/换行注入、权限恢复、睡眠唤醒与服务重连。
+发布前还应在常用编辑器、浏览器输入框、Terminal、Retina + 非 Retina 多显示器
+和全屏 Space 中手工验证快捷键、权限恢复、睡眠唤醒与服务重连，并分别使用
+500、2000、8000 code point 的中文、英文、emoji 和换行混合文本验证注入性能、
+目标切换中止及剩余文本保留。

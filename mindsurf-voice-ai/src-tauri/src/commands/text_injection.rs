@@ -460,6 +460,7 @@ mod platform {
             let target_process_id = target.handle as i32;
             let mut injected_code_points = 0usize;
             let mut injected_text_end = 0usize;
+            let event_source = create_event_source()?;
 
             for (text_start, character) in normalized.char_indices() {
                 if frontmost_process_id() != Some(target_process_id) {
@@ -483,7 +484,7 @@ mod platform {
                     ));
                 }
 
-                if let Err(error) = post_character(character) {
+                if let Err(error) = post_character(&event_source, character) {
                     if injected_code_points == 0 {
                         return Err(error);
                     }
@@ -554,15 +555,17 @@ mod platform {
         (result == 0 && !focused_element.is_null()).then_some(focused_element)
     }
 
-    fn post_character(character: char) -> Result<(), AppError> {
-        let source =
-            CGEventSource::new(CGEventSourceStateID::CombinedSessionState).map_err(|_| {
-                AppError::new(
-                    "injection_unavailable",
-                    "unable to create a macOS keyboard event source",
-                    true,
-                )
-            })?;
+    fn create_event_source() -> Result<CGEventSource, AppError> {
+        CGEventSource::new(CGEventSourceStateID::CombinedSessionState).map_err(|_| {
+            AppError::new(
+                "injection_unavailable",
+                "unable to create a macOS keyboard event source",
+                true,
+            )
+        })
+    }
+
+    fn post_character(source: &CGEventSource, character: char) -> Result<(), AppError> {
         let key_code = if character == '\n' {
             KeyCode::RETURN
         } else {
@@ -576,13 +579,14 @@ mod platform {
                     true,
                 )
             })?;
-        let key_up = CGEvent::new_keyboard_event(source, key_code, false).map_err(|_| {
-            AppError::new(
-                "injection_unavailable",
-                "unable to create a macOS key-up event",
-                true,
-            )
-        })?;
+        let key_up =
+            CGEvent::new_keyboard_event(source.clone(), key_code, false).map_err(|_| {
+                AppError::new(
+                    "injection_unavailable",
+                    "unable to create a macOS key-up event",
+                    true,
+                )
+            })?;
 
         if character != '\n' {
             let text = character.to_string();
@@ -608,6 +612,47 @@ mod platform {
             elapsed_ms: started_at.elapsed().as_millis(),
             complete: false,
             error_code: Some(error_code),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::time::Instant;
+
+        use super::partial_report;
+
+        #[test]
+        fn preserves_unicode_remainder_for_long_injections() {
+            for requested_code_points in [500, 2_000, 8_000] {
+                let text: String = "中A😀\n"
+                    .chars()
+                    .cycle()
+                    .take(requested_code_points)
+                    .collect();
+                let injected_code_points = requested_code_points / 2;
+                let injected_text_end = text
+                    .char_indices()
+                    .nth(injected_code_points)
+                    .map_or(text.len(), |(index, _)| index);
+
+                let report = partial_report(
+                    &text,
+                    requested_code_points,
+                    injected_code_points,
+                    injected_text_end,
+                    Instant::now(),
+                    "injection_partial",
+                );
+
+                assert_eq!(report.requested_code_points, requested_code_points);
+                assert_eq!(report.injected_code_points, injected_code_points);
+                assert_eq!(
+                    report.remaining_text.chars().count(),
+                    requested_code_points - injected_code_points
+                );
+                assert_eq!(report.error_code, Some("injection_partial"));
+                assert!(!report.complete);
+            }
         }
     }
 
