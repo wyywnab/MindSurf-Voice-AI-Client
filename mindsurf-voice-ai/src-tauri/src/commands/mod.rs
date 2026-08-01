@@ -1,4 +1,5 @@
 pub(crate) mod app_info;
+pub(crate) mod native_recorder;
 pub(crate) mod overlay;
 pub(crate) mod permissions;
 pub(crate) mod shortcuts;

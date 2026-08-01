@@ -47,17 +47,10 @@ async function configureStartupPermissions(platform: string) {
   const hasMissingPermission = checks.some(
     ({ result }) => !result.ok || result.data.status !== "granted",
   );
-  const accessibilityGranted = checks.some(
-    ({ permission, result }) =>
-      permission === "accessibility" && result.ok && result.data.status === "granted",
-  );
-
   if (hasMissingPermission) {
     activeTab.value = "permissions";
   }
-  if (accessibilityGranted || !session.state.shortcutDesiredEnabled) {
-    await session.initializeRecordShortcut();
-  }
+  await session.initializeRecordShortcut();
 }
 
 onMounted(async () => {

@@ -716,6 +716,13 @@ function readStoredShortcut(): ShortcutBinding {
     return "ctrl_win";
   }
   const stored = localStorage.getItem(SHORTCUT_STORAGE_KEY);
+  if (
+    typeof navigator !== "undefined" &&
+    navigator.userAgent.includes("Mac OS") &&
+    (stored === null || stored === "ctrl_win")
+  ) {
+    return "ctrl_win_space";
+  }
   return stored === "ctrl_alt_space" ||
     stored === "ctrl_shift_space" ||
     stored === "ctrl_win_space"
@@ -918,7 +925,7 @@ function shortcutDisplay(binding: ShortcutBinding) {
     typeof navigator !== "undefined" && navigator.userAgent.includes("Mac OS");
   const modifier = isMacOS ? "Control + Command" : "Ctrl + Win";
   const labels: Record<ShortcutBinding, string> = {
-    ctrl_win: modifier,
+    ctrl_win: isMacOS ? `${modifier} + Space` : modifier,
     ctrl_alt_space: isMacOS ? "Control + Option + Space" : "Ctrl + Alt + Space",
     ctrl_shift_space: isMacOS ? "Control + Shift + Space" : "Ctrl + Shift + Space",
     ctrl_win_space: `${modifier} + Space`,

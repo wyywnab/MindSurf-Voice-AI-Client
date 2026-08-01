@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use tauri::{
@@ -11,6 +13,8 @@ const OVERLAY_LABEL: &str = "overlay";
 const OVERLAY_WIDTH: f64 = 480.0;
 const OVERLAY_HEIGHT: f64 = 132.0;
 const OVERLAY_MARGIN: i32 = 20;
+#[cfg(target_os = "macos")]
+static OVERLAY_PANEL: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OverlayPosition {
@@ -234,7 +238,10 @@ fn apply_target_display<R: Runtime>(
             f64::from(x) / scale_factor,
             f64::from(y) / scale_factor,
         ))
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    sync_overlay_panel_frame(window)?;
+    Ok(())
 }
 
 fn scaled_overlay_metrics(scale_factor: f64) -> (i32, i32, i32) {
@@ -468,7 +475,12 @@ fn configure_nonactivating_window<R: Runtime>(window: &WebviewWindow<R>) {
 
 #[cfg(target_os = "macos")]
 fn configure_nonactivating_window<R: Runtime>(window: &WebviewWindow<R>) {
-    use objc2_app_kit::{NSFloatingWindowLevel, NSWindow, NSWindowCollectionBehavior};
+    use objc2::rc::Retained;
+    use objc2::MainThreadOnly;
+    use objc2_app_kit::{
+        NSBackingStoreType, NSColor, NSPanel, NSScreenSaverWindowLevel, NSWindow,
+        NSWindowCollectionBehavior, NSWindowOrderingMode, NSWindowStyleMask,
+    };
 
     let Ok(native_window) = window.ns_window() else {
         return;
@@ -476,15 +488,79 @@ fn configure_nonactivating_window<R: Runtime>(window: &WebviewWindow<R>) {
     let native_window = native_window as usize;
     let _ = window.run_on_main_thread(move || unsafe {
         let native_window = &*(native_window as *mut NSWindow);
-        native_window.setLevel(NSFloatingWindowLevel);
-        native_window.setCollectionBehavior(
-            NSWindowCollectionBehavior::CanJoinAllSpaces
+        let Some(mtm) = objc2::MainThreadMarker::new() else {
+            return;
+        };
+        let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
+            NSPanel::alloc(mtm),
+            native_window.frame(),
+            NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
+            NSBackingStoreType::Buffered,
+            false,
+        );
+        panel.setFloatingPanel(true);
+        panel.setBecomesKeyOnlyIfNeeded(true);
+        panel.setLevel(NSScreenSaverWindowLevel);
+        panel.setCollectionBehavior(
+            NSWindowCollectionBehavior::CanJoinAllApplications
+                | NSWindowCollectionBehavior::CanJoinAllSpaces
                 | NSWindowCollectionBehavior::FullScreenAuxiliary
-                | NSWindowCollectionBehavior::Transient
+                | NSWindowCollectionBehavior::Stationary
                 | NSWindowCollectionBehavior::IgnoresCycle,
         );
-        native_window.setHidesOnDeactivate(false);
+        panel.setHidesOnDeactivate(false);
+        panel.setOpaque(false);
+        panel.setBackgroundColor(Some(&NSColor::clearColor()));
+        panel.setHasShadow(false);
+        panel.setReleasedWhenClosed(false);
+        panel.setIgnoresMouseEvents(true);
+
+        // Keep Tauri's NSWindow and WKWebView hierarchy intact. Tao assumes the
+        // NSWindow always owns its content view and crashes if it is moved to a
+        // replacement panel. A borderless NSPanel instead acts as a Space-aware
+        // carrier; AppKit moves its child window with it into fullscreen Spaces.
+        native_window.setLevel(NSScreenSaverWindowLevel);
+        native_window.setOpaque(false);
+        native_window.setBackgroundColor(Some(&NSColor::clearColor()));
+        native_window.setHasShadow(false);
+        native_window.setCollectionBehavior(
+            NSWindowCollectionBehavior::CanJoinAllApplications
+                | NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::FullScreenAuxiliary
+                | NSWindowCollectionBehavior::Stationary
+                | NSWindowCollectionBehavior::IgnoresCycle,
+        );
+        panel.addChildWindow_ordered(native_window, NSWindowOrderingMode::Above);
+        panel.orderOut(None);
+        let panel = Retained::into_raw(panel) as usize;
+        OVERLAY_PANEL.store(panel, Ordering::Release);
+        #[cfg(debug_assertions)]
+        eprintln!("overlay: native NSPanel initialized");
     });
+}
+
+#[cfg(target_os = "macos")]
+fn sync_overlay_panel_frame<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
+    use objc2_app_kit::{NSPanel, NSWindow, NSWindowOrderingMode};
+
+    let panel = OVERLAY_PANEL.load(Ordering::Acquire);
+    if panel == 0 {
+        return Ok(());
+    }
+    let native_window = window.ns_window().map_err(|error| error.to_string())? as usize;
+    window
+        .run_on_main_thread(move || unsafe {
+            let native_window = &*(native_window as *mut NSWindow);
+            let panel = &*(panel as *mut NSPanel);
+            let frame = native_window.frame();
+
+            // Moving a parent window also moves its children. Detach briefly so
+            // synchronizing the invisible carrier cannot offset the real overlay.
+            panel.removeChildWindow(native_window);
+            panel.setFrame_display(frame, false);
+            panel.addChildWindow_ordered(native_window, NSWindowOrderingMode::Above);
+        })
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -514,12 +590,42 @@ fn hide_native_window<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), Strin
 
 #[cfg(target_os = "macos")]
 fn show_without_activation<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
-    use objc2_app_kit::NSWindow;
+    use objc2::ClassType;
+    use objc2_app_kit::{
+        NSPanel, NSScreenSaverWindowLevel, NSWindow, NSWindowCollectionBehavior,
+        NSWindowOrderingMode,
+    };
 
+    let panel = OVERLAY_PANEL.load(Ordering::Acquire);
+    if panel == 0 {
+        return Err("原生悬浮面板尚未初始化".to_string());
+    }
     let native_window = window.ns_window().map_err(|error| error.to_string())? as usize;
     window
         .run_on_main_thread(move || unsafe {
-            (&*(native_window as *mut NSWindow)).orderFrontRegardless();
+            let panel = &*(panel as *mut NSPanel);
+            let native_window = &*(native_window as *mut NSWindow);
+            panel.setLevel(NSScreenSaverWindowLevel);
+            panel.setCollectionBehavior(
+                NSWindowCollectionBehavior::CanJoinAllApplications
+                    | NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary
+                    | NSWindowCollectionBehavior::Stationary
+                    | NSWindowCollectionBehavior::IgnoresCycle,
+            );
+            native_window.setLevel(NSScreenSaverWindowLevel);
+            native_window.setCollectionBehavior(
+                NSWindowCollectionBehavior::CanJoinAllApplications
+                    | NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary
+                    | NSWindowCollectionBehavior::Stationary
+                    | NSWindowCollectionBehavior::IgnoresCycle,
+            );
+            if native_window.parentWindow().as_deref() != Some(panel.as_super()) {
+                panel.addChildWindow_ordered(native_window, NSWindowOrderingMode::Above);
+            }
+            panel.orderFrontRegardless();
+            native_window.orderFrontRegardless();
         })
         .map_err(|error| error.to_string())
 }
@@ -529,7 +635,24 @@ fn show_without_activation<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), 
     window.show().map_err(|error| error.to_string())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn hide_native_window<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
+    use objc2_app_kit::{NSPanel, NSWindow};
+
+    let panel = OVERLAY_PANEL.load(Ordering::Acquire);
+    if panel == 0 {
+        return Ok(());
+    }
+    let native_window = window.ns_window().map_err(|error| error.to_string())? as usize;
+    window
+        .run_on_main_thread(move || unsafe {
+            (&*(native_window as *mut NSWindow)).orderOut(None);
+            (&*(panel as *mut NSPanel)).orderOut(None);
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn hide_native_window<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     window.hide().map_err(|error| error.to_string())
 }

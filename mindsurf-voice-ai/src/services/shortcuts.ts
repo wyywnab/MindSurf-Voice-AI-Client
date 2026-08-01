@@ -50,6 +50,19 @@ export async function unregisterRecordShortcut(): Promise<
   }
 }
 
+export async function reportShortcutEventHandled(details: {
+  phase: "pressed" | "released";
+  canStart: boolean;
+  recorderState: string;
+  requestStatus: string;
+}): Promise<void> {
+  try {
+    await invoke("report_shortcut_event_handled", details);
+  } catch {
+    // Runtime diagnostics must never interfere with shortcut handling.
+  }
+}
+
 export async function subscribeShortcutEvents(callbacks: {
   onCancel: (event: CancelShortcutEvent) => void;
   onRecordPressed: (event: RecordShortcutEvent) => void;

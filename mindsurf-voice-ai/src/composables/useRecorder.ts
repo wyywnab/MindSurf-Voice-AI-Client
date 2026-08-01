@@ -1,3 +1,4 @@
+import { isTauri } from "@tauri-apps/api/core";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import {
@@ -5,6 +6,7 @@ import {
   MicrophoneRecorder,
   type RecordingResult,
 } from "../services/recorder";
+import { NativeMicrophoneRecorder } from "../services/nativeRecorder";
 import {
   getSystemPermissionStatus,
   openMicrophonePermissionSettings,
@@ -21,7 +23,10 @@ export interface StartRecordingOptions {
   onFrame?: (frame: Int16Array, sequence: number) => void;
 }
 
-const recorder = new MicrophoneRecorder();
+const recorder =
+  isTauri() && /Macintosh|Mac OS X/.test(globalThis.navigator?.userAgent ?? "")
+    ? new NativeMicrophoneRecorder()
+    : new MicrophoneRecorder();
 const MAX_RECORDING_MS = 60_000;
 
 export function useRecorder() {
@@ -239,7 +244,7 @@ export function useRecorder() {
   onBeforeUnmount(() => {
     globalThis.removeEventListener("focus", handleWindowFocus);
     operationId += 1;
-    void recorder.cancel();
+    void recorder.dispose();
   });
 
   return {

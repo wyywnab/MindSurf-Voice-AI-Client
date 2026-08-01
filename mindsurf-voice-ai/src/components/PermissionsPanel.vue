@@ -87,15 +87,6 @@ async function refreshPermission(permission: SystemPermission) {
     if (permission === "microphone" && result.data.status !== "granted") {
       microphoneProbeState.value = "unknown";
     }
-    if (
-      permission === "accessibility" &&
-      result.data.status === "granted" &&
-      session.state.shortcutDesiredEnabled &&
-      (!session.state.shortcutRegistered ||
-        session.state.shortcutListenerStatus !== "running")
-    ) {
-      await session.initializeRecordShortcut();
-    }
   } else {
     permissionError.value = result.error.message;
   }
@@ -136,13 +127,6 @@ async function requestPermission(permission: SystemPermission) {
   if (permission === "microphone" && result.data.status === "granted") {
     await prepareWebViewMicrophone();
   }
-  if (
-    permission === "accessibility" &&
-    result.data.status === "granted" &&
-    session.state.shortcutDesiredEnabled
-  ) {
-    await session.initializeRecordShortcut();
-  }
   permissionBusy.value = null;
   return result.data.status === "granted";
 }
@@ -157,6 +141,7 @@ async function initializePermissions() {
   let firstError = "";
   try {
     if (isMacOS.value) {
+      await session.initializeRecordShortcut();
       for (const permission of macPermissions) {
         await refreshPermission(permission);
         if (permissionStates[permission] !== "granted") {
@@ -344,9 +329,7 @@ onBeforeUnmount(() => {
                         : "监听器启动中"
                 }}
               </strong>
-              <small>
-                通过辅助功能在其他应用处于前台时监听按住说话快捷键；不再使用无法可靠查询的“输入监控”状态
-              </small>
+              <small> 使用 macOS 系统全局热键注册，不依赖“输入监控”权限 </small>
               <small v-if="session.state.shortcutError" class="inline-error">
                 {{ session.state.shortcutError }}
               </small>
@@ -359,14 +342,6 @@ onBeforeUnmount(() => {
                   @click="session.initializeRecordShortcut()"
                 >
                   重新启动监听器
-                </button>
-                <button
-                  class="button button-secondary button-compact"
-                  type="button"
-                  :disabled="permissionInitializationBusy"
-                  @click="openPermissionSettings('accessibility')"
-                >
-                  打开辅助功能设置
                 </button>
               </div>
             </div>

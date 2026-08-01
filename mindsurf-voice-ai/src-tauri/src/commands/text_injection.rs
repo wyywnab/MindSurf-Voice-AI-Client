@@ -50,6 +50,11 @@ pub trait TextInjector: Send + Sync {
 pub fn prepare_text_injection_target(app: tauri::AppHandle) -> CommandResult<()> {
     #[cfg(target_os = "macos")]
     if let Err(error) = platform::prepare_target(&app) {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "text injection: target preparation failed code={}, message={}",
+            error.code, error.message
+        );
         return CommandResult::failure(error);
     }
 
@@ -68,6 +73,8 @@ pub fn inject_text(text: String, max_code_points: Option<usize>) -> CommandResul
     }
 
     let requested_code_points = normalized_code_point_count(&text);
+    #[cfg(debug_assertions)]
+    eprintln!("text injection: command requested code_points={requested_code_points}");
     if requested_code_points == 0 {
         return CommandResult::failure(AppError::new(
             "empty_injection_text",
@@ -98,6 +105,11 @@ pub fn inject_text(text: String, max_code_points: Option<usize>) -> CommandResul
 
     let injector = platform::PlatformTextInjector;
     if let Err(error) = platform::wait_for_modifiers_released() {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "text injection: modifier wait failed code={}, message={}",
+            error.code, error.message
+        );
         return CommandResult::failure(error);
     }
     #[cfg(target_os = "macos")]
@@ -106,12 +118,36 @@ pub fn inject_text(text: String, max_code_points: Option<usize>) -> CommandResul
     let captured_target = injector.capture_target();
     let target = match captured_target {
         Ok(target) => target,
-        Err(error) => return CommandResult::failure(error),
+        Err(error) => {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "text injection: target capture failed code={}, message={}",
+                error.code, error.message
+            );
+            return CommandResult::failure(error);
+        }
     };
 
     match injector.inject(&target, &text) {
-        Ok(report) => CommandResult::success(report),
-        Err(error) => CommandResult::failure(error),
+        Ok(report) => {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "text injection: finished complete={}, injected={}/{} error={:?}",
+                report.complete,
+                report.injected_code_points,
+                report.requested_code_points,
+                report.error_code
+            );
+            CommandResult::success(report)
+        }
+        Err(error) => {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "text injection: failed code={}, message={}",
+                error.code, error.message
+            );
+            CommandResult::failure(error)
+        }
     }
 }
 
@@ -384,30 +420,47 @@ mod platform {
 #[cfg(target_os = "macos")]
 mod platform {
     use std::ptr;
-    use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+    use std::sync::Mutex;
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use core_foundation::base::{CFEqual, CFRelease, CFTypeRef, TCFType};
+    use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
     use core_foundation::string::{CFString, CFStringRef};
-    use core_graphics::event::{CGEvent, CGKeyCode, KeyCode};
+    use core_graphics::event::{CGEvent, KeyCode};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSApplication, NSWorkspace};
-    use objc2_core_graphics::{CGPreflightPostEventAccess, CGRequestPostEventAccess};
 
     use super::{normalize_newlines, AppError, InjectReport, Instant, TargetWindow, TextInjector};
 
     const CHARACTERS_PER_BATCH: usize = 128;
     const PREPARED_TARGET_MAX_AGE_MS: u64 = 120_000;
-    static PREPARED_TARGET_PID: AtomicI32 = AtomicI32::new(0);
-    static PREPARED_TARGET_AT_MS: AtomicU64 = AtomicU64::new(0);
+    static PREPARED_TARGET: Mutex<Option<PreparedTarget>> = Mutex::new(None);
+
+    struct PreparedTarget {
+        process_id: i32,
+        focused_element: CFTypeRef,
+        prepared_at_ms: u64,
+    }
+
+    // AXUIElementRef is an immutable Core Foundation reference. Ownership is
+    // retained by this value and transferred to TargetWindow before injection.
+    unsafe impl Send for PreparedTarget {}
+
+    impl Drop for PreparedTarget {
+        fn drop(&mut self) {
+            if !self.focused_element.is_null() {
+                unsafe {
+                    CFRelease(self.focused_element);
+                }
+            }
+        }
+    }
 
     pub struct PlatformTextInjector;
 
     pub fn prepare_target(app: &tauri::AppHandle) -> Result<(), AppError> {
-        PREPARED_TARGET_PID.store(0, Ordering::Release);
-        PREPARED_TARGET_AT_MS.store(0, Ordering::Release);
+        *PREPARED_TARGET.lock().map_err(|_| target_state_error())? = None;
 
         if frontmost_process_id() == Some(std::process::id() as i32) {
             yield_focus(app)?;
@@ -415,18 +468,30 @@ mod platform {
 
         for _ in 0..50 {
             if let Some(process_id) =
-                frontmost_process_id().filter(|process_id| *process_id != std::process::id() as i32)
+                frontmost_process_id().filter(|pid| *pid != std::process::id() as i32)
             {
-                PREPARED_TARGET_PID.store(process_id, Ordering::Release);
-                PREPARED_TARGET_AT_MS.store(timestamp_ms(), Ordering::Release);
+                let focused_element = focused_element_for_process(process_id);
+                *PREPARED_TARGET.lock().map_err(|_| target_state_error())? = Some(PreparedTarget {
+                    process_id,
+                    focused_element,
+                    prepared_at_ms: timestamp_ms(),
+                });
+                #[cfg(debug_assertions)]
+                if focused_element.is_null() {
+                    eprintln!(
+                        "text injection: prepared target pid={process_id} without AX element"
+                    );
+                } else {
+                    eprintln!("text injection: prepared target pid={process_id} with AX element");
+                }
                 return Ok(());
             }
             thread::sleep(Duration::from_millis(10));
         }
 
         Err(AppError::new(
-            "injection_target_is_self",
-            "switch to the target application before recording",
+            "injection_target_unavailable",
+            "the foreground application has no focused accessibility element",
             true,
         ))
     }
@@ -454,66 +519,56 @@ mod platform {
     pub fn capture_prepared_target(
         injector: &PlatformTextInjector,
     ) -> Result<TargetWindow, AppError> {
-        let prepared_process_id = PREPARED_TARGET_PID.swap(0, Ordering::AcqRel);
-        let prepared_at_ms = PREPARED_TARGET_AT_MS.swap(0, Ordering::AcqRel);
+        let prepared = PREPARED_TARGET
+            .lock()
+            .map_err(|_| target_state_error())?
+            .take();
         let current_process_id = frontmost_process_id();
         let self_process_id = std::process::id() as i32;
-        let prepared_is_fresh = prepared_process_id > 0
-            && timestamp_ms().saturating_sub(prepared_at_ms) <= PREPARED_TARGET_MAX_AGE_MS;
-        let prepared_is_current = current_process_id == Some(prepared_process_id);
-        let mindsurf_became_frontmost = current_process_id == Some(self_process_id);
+        if let Some(mut prepared) = prepared {
+            let prepared_is_fresh = timestamp_ms().saturating_sub(prepared.prepared_at_ms)
+                <= PREPARED_TARGET_MAX_AGE_MS;
+            let prepared_is_current = current_process_id == Some(prepared.process_id);
+            let mindsurf_became_frontmost = current_process_id == Some(self_process_id);
 
-        if prepared_is_fresh && (prepared_is_current || mindsurf_became_frontmost) {
-            let focused_element = focused_ui_element(prepared_process_id).ok_or_else(|| {
-                AppError::new(
-                    "injection_target_unavailable",
-                    "the prepared application no longer has a focused accessibility element",
-                    true,
-                )
-            })?;
-            return Ok(TargetWindow {
-                handle: prepared_process_id as isize,
-                focused_element,
-                allow_self_frontmost: mindsurf_became_frontmost,
-            });
+            if prepared_is_fresh && (prepared_is_current || mindsurf_became_frontmost) {
+                let focused_element = prepared.focused_element;
+                prepared.focused_element = ptr::null();
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "text injection: using captured element pid={}, frontmost={current_process_id:?}",
+                    prepared.process_id
+                );
+                return Ok(TargetWindow {
+                    handle: prepared.process_id as isize,
+                    focused_element,
+                    allow_self_frontmost: mindsurf_became_frontmost,
+                });
+            }
+
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "text injection: captured element rejected pid={}, fresh={prepared_is_fresh}, frontmost={current_process_id:?}",
+                prepared.process_id
+            );
+        } else {
+            #[cfg(debug_assertions)]
+            eprintln!("text injection: no captured element, using current foreground target");
         }
-
         injector.capture_target()
     }
 
     pub fn wait_for_modifiers_released() -> Result<(), AppError> {
-        const ATTEMPTS: usize = 100;
-        const MODIFIERS: [CGKeyCode; 8] = [
-            KeyCode::CONTROL,
-            KeyCode::RIGHT_CONTROL,
-            KeyCode::SHIFT,
-            KeyCode::RIGHT_SHIFT,
-            KeyCode::OPTION,
-            KeyCode::RIGHT_OPTION,
-            KeyCode::COMMAND,
-            KeyCode::RIGHT_COMMAND,
-        ];
-
-        for _ in 0..ATTEMPTS {
-            let any_pressed = MODIFIERS.iter().any(|key_code| unsafe {
-                CGEventSourceKeyState(CGEventSourceStateID::CombinedSessionState, *key_code)
-            });
-            if !any_pressed {
-                return Ok(());
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-
-        Err(AppError::new(
-            "injection_modifiers_pressed",
-            "release the recording shortcut before injecting text",
-            true,
-        ))
+        // The Carbon hotkey release event already guarantees the terminal key
+        // is up. Querying global modifier state would require Input Monitoring,
+        // which text injection must not depend on.
+        thread::sleep(Duration::from_millis(40));
+        Ok(())
     }
 
     impl TextInjector for PlatformTextInjector {
         fn capture_target(&self) -> Result<TargetWindow, AppError> {
-            if !CGPreflightPostEventAccess() && !CGRequestPostEventAccess() {
+            if !crate::commands::permissions::accessibility_is_trusted() {
                 return Err(AppError::new(
                     "accessibility_required",
                     "macOS Accessibility permission is required for text injection",
@@ -535,14 +590,7 @@ mod platform {
                     true,
                 ));
             }
-
-            let focused_element = focused_ui_element(process_id).ok_or_else(|| {
-                AppError::new(
-                    "injection_target_unavailable",
-                    "no focused accessibility element is available for text injection",
-                    true,
-                )
-            })?;
+            let focused_element = focused_element_for_process(process_id);
 
             Ok(TargetWindow {
                 handle: process_id as isize,
@@ -558,8 +606,44 @@ mod platform {
             let target_process_id = target.handle as i32;
             let mut injected_code_points = 0usize;
             let mut injected_text_end = 0usize;
-            let event_source = create_event_source()?;
 
+            let current_frontmost_process_id = frontmost_process_id();
+            let target_is_active = current_frontmost_process_id == Some(target_process_id)
+                || (target.allow_self_frontmost
+                    && current_frontmost_process_id == Some(std::process::id() as i32));
+            if !target_is_active {
+                return Ok(partial_report(
+                    &normalized,
+                    requested_code_points,
+                    0,
+                    0,
+                    started_at,
+                    "injection_target_changed",
+                ));
+            }
+
+            if !target.focused_element.is_null()
+                && set_selected_text(target.focused_element, &normalized)
+            {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "text injection: AXSelectedText succeeded pid={target_process_id}, code_points={requested_code_points}"
+                );
+                return Ok(InjectReport {
+                    requested_code_points,
+                    injected_code_points: requested_code_points,
+                    remaining_text: String::new(),
+                    elapsed_ms: started_at.elapsed().as_millis(),
+                    complete: true,
+                    error_code: None,
+                });
+            }
+
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "text injection: AXSelectedText unavailable, falling back to CGEvent pid={target_process_id}"
+            );
+            let event_source = create_event_source()?;
             for (text_start, character) in normalized.char_indices() {
                 let frontmost_process_id = frontmost_process_id();
                 let target_is_active = frontmost_process_id == Some(target_process_id)
@@ -575,17 +659,6 @@ mod platform {
                         "injection_target_changed",
                     ));
                 }
-                if !focused_element_matches(target.focused_element, target_process_id) {
-                    return Ok(partial_report(
-                        &normalized,
-                        requested_code_points,
-                        injected_code_points,
-                        injected_text_end,
-                        started_at,
-                        "injection_target_changed",
-                    ));
-                }
-
                 if let Err(error) = post_character(&event_source, target_process_id, character) {
                     if injected_code_points == 0 {
                         return Err(error);
@@ -625,20 +698,17 @@ mod platform {
             .filter(|process_id| *process_id > 0)
     }
 
-    fn focused_element_matches(expected: CFTypeRef, process_id: i32) -> bool {
-        let Some(current) = focused_ui_element(process_id) else {
-            return false;
-        };
-        let matches = unsafe { CFEqual(expected, current) != 0 };
-        unsafe {
-            CFRelease(current);
-        }
-        matches
+    fn target_state_error() -> AppError {
+        AppError::new(
+            "injection_unavailable",
+            "the prepared text injection target is unavailable",
+            true,
+        )
     }
 
-    fn focused_ui_element(process_id: i32) -> Option<CFTypeRef> {
-        let application = unsafe { AXUIElementCreateApplication(process_id) };
-        if application.is_null() {
+    fn system_focused_ui_element() -> Option<(i32, CFTypeRef)> {
+        let system_wide = unsafe { AXUIElementCreateSystemWide() };
+        if system_wide.is_null() {
             return None;
         }
 
@@ -646,15 +716,68 @@ mod platform {
         let mut focused_element = ptr::null();
         let result = unsafe {
             AXUIElementCopyAttributeValue(
-                application,
+                system_wide,
                 focused_attribute.as_concrete_TypeRef(),
                 &mut focused_element,
             )
         };
         unsafe {
-            CFRelease(application);
+            CFRelease(system_wide);
         }
-        (result == 0 && !focused_element.is_null()).then_some(focused_element)
+        if result != 0 || focused_element.is_null() {
+            #[cfg(debug_assertions)]
+            eprintln!("text injection: system focused element unavailable ax_error={result}");
+            return None;
+        }
+
+        let mut process_id = 0i32;
+        let pid_result = unsafe { AXUIElementGetPid(focused_element, &mut process_id) };
+        if pid_result != 0 || process_id <= 0 {
+            #[cfg(debug_assertions)]
+            eprintln!("text injection: focused element pid unavailable ax_error={pid_result}");
+            unsafe {
+                CFRelease(focused_element);
+            }
+            return None;
+        }
+        Some((process_id, focused_element))
+    }
+
+    fn focused_element_for_process(process_id: i32) -> CFTypeRef {
+        match system_focused_ui_element() {
+            Some((focused_process_id, element)) if focused_process_id == process_id => element,
+            Some((_, element)) => {
+                unsafe {
+                    CFRelease(element);
+                }
+                ptr::null()
+            }
+            None => ptr::null(),
+        }
+    }
+
+    fn set_selected_text(element: CFTypeRef, text: &str) -> bool {
+        let selected_text_attribute = CFString::new("AXSelectedText");
+        let mut settable = 0u8;
+        let settable_result = unsafe {
+            AXUIElementIsAttributeSettable(
+                element,
+                selected_text_attribute.as_concrete_TypeRef(),
+                &mut settable,
+            )
+        };
+        if settable_result != 0 || settable == 0 {
+            return false;
+        }
+
+        let value = CFString::new(text);
+        unsafe {
+            AXUIElementSetAttributeValue(
+                element,
+                selected_text_attribute.as_concrete_TypeRef(),
+                value.as_CFTypeRef(),
+            ) == 0
+        }
     }
 
     fn create_event_source() -> Result<CGEventSource, AppError> {
@@ -769,18 +892,24 @@ mod platform {
         }
     }
 
-    #[link(name = "CoreGraphics", kind = "framework")]
-    unsafe extern "C" {
-        fn CGEventSourceKeyState(state_id: CGEventSourceStateID, key_code: CGKeyCode) -> bool;
-    }
-
     #[link(name = "ApplicationServices", kind = "framework")]
     unsafe extern "C" {
-        fn AXUIElementCreateApplication(process_id: i32) -> CFTypeRef;
+        fn AXUIElementCreateSystemWide() -> CFTypeRef;
+        fn AXUIElementGetPid(element: CFTypeRef, process_id: *mut i32) -> i32;
         fn AXUIElementCopyAttributeValue(
             element: CFTypeRef,
             attribute: CFStringRef,
             value: *mut CFTypeRef,
+        ) -> i32;
+        fn AXUIElementIsAttributeSettable(
+            element: CFTypeRef,
+            attribute: CFStringRef,
+            settable: *mut u8,
+        ) -> i32;
+        fn AXUIElementSetAttributeValue(
+            element: CFTypeRef,
+            attribute: CFStringRef,
+            value: CFTypeRef,
         ) -> i32;
     }
 }

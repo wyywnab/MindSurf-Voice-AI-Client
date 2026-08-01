@@ -172,7 +172,7 @@ body {
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-  transition: width 60ms linear;
+  will-change: width;
 }
 
 .overlay-footer button {

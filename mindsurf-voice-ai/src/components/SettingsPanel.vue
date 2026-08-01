@@ -21,10 +21,9 @@ const shortcutOptions = computed<Array<{ value: ShortcutBinding; label: string }
   () =>
     isMacOS.value
       ? [
-          { value: "ctrl_win", label: "Control + Command" },
+          { value: "ctrl_win_space", label: "Control + Command + Space" },
           { value: "ctrl_alt_space", label: "Control + Option + Space" },
           { value: "ctrl_shift_space", label: "Control + Shift + Space" },
-          { value: "ctrl_win_space", label: "Control + Command + Space" },
         ]
       : [
           { value: "ctrl_win", label: "Ctrl + Win" },

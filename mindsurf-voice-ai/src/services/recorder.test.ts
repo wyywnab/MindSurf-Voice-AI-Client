@@ -91,7 +91,8 @@ describe("MicrophoneRecorder cleanup", () => {
   });
 
   it("prepares the audio pipeline before recording without opening a second stream", async () => {
-    const getUserMedia = vi.fn(async () => new FakeStream());
+    const stream = new FakeStream();
+    const getUserMedia = vi.fn(async () => stream);
     vi.stubGlobal("document", { baseURI: "http://localhost/" });
     vi.stubGlobal("AudioContext", FakeAudioContext);
     vi.stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
@@ -109,17 +110,22 @@ describe("MicrophoneRecorder cleanup", () => {
 
     await recorder.stop();
     expect(recorder.isPrepared).toBe(false);
+
+    await recorder.dispose();
+    expect(recorder.isPrepared).toBe(false);
   });
 
-  it("releases every MediaStream track over twenty recording cycles", async () => {
+  it("releases every stream between recording cycles", async () => {
     vi.stubGlobal("document", { baseURI: "http://localhost/" });
     vi.stubGlobal("AudioContext", FakeAudioContext);
     vi.stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
-    vi.stubGlobal("navigator", {
-      mediaDevices: {
-        getUserMedia: vi.fn(async () => new FakeStream()),
-      },
+    const streams: FakeStream[] = [];
+    const getUserMedia = vi.fn(async () => {
+      const stream = new FakeStream();
+      streams.push(stream);
+      return stream;
     });
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
 
     const recorder = new MicrophoneRecorder();
 
@@ -130,6 +136,12 @@ describe("MicrophoneRecorder cleanup", () => {
       const result = await recorder.stop();
       expect(result.liveTracksAfterCleanup).toBe(0);
       expect(recorder.isRecording).toBe(false);
+      expect(recorder.isPrepared).toBe(false);
     }
+
+    expect(getUserMedia).toHaveBeenCalledTimes(20);
+    expect(streams.every((stream) => stream.track.readyState === "ended")).toBe(true);
+    await recorder.dispose();
+    expect(recorder.isPrepared).toBe(false);
   });
 });

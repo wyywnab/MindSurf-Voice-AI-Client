@@ -51,6 +51,11 @@ pub async fn request_system_permission(
     platform::request(permission).await
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn accessibility_is_trusted() -> bool {
+    platform::accessibility_is_trusted()
+}
+
 #[tauri::command]
 pub fn open_permission_settings(permission: Option<SystemPermission>) -> CommandResult<()> {
     platform::open_settings(permission.unwrap_or(SystemPermission::Microphone))
@@ -112,10 +117,13 @@ mod platform {
 #[cfg(target_os = "macos")]
 mod platform {
     use block2::RcBlock;
+    use core_foundation::base::TCFType;
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+    use core_foundation::string::CFString;
     use objc2_av_foundation::{
         AVAuthorizationStatus, AVCaptureDevice, AVMediaType, AVMediaTypeAudio,
     };
-    use objc2_core_graphics::{CGPreflightPostEventAccess, CGRequestPostEventAccess};
 
     use super::{AppError, CommandResult, SystemPermission, SystemPermissionStatus};
 
@@ -123,7 +131,7 @@ mod platform {
         let status = match permission {
             SystemPermission::Microphone => microphone_status(permission),
             SystemPermission::Accessibility => {
-                SystemPermissionStatus::new(permission, CGPreflightPostEventAccess())
+                SystemPermissionStatus::new(permission, accessibility_is_trusted())
             }
             // macOS does not expose a reliable API for whether the application is
             // explicitly enabled in the Input Monitoring settings pane. In
@@ -138,11 +146,23 @@ mod platform {
         let status = match permission {
             SystemPermission::Microphone => return request_microphone(permission).await,
             SystemPermission::Accessibility => {
-                SystemPermissionStatus::new(permission, CGRequestPostEventAccess())
+                SystemPermissionStatus::new(permission, request_accessibility())
             }
             SystemPermission::InputMonitoring => SystemPermissionStatus::unknown(permission),
         };
         CommandResult::success(status)
+    }
+
+    pub fn accessibility_is_trusted() -> bool {
+        unsafe { AXIsProcessTrusted() }
+    }
+
+    fn request_accessibility() -> bool {
+        let options = CFDictionary::from_CFType_pairs(&[(
+            CFString::new("AXTrustedCheckOptionPrompt"),
+            CFBoolean::true_value(),
+        )]);
+        unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) }
     }
 
     fn microphone_status(permission: SystemPermission) -> SystemPermissionStatus {
@@ -224,6 +244,12 @@ mod platform {
                 true,
             )),
         }
+    }
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+        fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
     }
 }
 

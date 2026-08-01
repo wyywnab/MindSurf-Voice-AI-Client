@@ -83,7 +83,9 @@ export class MicrophoneRecorder {
   get isPrepared() {
     return Boolean(
       this.stream &&
+      this.stream.getTracks().some((track) => track.readyState === "live") &&
       this.audioContext &&
+      this.audioContext.state !== "closed" &&
       this.source &&
       this.processor &&
       this.silentOutput &&
@@ -104,6 +106,15 @@ export class MicrophoneRecorder {
     }
 
     try {
+      if (
+        this.stream ||
+        this.audioContext ||
+        this.source ||
+        this.processor ||
+        this.silentOutput
+      ) {
+        await this.cleanup();
+      }
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: { ideal: 1 },
@@ -160,6 +171,10 @@ export class MicrophoneRecorder {
     }
 
     this.resetSession();
+    this.resampler = new StreamingLinearResampler(
+      this.audioContext!.sampleRate,
+      TARGET_SAMPLE_RATE,
+    );
     this.callbacks = callbacks;
     this.acceptingAudio = true;
   }
@@ -180,6 +195,7 @@ export class MicrophoneRecorder {
     const wavBytes = createPcm16Wav(this.pcmChunks);
     const liveTracksAfterCleanup = await this.cleanup();
     this.callbacks.onLevel?.(0);
+    this.callbacks = {};
 
     return {
       durationMs: (this.totalSamples / TARGET_SAMPLE_RATE) * 1_000,
@@ -198,6 +214,14 @@ export class MicrophoneRecorder {
     this.resetSession();
     this.callbacks.onLevel?.(0);
     this.callbacks.onDuration?.(0);
+    this.callbacks = {};
+  }
+
+  async dispose() {
+    this.acceptingAudio = false;
+    this.resetSession();
+    this.callbacks = {};
+    await this.cleanup();
   }
 
   private handleAudioChunk(input: Float32Array) {
