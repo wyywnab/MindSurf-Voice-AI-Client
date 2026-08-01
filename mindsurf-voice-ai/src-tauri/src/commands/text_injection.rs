@@ -45,6 +45,16 @@ pub trait TextInjector: Send + Sync {
 }
 
 #[tauri::command]
+pub fn prepare_text_injection_target(app: tauri::AppHandle) -> CommandResult<()> {
+    #[cfg(target_os = "macos")]
+    if let Err(error) = platform::yield_focus_if_needed(&app) {
+        return CommandResult::failure(error);
+    }
+
+    CommandResult::success(())
+}
+
+#[tauri::command]
 pub fn inject_text(text: String, max_code_points: Option<usize>) -> CommandResult<InjectReport> {
     let max_code_points = max_code_points.unwrap_or(DEFAULT_MAX_CODE_POINTS);
     if max_code_points == 0 || max_code_points > DEFAULT_MAX_CODE_POINTS {
@@ -375,7 +385,8 @@ mod platform {
     use core_foundation::string::{CFString, CFStringRef};
     use core_graphics::event::{CGEvent, CGEventTapLocation, CGKeyCode, KeyCode};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-    use objc2_app_kit::NSWorkspace;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSWorkspace};
     use objc2_core_graphics::{CGPreflightPostEventAccess, CGRequestPostEventAccess};
 
     use super::{normalize_newlines, AppError, InjectReport, Instant, TargetWindow, TextInjector};
@@ -383,6 +394,30 @@ mod platform {
     const CHARACTERS_PER_BATCH: usize = 128;
 
     pub struct PlatformTextInjector;
+
+    pub fn yield_focus_if_needed(app: &tauri::AppHandle) -> Result<(), AppError> {
+        if frontmost_process_id() != Some(std::process::id() as i32) {
+            return Ok(());
+        }
+
+        if let Some(mtm) = MainThreadMarker::new() {
+            NSApplication::sharedApplication(mtm).deactivate();
+            return Ok(());
+        }
+
+        app.run_on_main_thread(|| {
+            if let Some(mtm) = MainThreadMarker::new() {
+                NSApplication::sharedApplication(mtm).deactivate();
+            }
+        })
+        .map_err(|error| {
+            AppError::new(
+                "injection_target_unavailable",
+                format!("unable to yield application focus: {error}"),
+                true,
+            )
+        })
+    }
 
     pub fn wait_for_modifiers_released() -> Result<(), AppError> {
         const ATTEMPTS: usize = 100;

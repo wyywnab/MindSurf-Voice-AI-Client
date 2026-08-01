@@ -459,12 +459,16 @@ mod platform {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-    use std::sync::{Mutex, OnceLock, RwLock};
+    use std::ffi::c_void;
+    use std::ptr;
+    use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, Ordering};
+    use std::sync::mpsc::{self, Receiver, Sender};
+    use std::sync::{Arc, Mutex, OnceLock, RwLock};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use core_foundation::runloop::CFRunLoop;
+    use core_foundation::base::TCFType;
+    use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
     use core_graphics::event::{
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
         CGEventTapPlacement, CGEventType, CallbackResult, EventField, KeyCode,
@@ -482,7 +486,6 @@ mod platform {
     static STATE: OnceLock<ShortcutState> = OnceLock::new();
 
     struct ShortcutState {
-        app: tauri::AppHandle,
         binding: RwLock<ShortcutBinding>,
         enabled: AtomicBool,
         active: AtomicBool,
@@ -490,12 +493,19 @@ mod platform {
         listener_status: AtomicU8,
         listener_thread_active: AtomicBool,
         last_error: Mutex<Option<String>>,
+        event_sender: Sender<ShortcutNotification>,
+    }
+
+    enum ShortcutNotification {
+        Cancel(u64),
+        Pressed(ShortcutBinding, u64),
+        Released(ShortcutBinding, u64),
     }
 
     pub fn initialize(app: tauri::AppHandle) {
+        let (event_sender, event_receiver) = mpsc::channel();
         if STATE
             .set(ShortcutState {
-                app,
                 binding: RwLock::new(ShortcutBinding::default()),
                 enabled: AtomicBool::new(true),
                 active: AtomicBool::new(false),
@@ -503,12 +513,14 @@ mod platform {
                 listener_status: AtomicU8::new(LISTENER_STARTING),
                 listener_thread_active: AtomicBool::new(false),
                 last_error: Mutex::new(None),
+                event_sender,
             })
             .is_err()
         {
             return;
         }
 
+        thread::spawn(move || emit_shortcut_events(app, event_receiver));
         if CGPreflightListenEventAccess() {
             start_listener();
         } else {
@@ -594,31 +606,7 @@ mod platform {
             .listener_status
             .store(LISTENER_STARTING, Ordering::Release);
         thread::spawn(|| {
-            let result = CGEventTap::with_enabled(
-                CGEventTapLocation::Session,
-                CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::ListenOnly,
-                vec![
-                    CGEventType::KeyDown,
-                    CGEventType::KeyUp,
-                    CGEventType::FlagsChanged,
-                ],
-                |_proxy, event_type, event| {
-                    handle_key_event(event_type, event);
-                    CallbackResult::Keep
-                },
-                || {
-                    if let Some(state) = STATE.get() {
-                        state
-                            .listener_status
-                            .store(LISTENER_RUNNING, Ordering::Release);
-                        if let Ok(mut error) = state.last_error.lock() {
-                            *error = None;
-                        }
-                    }
-                    CFRunLoop::run_current();
-                },
-            );
+            let result = run_event_tap();
 
             if let Some(state) = STATE.get() {
                 state.listener_thread_active.store(false, Ordering::Release);
@@ -627,6 +615,72 @@ mod platform {
                 }
             }
         });
+    }
+
+    fn run_event_tap() -> Result<(), ()> {
+        let tap_pointer = Arc::new(AtomicPtr::<c_void>::new(ptr::null_mut()));
+        let callback_pointer = Arc::clone(&tap_pointer);
+        let event_tap = CGEventTap::new(
+            CGEventTapLocation::Session,
+            CGEventTapPlacement::HeadInsertEventTap,
+            CGEventTapOptions::ListenOnly,
+            vec![
+                CGEventType::KeyDown,
+                CGEventType::KeyUp,
+                CGEventType::FlagsChanged,
+            ],
+            move |_proxy, event_type, event| {
+                if matches!(
+                    event_type,
+                    CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
+                ) {
+                    recover_event_tap(&callback_pointer);
+                } else {
+                    handle_key_event(event_type, event);
+                }
+                CallbackResult::Keep
+            },
+        )?;
+        let loop_source = event_tap.mach_port().create_runloop_source(0)?;
+        let run_loop = CFRunLoop::get_current();
+        run_loop.add_source(&loop_source, unsafe { kCFRunLoopCommonModes });
+        tap_pointer.store(
+            event_tap.mach_port().as_concrete_TypeRef() as *mut c_void,
+            Ordering::Release,
+        );
+        event_tap.enable();
+        set_listener_running();
+        CFRunLoop::run_current();
+        tap_pointer.store(ptr::null_mut(), Ordering::Release);
+        Ok(())
+    }
+
+    fn recover_event_tap(tap_pointer: &AtomicPtr<c_void>) {
+        let Some(state) = STATE.get() else {
+            return;
+        };
+        release_if_active(state);
+        state.space_pressed.store(false, Ordering::Release);
+        #[cfg(debug_assertions)]
+        eprintln!("macOS shortcut event tap was disabled; re-enabling");
+        let tap = tap_pointer.load(Ordering::Acquire);
+        if !tap.is_null() {
+            unsafe {
+                CGEventTapEnable(tap, true);
+            }
+        }
+        set_listener_running();
+    }
+
+    fn set_listener_running() {
+        if let Some(state) = STATE.get() {
+            state
+                .listener_status
+                .store(LISTENER_RUNNING, Ordering::Release);
+            if let Ok(mut error) = state.last_error.lock() {
+                *error = None;
+            }
+        }
     }
 
     fn handle_key_event(event_type: CGEventType, event: &CGEvent) {
@@ -649,12 +703,9 @@ mod platform {
             && is_down
             && event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) == 0
         {
-            let _ = state.app.emit(
-                "shortcut://cancel",
-                CancelShortcutPayload {
-                    timestamp_ms: timestamp_ms(),
-                },
-            );
+            let _ = state
+                .event_sender
+                .send(ShortcutNotification::Cancel(timestamp_ms()));
         }
 
         if !state.enabled.load(Ordering::Acquire) {
@@ -672,22 +723,18 @@ mod platform {
 
         if matches && !active {
             state.active.store(true, Ordering::Release);
-            let _ = state.app.emit(
-                "shortcut://record-pressed",
-                RecordShortcutPayload {
-                    shortcut: binding.display(),
-                    timestamp_ms: timestamp_ms(),
-                },
-            );
+            #[cfg(debug_assertions)]
+            eprintln!("shortcut event: record-pressed ({})", binding.display());
+            let _ = state
+                .event_sender
+                .send(ShortcutNotification::Pressed(binding, timestamp_ms()));
         } else if !matches && active {
             state.active.store(false, Ordering::Release);
-            let _ = state.app.emit(
-                "shortcut://record-released",
-                RecordShortcutPayload {
-                    shortcut: binding.display(),
-                    timestamp_ms: timestamp_ms(),
-                },
-            );
+            #[cfg(debug_assertions)]
+            eprintln!("shortcut event: record-released ({})", binding.display());
+            let _ = state
+                .event_sender
+                .send(ShortcutNotification::Released(binding, timestamp_ms()));
         }
     }
 
@@ -712,13 +759,37 @@ mod platform {
                 .read()
                 .map(|binding| *binding)
                 .unwrap_or_default();
-            let _ = state.app.emit(
-                "shortcut://record-released",
-                RecordShortcutPayload {
-                    shortcut: binding.display(),
-                    timestamp_ms: timestamp_ms(),
-                },
-            );
+            let _ = state
+                .event_sender
+                .send(ShortcutNotification::Released(binding, timestamp_ms()));
+        }
+    }
+
+    fn emit_shortcut_events(app: tauri::AppHandle, receiver: Receiver<ShortcutNotification>) {
+        while let Ok(notification) = receiver.recv() {
+            match notification {
+                ShortcutNotification::Cancel(timestamp_ms) => {
+                    let _ = app.emit("shortcut://cancel", CancelShortcutPayload { timestamp_ms });
+                }
+                ShortcutNotification::Pressed(binding, timestamp_ms) => {
+                    let _ = app.emit(
+                        "shortcut://record-pressed",
+                        RecordShortcutPayload {
+                            shortcut: binding.display(),
+                            timestamp_ms,
+                        },
+                    );
+                }
+                ShortcutNotification::Released(binding, timestamp_ms) => {
+                    let _ = app.emit(
+                        "shortcut://record-released",
+                        RecordShortcutPayload {
+                            shortcut: binding.display(),
+                            timestamp_ms,
+                        },
+                    );
+                }
+            }
         }
     }
 
@@ -726,6 +797,8 @@ mod platform {
         let Some(state) = STATE.get() else {
             return;
         };
+        release_if_active(state);
+        state.space_pressed.store(false, Ordering::Release);
         state
             .listener_status
             .store(LISTENER_ERROR, Ordering::Release);
@@ -760,6 +833,11 @@ mod platform {
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_millis() as u64)
             .unwrap_or_default()
+    }
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventTapEnable(tap: *mut c_void, enable: bool);
     }
 
     #[cfg(test)]

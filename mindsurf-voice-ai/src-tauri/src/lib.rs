@@ -26,6 +26,7 @@ pub fn run() {
             commands::shortcuts::get_record_shortcut_status,
             commands::shortcuts::register_record_shortcut,
             commands::shortcuts::unregister_record_shortcut,
+            commands::text_injection::prepare_text_injection_target,
             commands::text_injection::inject_text,
             commands::overlay::hide_overlay,
             commands::overlay::set_overlay_position,

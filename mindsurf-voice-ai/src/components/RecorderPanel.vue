@@ -9,6 +9,7 @@ import {
   subscribeOverlayActions,
 } from "../services/overlay";
 import { subscribeShortcutEvents } from "../services/shortcuts";
+import { prepareTextInjectionTarget } from "../services/textInjection";
 import { useVoiceSessionStore } from "../stores/voiceSession";
 import { VOICE_MODE_LABELS, type VoiceInteractionMode } from "../types/voice";
 import AudioMeter from "./AudioMeter.vue";
@@ -191,6 +192,10 @@ async function startNetworkRecording(shouldContinue: () => boolean = () => true)
   if (!prepared || attempt !== recordingAttempt || !shouldContinue()) {
     await recorder.cancelRecording();
     return;
+  }
+
+  if (session.state.autoInjection[session.state.selectedMode]) {
+    await prepareTextInjectionTarget();
   }
 
   try {

@@ -8,7 +8,10 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
 
-import { injectTextIntoForegroundWindow } from "./textInjection";
+import {
+  injectTextIntoForegroundWindow,
+  prepareTextInjectionTarget,
+} from "./textInjection";
 
 describe("text injection service", () => {
   beforeEach(() => {
@@ -35,6 +38,14 @@ describe("text injection service", () => {
       maxCodePoints: 8_000,
     });
     expect(result.ok).toBe(true);
+  });
+
+  it("asks the native app to yield focus before an auto-injected recording", async () => {
+    invokeMock.mockResolvedValue({ ok: true, data: null });
+
+    await prepareTextInjectionTarget();
+
+    expect(invokeMock).toHaveBeenCalledWith("prepare_text_injection_target");
   });
 
   it("returns a recoverable stable error when invoke is unavailable", async () => {
