@@ -87,7 +87,8 @@ async function refreshPermission(permission: SystemPermission) {
     if (
       permission === "input_monitoring" &&
       result.data.status === "granted" &&
-      session.state.shortcutListenerStatus !== "running"
+      session.state.shortcutDesiredEnabled &&
+      !session.state.shortcutRegistered
     ) {
       await session.initializeRecordShortcut();
     }
@@ -131,7 +132,11 @@ async function requestPermission(permission: SystemPermission) {
   if (permission === "microphone" && result.data.status === "granted") {
     await prepareWebViewMicrophone();
   }
-  if (permission === "input_monitoring" && result.data.status === "granted") {
+  if (
+    permission === "input_monitoring" &&
+    result.data.status === "granted" &&
+    session.state.shortcutDesiredEnabled
+  ) {
     await session.initializeRecordShortcut();
   }
   permissionBusy.value = null;

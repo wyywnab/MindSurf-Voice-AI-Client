@@ -42,13 +42,27 @@ async function configureStartupPermissions(platform: string) {
     return;
   }
 
-  const checks = await Promise.all(macPermissions.map(getSystemPermissionStatus));
+  const checks = await Promise.all(
+    macPermissions.map(async (permission) => ({
+      permission,
+      result: await getSystemPermissionStatus(permission),
+    })),
+  );
   const hasMissingPermission = checks.some(
-    (result) => !result.ok || result.data.status !== "granted",
+    ({ result }) => !result.ok || result.data.status !== "granted",
+  );
+  const inputMonitoringGranted = checks.some(
+    ({ permission, result }) =>
+      permission === "input_monitoring" &&
+      result.ok &&
+      result.data.status === "granted",
   );
 
   if (hasMissingPermission) {
     activeTab.value = "permissions";
+  }
+  if (inputMonitoringGranted || !session.state.shortcutDesiredEnabled) {
+    await session.initializeRecordShortcut();
   }
 }
 

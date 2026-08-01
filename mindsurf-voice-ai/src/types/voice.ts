@@ -44,11 +44,12 @@ export interface VoiceSessionState {
   reconnectAttempt: number;
   requestStatus: RequestLifecycleStatus;
   shortcutBinding: ShortcutBinding;
+  shortcutDesiredEnabled: boolean;
   shortcutDisplay: string;
-  shortcutEnabled: boolean;
   shortcutError: string;
   shortcutLastEventAt: number | null;
   shortcutListenerStatus: ShortcutListenerStatus;
+  shortcutRegistered: boolean;
   selectedMode: VoiceInteractionMode;
   selectedAsrId: string;
   selectedLlmId: string;

@@ -14,7 +14,7 @@ export type MicrophonePermissionState =
   "unknown" | "prompt" | "granted" | "denied" | "unsupported";
 
 export type RecorderState =
-  "idle" | "requesting" | "recording" | "stopping" | "ready" | "error";
+  "idle" | "requesting" | "prepared" | "recording" | "stopping" | "ready" | "error";
 
 export interface StartRecordingOptions {
   onAutoStop?: () => void;
@@ -38,6 +38,7 @@ export function useRecorder() {
   const isBusy = computed(
     () =>
       state.value === "requesting" ||
+      state.value === "prepared" ||
       state.value === "recording" ||
       state.value === "stopping",
   );
@@ -77,15 +78,14 @@ export function useRecorder() {
   }
 
   async function startRecording(options: StartRecordingOptions = {}) {
-    if (isBusy.value) {
+    if (state.value !== "prepared" && !(await prepareRecording())) {
       return false;
     }
 
     errorMessage.value = "";
     durationMs.value = 0;
     level.value = 0;
-    state.value = "requesting";
-    const currentOperationId = ++operationId;
+    const currentOperationId = operationId;
 
     try {
       await recorder.start({
@@ -111,6 +111,48 @@ export function useRecorder() {
       activeTrackCount.value = 1;
       permissionState.value = "granted";
       state.value = "recording";
+      return true;
+    } catch (error) {
+      activeTrackCount.value = 0;
+      if (error instanceof DOMException && error.name === "NotAllowedError") {
+        const nativeStatus = await getSystemPermissionStatus("microphone");
+        const nativePermissionGranted =
+          nativeStatus.ok && nativeStatus.data.status === "granted";
+        errorMessage.value = describeRecorderError(error, {
+          nativePermissionGranted,
+        });
+        permissionState.value = "denied";
+      } else {
+        errorMessage.value = describeRecorderError(error);
+      }
+      state.value = "error";
+      return false;
+    }
+  }
+
+  async function prepareRecording() {
+    if (state.value === "prepared") {
+      return true;
+    }
+    if (isBusy.value) {
+      return false;
+    }
+
+    errorMessage.value = "";
+    durationMs.value = 0;
+    level.value = 0;
+    state.value = "requesting";
+    const currentOperationId = ++operationId;
+
+    try {
+      await recorder.prepare();
+      if (currentOperationId !== operationId) {
+        await recorder.cancel();
+        return false;
+      }
+      activeTrackCount.value = 1;
+      permissionState.value = "granted";
+      state.value = "prepared";
       return true;
     } catch (error) {
       activeTrackCount.value = 0;
@@ -213,6 +255,7 @@ export function useRecorder() {
     level,
     openPermissionSettings,
     permissionState,
+    prepareRecording,
     refreshPermissionState,
     startRecording,
     state,

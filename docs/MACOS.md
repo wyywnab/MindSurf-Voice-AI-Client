@@ -22,6 +22,18 @@
 从系统设置返回应用后，三项原生权限状态会自动刷新。部分 macOS 版本在变更
 输入监控权限后会要求重启应用。
 
+全局快捷键的“用户期望启用”状态会单独持久化。用户主动关闭快捷键后，权限
+刷新或应用重启不会重新启用；如果用户期望启用但因权限不足启动失败，授权后
+会自动重新注册。
+
+正式录音采用“准备麦克风 → 创建服务端请求 → 开始发送 PCM”的顺序。权限、
+设备或 WebView 初始化失败时不会创建服务端请求；准备期间松开快捷键或取消，
+已取得的 MediaStream 会被释放。
+
+macOS 文本注入会同时校验前台应用和 focused Accessibility 元素。同一应用内
+切换窗口、标签页或输入框时，注入会停止并保留剩余文本。悬浮窗优先跟随前台
+应用最前方窗口所在的显示器，无法读取窗口信息时再回退到应用当前显示器。
+
 ## 本地验证
 
 ```bash
@@ -36,6 +48,17 @@ cargo check --all-targets
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets
 ```
+
+## CI 必需检查
+
+`.github/workflows/ci.yml` 会在每次 push 和 pull request 上运行以下检查：
+
+- `Windows quality gate`
+- `macOS quality gate`
+- `macOS application bundle`
+
+应在 GitHub 分支保护规则中将这三个检查设为 `main` 的必需状态检查。工作流
+代码可以保证检查被创建，但分支保护仍需仓库管理员在 GitHub 设置中启用。
 
 生成本机架构的测试应用包：
 

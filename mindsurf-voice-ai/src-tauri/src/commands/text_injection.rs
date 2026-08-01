@@ -10,9 +10,22 @@ const DEFAULT_MAX_CODE_POINTS: usize = 8_000;
 const INPUTS_PER_BATCH: usize = 256;
 static INJECTION_LOCK: Mutex<()> = Mutex::new(());
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct TargetWindow {
     handle: isize,
+    #[cfg(target_os = "macos")]
+    focused_element: core_foundation::base::CFTypeRef,
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for TargetWindow {
+    fn drop(&mut self) {
+        if !self.focused_element.is_null() {
+            unsafe {
+                core_foundation::base::CFRelease(self.focused_element);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -354,9 +367,12 @@ mod platform {
 
 #[cfg(target_os = "macos")]
 mod platform {
+    use std::ptr;
     use std::thread;
     use std::time::Duration;
 
+    use core_foundation::base::{CFEqual, CFRelease, CFTypeRef, TCFType};
+    use core_foundation::string::{CFString, CFStringRef};
     use core_graphics::event::{CGEvent, CGEventTapLocation, CGKeyCode, KeyCode};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
     use objc2_app_kit::NSWorkspace;
@@ -423,8 +439,17 @@ mod platform {
                 ));
             }
 
+            let focused_element = focused_ui_element(process_id).ok_or_else(|| {
+                AppError::new(
+                    "injection_target_unavailable",
+                    "no focused accessibility element is available for text injection",
+                    true,
+                )
+            })?;
+
             Ok(TargetWindow {
                 handle: process_id as isize,
+                focused_element,
             })
         }
 
@@ -438,6 +463,16 @@ mod platform {
 
             for (text_start, character) in normalized.char_indices() {
                 if frontmost_process_id() != Some(target_process_id) {
+                    return Ok(partial_report(
+                        &normalized,
+                        requested_code_points,
+                        injected_code_points,
+                        injected_text_end,
+                        started_at,
+                        "injection_target_changed",
+                    ));
+                }
+                if !focused_element_matches(target.focused_element, target_process_id) {
                     return Ok(partial_report(
                         &normalized,
                         requested_code_points,
@@ -485,6 +520,38 @@ mod platform {
             .frontmostApplication()
             .map(|application| application.processIdentifier())
             .filter(|process_id| *process_id > 0)
+    }
+
+    fn focused_element_matches(expected: CFTypeRef, process_id: i32) -> bool {
+        let Some(current) = focused_ui_element(process_id) else {
+            return false;
+        };
+        let matches = unsafe { CFEqual(expected, current) != 0 };
+        unsafe {
+            CFRelease(current);
+        }
+        matches
+    }
+
+    fn focused_ui_element(process_id: i32) -> Option<CFTypeRef> {
+        let application = unsafe { AXUIElementCreateApplication(process_id) };
+        if application.is_null() {
+            return None;
+        }
+
+        let focused_attribute = CFString::new("AXFocusedUIElement");
+        let mut focused_element = ptr::null();
+        let result = unsafe {
+            AXUIElementCopyAttributeValue(
+                application,
+                focused_attribute.as_concrete_TypeRef(),
+                &mut focused_element,
+            )
+        };
+        unsafe {
+            CFRelease(application);
+        }
+        (result == 0 && !focused_element.is_null()).then_some(focused_element)
     }
 
     fn post_character(character: char) -> Result<(), AppError> {
@@ -547,6 +614,16 @@ mod platform {
     #[link(name = "CoreGraphics", kind = "framework")]
     unsafe extern "C" {
         fn CGEventSourceKeyState(state_id: CGEventSourceStateID, key_code: CGKeyCode) -> bool;
+    }
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn AXUIElementCreateApplication(process_id: i32) -> CFTypeRef;
+        fn AXUIElementCopyAttributeValue(
+            element: CFTypeRef,
+            attribute: CFStringRef,
+            value: *mut CFTypeRef,
+        ) -> i32;
     }
 }
 

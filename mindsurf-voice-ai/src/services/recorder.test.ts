@@ -90,6 +90,27 @@ describe("MicrophoneRecorder cleanup", () => {
     );
   });
 
+  it("prepares the audio pipeline before recording without opening a second stream", async () => {
+    const getUserMedia = vi.fn(async () => new FakeStream());
+    vi.stubGlobal("document", { baseURI: "http://localhost/" });
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    vi.stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+
+    const recorder = new MicrophoneRecorder();
+    await recorder.prepare();
+
+    expect(recorder.isPrepared).toBe(true);
+    expect(recorder.isRecording).toBe(false);
+
+    await recorder.start();
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(recorder.isRecording).toBe(true);
+
+    await recorder.stop();
+    expect(recorder.isPrepared).toBe(false);
+  });
+
   it("releases every MediaStream track over twenty recording cycles", async () => {
     vi.stubGlobal("document", { baseURI: "http://localhost/" });
     vi.stubGlobal("AudioContext", FakeAudioContext);

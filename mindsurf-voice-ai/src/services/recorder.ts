@@ -80,17 +80,28 @@ export class MicrophoneRecorder {
     return this.acceptingAudio;
   }
 
-  async start(callbacks: RecorderCallbacks = {}) {
+  get isPrepared() {
+    return Boolean(
+      this.stream &&
+      this.audioContext &&
+      this.source &&
+      this.processor &&
+      this.silentOutput &&
+      this.resampler,
+    );
+  }
+
+  async prepare() {
     if (this.acceptingAudio) {
       throw new Error("recording_already_active");
+    }
+    if (this.isPrepared) {
+      return;
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("media_devices_unavailable");
     }
-
-    this.resetSession();
-    this.callbacks = callbacks;
 
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
@@ -134,11 +145,23 @@ export class MicrophoneRecorder {
       if (this.audioContext.state === "suspended") {
         await this.audioContext.resume();
       }
-      this.acceptingAudio = true;
     } catch (error) {
       await this.cleanup();
       throw error;
     }
+  }
+
+  async start(callbacks: RecorderCallbacks = {}) {
+    if (this.acceptingAudio) {
+      throw new Error("recording_already_active");
+    }
+    if (!this.isPrepared) {
+      await this.prepare();
+    }
+
+    this.resetSession();
+    this.callbacks = callbacks;
+    this.acceptingAudio = true;
   }
 
   async stop(): Promise<RecordingResult> {

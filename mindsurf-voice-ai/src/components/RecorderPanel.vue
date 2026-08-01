@@ -23,6 +23,7 @@ let unlistenOverlay: (() => void) | null = null;
 let overlayPublishTimer: ReturnType<typeof globalThis.setInterval> | null = null;
 let overlayHideTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
 let overlayShown = false;
+let recordingAttempt = 0;
 
 const canStart = computed(
   () =>
@@ -75,6 +76,7 @@ const stateLabel = computed(() => {
   return {
     idle: "准备录音",
     requesting: "正在请求麦克风权限",
+    prepared: "麦克风已就绪，正在创建请求",
     recording: "正在录音",
     stopping: "正在处理音频",
     ready: "录音已完成",
@@ -183,10 +185,24 @@ function syncOverlayVisibility(active: boolean) {
   hideOverlayNow();
 }
 
-async function startNetworkRecording() {
+async function startNetworkRecording(shouldContinue: () => boolean = () => true) {
+  const attempt = ++recordingAttempt;
+  const prepared = await recorder.prepareRecording();
+  if (!prepared || attempt !== recordingAttempt || !shouldContinue()) {
+    await recorder.cancelRecording();
+    return;
+  }
+
   try {
     await session.beginRequest();
   } catch {
+    await recorder.cancelRecording();
+    return;
+  }
+
+  if (attempt !== recordingAttempt || !shouldContinue()) {
+    await recorder.cancelRecording();
+    await session.cancelActiveRequest("user_cancelled");
     return;
   }
 
@@ -229,6 +245,7 @@ async function stopNetworkRecording() {
 }
 
 async function cancelNetworkRecording() {
+  recordingAttempt += 1;
   await recorder.cancelRecording();
   await session.cancelActiveRequest("user_cancelled");
 }
@@ -252,7 +269,7 @@ function handleShortcutPressed(timestampMs: number) {
     if (!canStart.value) {
       return;
     }
-    await startNetworkRecording();
+    await startNetworkRecording(() => shortcutHeld);
     if (!shortcutHeld && recorder.isRecording.value) {
       await stopNetworkRecording();
     }
@@ -404,7 +421,7 @@ onBeforeUnmount(() => {
               class="button button-primary"
               type="button"
               :disabled="!canStart"
-              @click="startNetworkRecording"
+              @click="startNetworkRecording()"
             >
               {{
                 session.state.connectionStatus !== "connected"

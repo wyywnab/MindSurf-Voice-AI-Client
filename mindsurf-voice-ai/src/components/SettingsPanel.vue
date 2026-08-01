@@ -77,7 +77,7 @@ async function updateShortcut(event: Event) {
 async function updateShortcutEnabled(event: Event) {
   const target = event.target as unknown as { checked: boolean };
   await session.setRecordShortcutEnabled(target.checked);
-  target.checked = session.state.shortcutEnabled;
+  target.checked = session.state.shortcutDesiredEnabled;
 }
 </script>
 
@@ -124,7 +124,7 @@ async function updateShortcutEnabled(event: Event) {
             <label>
               <input
                 type="checkbox"
-                :checked="session.state.shortcutEnabled"
+                :checked="session.state.shortcutDesiredEnabled"
                 @change="updateShortcutEnabled"
               />
               启用
@@ -161,11 +161,18 @@ async function updateShortcutEnabled(event: Event) {
             :data-status="session.state.shortcutListenerStatus"
           >
             {{
-              session.state.shortcutListenerStatus === "running"
-                ? "全局监听正常"
-                : session.state.shortcutListenerStatus === "starting"
-                  ? "监听器启动中"
-                  : "监听器异常"
+              !session.state.shortcutDesiredEnabled
+                ? session.state.shortcutRegistered
+                  ? "关闭失败"
+                  : "用户已关闭"
+                : session.state.shortcutRegistered &&
+                    session.state.shortcutListenerStatus === "running"
+                  ? "全局监听正常"
+                  : session.state.shortcutListenerStatus === "starting"
+                    ? "监听器启动中"
+                    : session.state.shortcutRegistered
+                      ? "监听器异常"
+                      : "等待注册"
             }}
           </strong>
           <small v-if="session.state.shortcutLastEventAt">

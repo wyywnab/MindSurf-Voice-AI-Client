@@ -194,6 +194,15 @@ struct WorkArea {
     bottom: i32,
 }
 
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy)]
+struct Rectangle {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
 fn calculate_position(
     area: WorkArea,
     width: i32,
@@ -239,7 +248,134 @@ fn foreground_work_area<R: Runtime>(_window: &WebviewWindow<R>) -> Option<WorkAr
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn foreground_work_area<R: Runtime>(window: &WebviewWindow<R>) -> Option<WorkArea> {
+    use std::ffi::c_void;
+    use std::ptr;
+
+    use core_foundation::array::CFArrayGetValueAtIndex;
+    use core_foundation::base::{CFGetTypeID, CFTypeRef, TCFType};
+    use core_foundation::dictionary::{
+        CFDictionary, CFDictionaryGetTypeID, CFDictionaryGetValueIfPresent, CFDictionaryRef,
+    };
+    use core_foundation::number::{CFNumber, CFNumberGetTypeID, CFNumberRef};
+    use core_foundation::string::CFStringRef;
+    use core_graphics::geometry::CGRect;
+    use core_graphics::window::{
+        copy_window_info, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer,
+        kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly, kCGWindowOwnerPID,
+    };
+    use objc2_app_kit::NSWorkspace;
+
+    fn dictionary_value(dictionary: CFDictionaryRef, key: CFStringRef) -> Option<CFTypeRef> {
+        let mut value: *const c_void = ptr::null();
+        let found = unsafe {
+            CFDictionaryGetValueIfPresent(
+                dictionary,
+                key as *const c_void,
+                &mut value as *mut *const c_void,
+            )
+        };
+        (found != 0 && !value.is_null()).then_some(value as CFTypeRef)
+    }
+
+    fn dictionary_i32(dictionary: CFDictionaryRef, key: CFStringRef) -> Option<i32> {
+        let value = dictionary_value(dictionary, key)?;
+        if unsafe { CFGetTypeID(value) } != unsafe { CFNumberGetTypeID() } {
+            return None;
+        }
+        let number = unsafe { CFNumber::wrap_under_get_rule(value as CFNumberRef) };
+        number.to_i32()
+    }
+
+    let process_id = NSWorkspace::sharedWorkspace()
+        .frontmostApplication()?
+        .processIdentifier();
+    let options = kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements;
+    let window_list = copy_window_info(options, kCGNullWindowID)?;
+    let mut foreground_bounds = None;
+
+    for index in 0..window_list.len() {
+        let raw_value = unsafe {
+            CFArrayGetValueAtIndex(window_list.as_concrete_TypeRef(), index) as CFTypeRef
+        };
+        if raw_value.is_null()
+            || unsafe { CFGetTypeID(raw_value) } != unsafe { CFDictionaryGetTypeID() }
+        {
+            continue;
+        }
+        let dictionary_ref = raw_value as CFDictionaryRef;
+        let owner_pid = dictionary_i32(dictionary_ref, unsafe { kCGWindowOwnerPID });
+        let layer = dictionary_i32(dictionary_ref, unsafe { kCGWindowLayer });
+        if owner_pid != Some(process_id) || layer != Some(0) {
+            continue;
+        }
+
+        let Some(bounds_value) = dictionary_value(dictionary_ref, unsafe { kCGWindowBounds })
+        else {
+            continue;
+        };
+        if unsafe { CFGetTypeID(bounds_value) } != unsafe { CFDictionaryGetTypeID() } {
+            continue;
+        }
+        let bounds_dictionary =
+            unsafe { CFDictionary::wrap_under_get_rule(bounds_value as CFDictionaryRef) };
+        let Some(bounds) = CGRect::from_dict_representation(&bounds_dictionary) else {
+            continue;
+        };
+        if bounds.size.width > 0.0 && bounds.size.height > 0.0 {
+            foreground_bounds = Some(bounds);
+            break;
+        }
+    }
+
+    let bounds = foreground_bounds?;
+    let monitors = window.available_monitors().ok()?;
+    monitors
+        .into_iter()
+        .map(|monitor| {
+            let origin = monitor.position();
+            let size = monitor.size();
+            let area = overlap_area(
+                Rectangle {
+                    x: bounds.origin.x,
+                    y: bounds.origin.y,
+                    width: bounds.size.width,
+                    height: bounds.size.height,
+                },
+                Rectangle {
+                    x: f64::from(origin.x),
+                    y: f64::from(origin.y),
+                    width: f64::from(size.width),
+                    height: f64::from(size.height),
+                },
+            );
+            (monitor, area)
+        })
+        .max_by_key(|(_, area)| *area)
+        .filter(|(_, area)| *area > 0)
+        .map(|(monitor, _)| {
+            let area = monitor.work_area();
+            WorkArea {
+                left: area.position.x,
+                top: area.position.y,
+                right: area.position.x + area.size.width as i32,
+                bottom: area.position.y + area.size.height as i32,
+            }
+        })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn overlap_area(first: Rectangle, second: Rectangle) -> u64 {
+    let width = (first.x + first.width).min(second.x + second.width) - first.x.max(second.x);
+    let height = (first.y + first.height).min(second.y + second.height) - first.y.max(second.y);
+    if width <= 0.0 || height <= 0.0 {
+        return 0;
+    }
+    (width * height).round() as u64
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn foreground_work_area<R: Runtime>(window: &WebviewWindow<R>) -> Option<WorkArea> {
     let cursor = window.cursor_position().ok()?;
     let monitors = window.available_monitors().ok()?;
@@ -345,7 +481,7 @@ fn hide_native_window<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{calculate_position, OverlayPosition, WorkArea};
+    use super::{calculate_position, overlap_area, OverlayPosition, Rectangle, WorkArea};
 
     const AREA: WorkArea = WorkArea {
         left: 100,
@@ -381,6 +517,44 @@ mod tests {
         assert_eq!(
             calculate_position(area, 480, 132, 20, OverlayPosition::Right),
             (10, 20)
+        );
+    }
+
+    #[test]
+    fn calculates_window_overlap_for_monitor_selection() {
+        assert_eq!(
+            overlap_area(
+                Rectangle {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 800.0,
+                    height: 600.0,
+                },
+                Rectangle {
+                    x: 700.0,
+                    y: 0.0,
+                    width: 800.0,
+                    height: 600.0,
+                }
+            ),
+            60_000
+        );
+        assert_eq!(
+            overlap_area(
+                Rectangle {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 100.0,
+                },
+                Rectangle {
+                    x: 200.0,
+                    y: 200.0,
+                    width: 100.0,
+                    height: 100.0,
+                }
+            ),
+            0
         );
     }
 }
