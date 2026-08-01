@@ -64,15 +64,13 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
         .cloned()
         .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?;
 
-    let mut tray = TrayIconBuilder::with_id("main-tray")
+    let tray = TrayIconBuilder::with_id("main-tray")
         .icon(icon)
         .tooltip("MindSurf Voice AI")
         .menu(&menu)
         .show_menu_on_left_click(false);
     #[cfg(target_os = "macos")]
-    {
-        tray = tray.icon_as_template(true);
-    }
+    let tray = tray.icon_as_template(true);
 
     tray.on_tray_icon_event(|tray, event| {
         if let TrayIconEvent::Click {

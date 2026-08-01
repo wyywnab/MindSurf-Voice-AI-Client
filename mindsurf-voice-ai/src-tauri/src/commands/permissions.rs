@@ -18,6 +18,7 @@ pub struct SystemPermissionStatus {
 }
 
 impl SystemPermissionStatus {
+    #[cfg(target_os = "macos")]
     fn new(permission: SystemPermission, granted: bool) -> Self {
         Self {
             permission,
@@ -32,6 +33,7 @@ impl SystemPermissionStatus {
         }
     }
 
+    #[cfg(target_os = "macos")]
     fn with_status(permission: SystemPermission, status: &'static str) -> Self {
         Self { permission, status }
     }

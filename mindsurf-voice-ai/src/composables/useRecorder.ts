@@ -23,10 +23,11 @@ export interface StartRecordingOptions {
   onFrame?: (frame: Int16Array, sequence: number) => void;
 }
 
-const recorder =
-  isTauri() && /Macintosh|Mac OS X/.test(globalThis.navigator?.userAgent ?? "")
-    ? new NativeMicrophoneRecorder()
-    : new MicrophoneRecorder();
+const usesNativeRecorder =
+  isTauri() && /Macintosh|Mac OS X/.test(globalThis.navigator?.userAgent ?? "");
+const recorder = usesNativeRecorder
+  ? new NativeMicrophoneRecorder()
+  : new MicrophoneRecorder();
 const MAX_RECORDING_MS = 60_000;
 
 export function useRecorder() {
@@ -50,6 +51,23 @@ export function useRecorder() {
   const isRecording = computed(() => state.value === "recording");
 
   async function refreshPermissionState() {
+    if (usesNativeRecorder) {
+      const nativeStatus = await getSystemPermissionStatus("microphone");
+      if (!nativeStatus.ok) {
+        permissionState.value = "unknown";
+        return;
+      }
+      permissionState.value =
+        nativeStatus.data.status === "granted"
+          ? "granted"
+          : ["denied", "restricted"].includes(nativeStatus.data.status)
+            ? "denied"
+            : nativeStatus.data.status === "not_determined"
+              ? "prompt"
+              : "unknown";
+      return;
+    }
+
     if (!navigator.mediaDevices?.getUserMedia) {
       permissionState.value = "unsupported";
       return;
@@ -151,12 +169,27 @@ export function useRecorder() {
 
     try {
       await recorder.prepare();
+      if (usesNativeRecorder) {
+        await refreshPermissionState();
+      }
       if (currentOperationId !== operationId) {
         await recorder.cancel();
         return false;
       }
-      activeTrackCount.value = 1;
-      permissionState.value = "granted";
+      if (usesNativeRecorder && permissionState.value !== "granted") {
+        await recorder.cancel();
+        activeTrackCount.value = 0;
+        errorMessage.value =
+          permissionState.value === "denied"
+            ? "麦克风权限未授权，请在系统设置中允许访问后重试。"
+            : "请先在权限页面完成麦克风授权。";
+        state.value = "error";
+        return false;
+      }
+      activeTrackCount.value = usesNativeRecorder ? 0 : 1;
+      if (!usesNativeRecorder) {
+        permissionState.value = "granted";
+      }
       state.value = "prepared";
       return true;
     } catch (error) {

@@ -65,6 +65,7 @@ fn recorder_error(code: &str, message: impl ToString) -> AppError {
     AppError::new(code, message.to_string(), true)
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn parse_pcm_wav(bytes: &[u8]) -> Result<(u32, Vec<i16>), AppError> {
     if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
         return Err(recorder_error(

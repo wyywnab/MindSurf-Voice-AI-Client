@@ -47,9 +47,9 @@ pub trait TextInjector: Send + Sync {
 }
 
 #[tauri::command]
-pub fn prepare_text_injection_target(app: tauri::AppHandle) -> CommandResult<()> {
+pub fn prepare_text_injection_target(_app: tauri::AppHandle) -> CommandResult<()> {
     #[cfg(target_os = "macos")]
-    if let Err(error) = platform::prepare_target(&app) {
+    if let Err(error) = platform::prepare_target(&_app) {
         #[cfg(debug_assertions)]
         eprintln!(
             "text injection: target preparation failed code={}, message={}",

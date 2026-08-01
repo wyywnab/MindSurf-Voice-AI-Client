@@ -69,6 +69,10 @@ function updateLocalSnapshot(next: OverlaySnapshot) {
 }
 
 function animate(now: number) {
+  if (disposed) {
+    animationFrame = null;
+    return;
+  }
   const elapsedMs = Math.min(100, Math.max(0, now - lastAnimationAt));
   lastAnimationAt = now;
   const recording = usesNativeMeter ? nativeRecordingActive.value : snapshot.recording;
@@ -86,23 +90,24 @@ function animate(now: number) {
 }
 
 async function pollNativeMeter() {
+  if (disposed || !usesNativeMeter) {
+    return;
+  }
+  const meter = await getNativeAudioRecordingMeter();
   if (disposed) {
     return;
   }
-  if (usesNativeMeter) {
-    const meter = await getNativeAudioRecordingMeter();
-    if (!disposed && meter !== null) {
-      const wasActive = nativeRecordingActive.value;
-      nativeRecordingActive.value = meter.active;
-      targetLevel = meter.active ? meter.level : 0;
-      if (meter.active) {
-        durationBaseMs = meter.durationMs;
-        durationBaseAt = globalThis.performance.now();
-        displayedDurationMs.value = durationBaseMs;
-      } else if (wasActive) {
-        displayedDurationMs.value =
-          durationBaseMs + (globalThis.performance.now() - durationBaseAt);
-      }
+  if (meter !== null) {
+    const wasActive = nativeRecordingActive.value;
+    nativeRecordingActive.value = meter.active;
+    targetLevel = meter.active ? meter.level : 0;
+    if (meter.active) {
+      durationBaseMs = meter.durationMs;
+      durationBaseAt = globalThis.performance.now();
+      displayedDurationMs.value = durationBaseMs;
+    } else if (wasActive) {
+      displayedDurationMs.value =
+        durationBaseMs + (globalThis.performance.now() - durationBaseAt);
     }
   }
   levelPollTimer = globalThis.setTimeout(
@@ -114,7 +119,9 @@ async function pollNativeMeter() {
 onMounted(() => {
   lastAnimationAt = globalThis.performance.now();
   animationFrame = globalThis.requestAnimationFrame(animate);
-  void pollNativeMeter();
+  if (usesNativeMeter) {
+    void pollNativeMeter();
+  }
   void subscribeOverlayState((next) => {
     updateLocalSnapshot(next);
   }).then((stop) => {
