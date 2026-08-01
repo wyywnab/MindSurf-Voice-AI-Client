@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { MicrophoneRecorder } from "./recorder";
+import {
+  describeRecorderError,
+  MicrophoneRecorder,
+  prepareMicrophone,
+} from "./recorder";
 
 class FakeTrack {
   readyState: MediaStreamTrackState = "live";
@@ -66,6 +70,26 @@ afterEach(() => {
 });
 
 describe("MicrophoneRecorder cleanup", () => {
+  it("prepares microphone access and immediately releases every track", async () => {
+    const stream = new FakeStream();
+    const getUserMedia = vi.fn(async () => stream);
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+
+    await prepareMicrophone();
+
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true, video: false });
+    expect(stream.track.readyState).toBe("ended");
+  });
+
+  it("distinguishes native denial from a WebView capture failure", () => {
+    const error = new DOMException("not allowed", "NotAllowedError");
+
+    expect(describeRecorderError(error)).toContain("权限被拒绝");
+    expect(describeRecorderError(error, { nativePermissionGranted: true })).toContain(
+      "WebView 无法取得音频流",
+    );
+  });
+
   it("releases every MediaStream track over twenty recording cycles", async () => {
     vi.stubGlobal("document", { baseURI: "http://localhost/" });
     vi.stubGlobal("AudioContext", FakeAudioContext);

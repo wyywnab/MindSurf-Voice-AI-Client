@@ -1070,6 +1070,27 @@ h1 {
   gap: 6px;
 }
 
+.permission-initializer > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 10px;
+}
+
+.permission-initializer strong {
+  flex: 1 1 230px;
+}
+
+.permission-initializer strong[data-ready="true"] {
+  color: var(--success);
+}
+
+.permission-initializer small {
+  flex: 1 1 100%;
+  color: var(--text-muted);
+  font-size: 0.64rem;
+}
+
 .shortcut-status::before {
   display: inline-block;
   width: 6px;

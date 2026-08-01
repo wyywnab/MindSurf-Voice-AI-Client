@@ -3,20 +3,30 @@ import { onBeforeUnmount, onMounted, ref } from "vue";
 
 import ConnectionBadge from "./components/ConnectionBadge.vue";
 import ConnectionPanel from "./components/ConnectionPanel.vue";
+import PermissionsPanel from "./components/PermissionsPanel.vue";
 import RecorderPanel from "./components/RecorderPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import TopTabs from "./components/TopTabs.vue";
 import { getAppInfo } from "./services/appInfo";
 import { hideOverlayWindow, setOverlayWindowPosition } from "./services/overlay";
+import { getSystemPermissionStatus } from "./services/permissions";
 import { subscribeTrayActions, syncTrayMode } from "./services/tray";
 import { useVoiceSessionStore } from "./stores/voiceSession";
 import type { AppInfo } from "./types/app";
 import type { MainTab, MainTabId } from "./types/navigation";
+import type { SystemPermission } from "./types/permissions";
 
 const tabs: readonly MainTab[] = [
   { id: "record", label: "录音" },
   { id: "connection", label: "连接" },
+  { id: "permissions", label: "权限" },
   { id: "settings", label: "设置" },
+];
+
+const macPermissions: readonly SystemPermission[] = [
+  "microphone",
+  "accessibility",
+  "input_monitoring",
 ];
 
 const activeTab = ref<MainTabId>("record");
@@ -25,6 +35,22 @@ const appInfoError = ref("");
 const session = useVoiceSessionStore();
 let trayDisposed = false;
 let unlistenTray: (() => void) | null = null;
+
+async function configureStartupPermissions(platform: string) {
+  if (platform !== "macos") {
+    await session.initializeRecordShortcut();
+    return;
+  }
+
+  const checks = await Promise.all(macPermissions.map(getSystemPermissionStatus));
+  const hasMissingPermission = checks.some(
+    (result) => !result.ok || result.data.status !== "granted",
+  );
+
+  if (hasMissingPermission) {
+    activeTab.value = "permissions";
+  }
+}
 
 onMounted(async () => {
   void subscribeTrayActions({
@@ -52,11 +78,11 @@ onMounted(async () => {
   if (!session.state.overlayEnabled) {
     void hideOverlayWindow();
   }
-  void session.initializeRecordShortcut();
   const result = await getAppInfo();
 
   if (result.ok) {
     appInfo.value = result.data;
+    await configureStartupPermissions(result.data.platform);
     session.connect({
       version: result.data.version,
       platform: result.data.platform,
@@ -64,6 +90,9 @@ onMounted(async () => {
     });
   } else {
     appInfoError.value = result.error.message;
+    await configureStartupPermissions(
+      globalThis.navigator.userAgent.includes("Mac OS") ? "macos" : "unknown",
+    );
     session.connect({
       version: "0.1.0",
       platform: globalThis.navigator.userAgent.includes("Mac OS") ? "macos" : "unknown",
@@ -96,6 +125,7 @@ onBeforeUnmount(() => {
     <main class="app-content">
       <RecorderPanel v-show="activeTab === 'record'" />
       <ConnectionPanel v-show="activeTab === 'connection'" />
+      <PermissionsPanel v-show="activeTab === 'permissions'" :app-info="appInfo" />
       <SettingsPanel
         v-show="activeTab === 'settings'"
         :app-info="appInfo"

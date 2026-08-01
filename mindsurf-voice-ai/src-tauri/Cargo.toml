@@ -33,8 +33,15 @@ windows = { version = "0.61.3", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6.2"
 core-foundation = "0.10.1"
 core-graphics = { version = "0.25.0", features = ["catalina"] }
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "block2",
+  "AVCaptureDevice",
+  "AVMediaFormat",
+] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
   "std",
   "libc",
