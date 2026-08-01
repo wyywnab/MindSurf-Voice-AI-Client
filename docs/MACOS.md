@@ -74,8 +74,14 @@ cargo test --all-targets
 
 ```bash
 cd mindsurf-voice-ai
-npm run tauri build -- --debug --bundles app
+npm run build:macos:debug
 ```
+
+不要使用 `tauri dev` 或未经 bundle 签名的裸二进制验证 TCC 权限。本地没有
+Apple Development 签名证书时，脚本会使用标识为 `org.sast.mindsurf` 的 ad-hoc
+签名；每次重新构建都会产生新的代码哈希，因此必须先完全退出旧进程，再执行
+`tccutil reset All org.sast.mindsurf`，重新打开同一个 `.app` 并授权。红色关闭按钮
+只会隐藏主窗口，必须使用托盘菜单“退出”或确认进程已经结束。
 
 生成 Universal App 与 DMG：
 
