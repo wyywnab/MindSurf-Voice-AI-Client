@@ -80,9 +80,9 @@ mindsurf.voice.v1
 
 ### 4.3 鉴权
 
-Phase 1 客户端不实现应用层鉴权，不发送 API Key、认证 token 或自定义鉴权消息。本地 mock 必须校验请求来源并只监听 loopback；远程服务必须使用 `wss://`。
+Phase 2 在 `client.hello.payload.auth` 中支持可选的 Bearer Token。Token 不得出现在 URL、日志、错误详情或其他协议消息中；远程服务仍必须使用 `wss://`。
 
-远程服务的访问控制由部署环境负责，不属于 Phase 1 客户端协议。未来增加应用层鉴权时，必须通过向后兼容的能力协商或提升协议版本实现，且不得把长期密钥放在 URL 查询参数中。
+未配置 Token 时客户端省略 `auth`。不要求鉴权的服务端必须继续接受没有 `auth` 的版本 1 客户端；要求鉴权的服务端使用稳定的会话级 fatal error 拒绝缺失、无效或过期的 Token。鉴权失败后客户端不得自动重连，直到用户更新服务配置或手动重试。
 
 ### 4.4 建连时限
 
@@ -272,7 +272,11 @@ WebSocket 打开后，客户端发送的第一条消息必须是 `client.hello`�
         "sample_rates": [16000, 24000],
         "channels": 1
       }
-    ]
+    ],
+    "auth": {
+      "scheme": "bearer",
+      "token": "<token>"
+    }
   }
 }
 ```
@@ -289,6 +293,11 @@ WebSocket 打开后，客户端发送的第一条消息必须是 `client.hello`�
 | `pipelines` | string[] | 当前支持 `cascade` |
 | `input_audio` | object[] | 支持的上行格式 |
 | `output_audio` | object[] | 支持的下行格式 |
+| `auth` | object | 可选；应用层鉴权信息 |
+| `auth.scheme` | string | 当前固定为 `bearer` |
+| `auth.token` | string | Bearer Token；不得记录或回显 |
+
+`auth` 字段是版本 1 的向后兼容可选扩展。服务端收到未知 `scheme` 时返回 `authentication_failed`，不得把收到的凭据放入 `error.details`。
 
 ### 7.2 `server.hello`
 
@@ -894,6 +903,9 @@ NEW
 | `protocol_version_mismatch` | session | 是 | 无共同协议版本 |
 | `handshake_required` | session | 是 | 握手前发送业务消息 |
 | `handshake_timeout` | session | 是 | 握手超时 |
+| `authentication_required` | session | 是 | 服务要求鉴权但客户端未提供 Token |
+| `authentication_failed` | session | 是 | Token 或鉴权 scheme 无效 |
+| `token_expired` | session | 是 | Token 已过期，需要用户重新配置 |
 | `request_already_active` | request | 是 | 已有活跃请求 |
 | `request_not_found` | request | 否 | request ID 不存在 |
 | `request_state_error` | request | 是 | 当前状态不允许该消息 |

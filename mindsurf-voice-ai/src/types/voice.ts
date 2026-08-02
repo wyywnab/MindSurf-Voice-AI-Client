@@ -17,48 +17,6 @@ export interface PlaybackMetrics {
   underrunCount: number;
 }
 
-export interface VoiceSessionState {
-  activeRequestId: string | null;
-  autoInjection: Record<VoiceInteractionMode, boolean>;
-  assistantFinal: string;
-  assistantLastSequence: number;
-  assistantStreaming: string;
-  assistantWarning: string;
-  asrFinal: string;
-  asrLanguage: string;
-  asrPartial: string;
-  asrRevision: number;
-  connectionStatus: ServiceConnectionStatus;
-  injectionError: string;
-  injectionMaxCodePoints: number;
-  injectionRemainingText: string;
-  injectionReport: TextInjectionReport | null;
-  injectionStatus: TextInjectionStatus;
-  lastError: string;
-  networkCongested: boolean;
-  overlayEnabled: boolean;
-  overlayPosition: OverlayPosition;
-  playbackError: string;
-  playbackMetrics: PlaybackMetrics;
-  playbackStatus: PlaybackStatus;
-  reconnectAttempt: number;
-  requestStatus: RequestLifecycleState;
-  shortcutBinding: ShortcutBinding;
-  shortcutDesiredEnabled: boolean;
-  shortcutDisplay: string;
-  shortcutError: string;
-  shortcutLastEventAt: number | null;
-  shortcutListenerStatus: ShortcutListenerStatus;
-  shortcutRegistered: boolean;
-  selectedMode: VoiceInteractionMode;
-  selectedAsrId: string;
-  selectedLlmId: string;
-  selectedOutputAudioId: string;
-  selectedTtsId: string;
-  serverHello: ServerHelloPayload | null;
-  serviceUrl: string;
-}
-
 export const VOICE_MODE_LABELS: Record<VoiceInteractionMode, string> = {
   dictation: "听写",
   assistant: "助手",
@@ -72,7 +30,3 @@ export const CONNECTION_STATUS_LABELS: Record<ServiceConnectionStatus, string> =
   reconnecting: "正在重连",
   error: "连接异常",
 };
-import type { ServerHelloPayload } from "./protocol";
-import type { RequestLifecycleState } from "./request";
-import type { ShortcutBinding, ShortcutListenerStatus } from "./shortcut";
-import type { TextInjectionReport, TextInjectionStatus } from "./injection";

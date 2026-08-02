@@ -6,7 +6,7 @@ import { WebSocket } from "ws";
 const port = 18_000 + Math.floor(Math.random() * 1_000);
 const child = spawn(process.execPath, ["server.mjs"], {
   cwd: import.meta.dirname,
-  env: { ...process.env, PORT: String(port) },
+  env: { ...process.env, PORT: String(port), MOCK_AUTH_TOKEN: "test-token" },
   stdio: ["ignore", "pipe", "inherit"],
 });
 
@@ -14,6 +14,7 @@ try {
   await waitForListening(child);
   await runProtocolFlow(port, "dictation");
   await runProtocolFlow(port, "assistant");
+  await runAuthenticationFailure(port);
   console.log("Mock protocol flow passed.");
 } finally {
   child.kill();
@@ -61,6 +62,7 @@ function runProtocolFlow(serverPort, mode) {
             channels: 1,
           },
         ],
+        auth: { scheme: "bearer", token: "test-token" },
       });
     });
 
@@ -157,6 +159,41 @@ function runProtocolFlow(serverPort, mode) {
       }
     });
 
+    socket.on("error", reject);
+  });
+}
+
+function runAuthenticationFailure(serverPort) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(
+      `ws://127.0.0.1:${serverPort}/v1/voice/ws`,
+      "mindsurf.voice.v1",
+    );
+    const timeout = setTimeout(() => reject(new Error("auth test timed out")), 3_000);
+    socket.on("open", () => {
+      send(socket, "client.hello", null, {
+        client: {
+          name: "mock-test",
+          version: "0.1.0",
+          platform: "windows",
+          arch: "x86_64",
+        },
+        protocol_versions: [1],
+        pipelines: ["cascade"],
+        input_audio: [],
+        output_audio: [],
+        auth: { scheme: "bearer", token: "wrong-token" },
+      });
+    });
+    socket.on("message", (data) => {
+      const message = JSON.parse(data.toString("utf8"));
+      if (message.type === "error") {
+        clearTimeout(timeout);
+        socket.close();
+        if (message.payload.code === "authentication_failed") resolve();
+        else reject(new Error(`unexpected auth error: ${message.payload.code}`));
+      }
+    });
     socket.on("error", reject);
   });
 }

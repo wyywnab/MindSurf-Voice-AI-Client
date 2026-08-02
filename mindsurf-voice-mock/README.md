@@ -18,3 +18,5 @@ ws://127.0.0.1:8000/v1/voice/ws
 ```
 
 可以通过 `PORT` 环境变量修改端口。
+
+设置 `MOCK_AUTH_TOKEN` 后，Mock 要求 `client.hello.auth` 携带对应 Bearer Token。`MOCK_EXPIRED_TOKEN` 可指定用于触发 `token_expired` 的测试 Token。

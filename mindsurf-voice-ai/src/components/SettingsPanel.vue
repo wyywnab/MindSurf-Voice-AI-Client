@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-import { useVoiceSessionStore } from "../stores/voiceSession";
+import { settingsController } from "../controllers/settingsController";
+import { subscribeAudioDeviceChanges } from "../services/audioInputDevices";
+import { runMicrophoneTest } from "../services/microphoneTest";
+import { useConnectionStore } from "../stores/connectionStore";
+import { useRequestStore } from "../stores/requestStore";
+import { useSettingsStore } from "../stores/settingsStore";
 import type { AppInfo } from "../types/app";
 import {
   VOICE_MODE_LABELS,
@@ -15,7 +20,18 @@ const props = defineProps<{
   appInfoError: string;
 }>();
 
-const session = useVoiceSessionStore();
+const connectionState = useConnectionStore().state;
+const requestState = useRequestStore().state;
+const settingsState = useSettingsStore().state;
+const serviceUrlInput = ref(settingsState.serviceUrl);
+const tokenInput = ref("");
+const autoConnectInput = ref(settingsState.autoConnect);
+const serviceSaveError = ref("");
+const serviceSaveStatus = ref("");
+const microphoneTestStatus = ref<"idle" | "testing" | "succeeded" | "failed">("idle");
+const microphoneTestLevel = ref(0);
+const microphoneTestError = ref("");
+let unsubscribeDeviceChanges: (() => void) | null = null;
 const isMacOS = computed(() => props.appInfo?.platform === "macos");
 const shortcutOptions = computed<Array<{ value: ShortcutBinding; label: string }>>(
   () =>
@@ -32,52 +48,176 @@ const shortcutOptions = computed<Array<{ value: ShortcutBinding; label: string }
           { value: "ctrl_win_space", label: "Ctrl + Win + Space" },
         ],
 );
+const languageOptions = computed(
+  () =>
+    connectionState.serverHello?.recognition_languages ?? [
+      { id: "auto", name: "自动识别" },
+    ],
+);
+const voiceOptions = computed(
+  () => connectionState.serverHello?.voices ?? [{ id: "default", name: "默认音色" }],
+);
+const recordingLimitSeconds = computed(() =>
+  Math.round(
+    Math.min(60_000, connectionState.serverHello?.limits.max_recording_ms ?? 60_000) /
+      1_000,
+  ),
+);
 function updateOption(kind: "asr" | "llm" | "tts" | "output_audio", event: Event) {
-  session.setInferenceOption(kind, (event.target as HTMLSelectElement).value);
+  settingsController.setInferenceOption(
+    kind,
+    (event.target as HTMLSelectElement).value,
+  );
 }
 
 function updateMode(event: Event) {
-  session.setMode((event.target as HTMLSelectElement).value as VoiceInteractionMode);
+  settingsController.setMode(
+    (event.target as HTMLSelectElement).value as VoiceInteractionMode,
+  );
 }
 
 function updateOverlayPosition(event: Event) {
-  session.setOverlayPosition(
+  settingsController.setOverlayPosition(
     (event.target as HTMLSelectElement).value as OverlayPosition,
   );
 }
 
 function updateOverlayEnabled(event: Event) {
-  session.setOverlayEnabled((event.target as unknown as { checked: boolean }).checked);
+  settingsController.setOverlayEnabled(
+    (event.target as unknown as { checked: boolean }).checked,
+  );
 }
 
 function updateAutoInjection(mode: VoiceInteractionMode, event: Event) {
-  session.setAutoInjection(
+  settingsController.setAutoInjection(
     mode,
     (event.target as unknown as { checked: boolean }).checked,
   );
 }
 
 function updateInjectionLimit(event: Event) {
-  session.setInjectionMaxCodePoints(
+  settingsController.setInjectionMaxCodePoints(
     Number((event.target as unknown as { value: string }).value),
   );
 }
 
 async function updateShortcut(event: Event) {
   const target = event.target as HTMLSelectElement;
-  const updated = await session.configureRecordShortcut(
+  const updated = await settingsController.configureRecordShortcut(
     target.value as ShortcutBinding,
   );
   if (!updated) {
-    target.value = session.state.shortcutBinding;
+    target.value = settingsState.shortcutBinding;
   }
 }
 
 async function updateShortcutEnabled(event: Event) {
   const target = event.target as unknown as { checked: boolean };
-  await session.setRecordShortcutEnabled(target.checked);
-  target.checked = session.state.shortcutDesiredEnabled;
+  await settingsController.setRecordShortcutEnabled(target.checked);
+  target.checked = settingsState.shortcutDesiredEnabled;
 }
+
+async function saveService() {
+  serviceSaveError.value = "";
+  serviceSaveStatus.value = "";
+  try {
+    await settingsController.saveServiceSettings({
+      url: serviceUrlInput.value,
+      autoConnect: autoConnectInput.value,
+      token: tokenInput.value,
+    });
+    tokenInput.value = "";
+    serviceSaveStatus.value = "服务配置已保存";
+  } catch (error) {
+    serviceSaveError.value = error instanceof Error ? error.message : "保存失败";
+  }
+}
+
+async function clearToken() {
+  serviceSaveError.value = "";
+  try {
+    await settingsController.clearToken();
+    tokenInput.value = "";
+    serviceSaveStatus.value = "Token 已清除";
+  } catch (error) {
+    serviceSaveError.value = error instanceof Error ? error.message : "清除失败";
+  }
+}
+
+async function testConnection() {
+  serviceSaveError.value = "";
+  const info = props.appInfo;
+  try {
+    await settingsController.testConnection(serviceUrlInput.value, {
+      version: info?.version ?? "0.1.0",
+      platform: info?.platform ?? "unknown",
+      arch: info?.arch ?? "unknown",
+    });
+  } catch {
+    // Store: 连接测试错误由 settingsStore 展示。
+  }
+}
+
+function updateInputDevice(event: Event) {
+  const value = (event.target as HTMLSelectElement).value;
+  settingsController.setInputDevice(value || null);
+}
+
+function updateLanguage(event: Event) {
+  settingsController.setLanguage((event.target as HTMLSelectElement).value);
+}
+
+function updateAudioResponse(event: Event) {
+  settingsController.setAudioResponseEnabled(
+    (event.target as unknown as { checked: boolean }).checked,
+  );
+}
+
+function updateVoice(event: Event) {
+  settingsController.setVoice((event.target as HTMLSelectElement).value);
+}
+
+function updatePlaybackVolume(event: Event) {
+  settingsController.setPlaybackVolume(
+    Number((event.target as unknown as { value: string }).value),
+  );
+}
+
+async function testMicrophone() {
+  microphoneTestStatus.value = "testing";
+  microphoneTestError.value = "";
+  try {
+    await runMicrophoneTest(settingsState.inputDeviceId, (level) => {
+      microphoneTestLevel.value = level;
+    });
+    microphoneTestStatus.value = "succeeded";
+  } catch (error) {
+    microphoneTestStatus.value = "failed";
+    microphoneTestError.value =
+      error instanceof Error ? error.message : "麦克风测试失败";
+  }
+}
+
+watch(
+  () => [settingsState.serviceUrl, settingsState.autoConnect] as const,
+  ([url, autoConnect]) => {
+    serviceUrlInput.value = url;
+    autoConnectInput.value = autoConnect;
+  },
+  { immediate: true },
+);
+
+onMounted(() => {
+  void settingsController.refreshAudioInputDevices();
+  unsubscribeDeviceChanges = subscribeAudioDeviceChanges(() => {
+    void settingsController.refreshAudioInputDevices();
+  });
+});
+
+onBeforeUnmount(() => {
+  unsubscribeDeviceChanges?.();
+  unsubscribeDeviceChanges = null;
+});
 </script>
 
 <template>
@@ -91,12 +231,81 @@ async function updateShortcutEnabled(event: Event) {
 
     <div class="panel-body">
       <div class="settings-list">
+        <h2 class="settings-category">服务连接</h2>
+        <article>
+          <span>WebSocket 地址</span>
+          <input
+            v-model="serviceUrlInput"
+            type="url"
+            spellcheck="false"
+            :disabled="Boolean(requestState.activeRequestId)"
+            placeholder="wss://example.com/v1/voice/ws"
+          />
+        </article>
+        <article>
+          <span>服务 Token</span>
+          <div class="shortcut-setting">
+            <input
+              v-model="tokenInput"
+              type="password"
+              autocomplete="new-password"
+              :placeholder="
+                settingsState.tokenConfigured ? '已配置，留空则不修改' : '未配置'
+              "
+            />
+            <button
+              v-if="settingsState.tokenConfigured"
+              class="button button-secondary"
+              type="button"
+              @click="clearToken"
+            >
+              清除
+            </button>
+          </div>
+        </article>
+        <article>
+          <span>自动连接</span>
+          <label class="setting-toggle">
+            <input v-model="autoConnectInput" type="checkbox" />
+            应用启动后连接服务
+          </label>
+        </article>
+        <article>
+          <span>配置操作</span>
+          <div class="shortcut-setting">
+            <button class="button button-primary" type="button" @click="saveService">
+              保存配置
+            </button>
+            <button
+              class="button button-secondary"
+              type="button"
+              :disabled="settingsState.connectionTestStatus === 'testing'"
+              @click="testConnection"
+            >
+              {{
+                settingsState.connectionTestStatus === "testing"
+                  ? "测试中…"
+                  : "测试连接"
+              }}
+            </button>
+          </div>
+          <small v-if="serviceSaveStatus">{{ serviceSaveStatus }}</small>
+        </article>
+        <article v-if="settingsState.connectionTestResult">
+          <span>测试结果</span>
+          <strong>
+            v{{ settingsState.connectionTestResult.protocolVersion }} ·
+            {{ settingsState.connectionTestResult.pipeline }} ·
+            {{ settingsState.connectionTestResult.elapsedMs }} ms ·
+            {{ settingsState.connectionTestResult.modelCount }} 个模型
+          </strong>
+        </article>
         <h2 class="settings-category">操作与界面</h2>
         <article>
           <span>默认模式</span>
           <select
-            :value="session.state.selectedMode"
-            :disabled="Boolean(session.state.activeRequestId)"
+            :value="settingsState.selectedMode"
+            :disabled="Boolean(requestState.activeRequestId)"
             @change="updateMode"
           >
             <option
@@ -111,7 +320,7 @@ async function updateShortcutEnabled(event: Event) {
         <article>
           <span>按住说话快捷键</span>
           <div class="shortcut-setting">
-            <select :value="session.state.shortcutBinding" @change="updateShortcut">
+            <select :value="settingsState.shortcutBinding" @change="updateShortcut">
               <option
                 v-for="option in shortcutOptions"
                 :key="option.value"
@@ -123,7 +332,7 @@ async function updateShortcutEnabled(event: Event) {
             <label>
               <input
                 type="checkbox"
-                :checked="session.state.shortcutDesiredEnabled"
+                :checked="settingsState.shortcutDesiredEnabled"
                 @change="updateShortcutEnabled"
               />
               启用
@@ -133,8 +342,8 @@ async function updateShortcutEnabled(event: Event) {
         <article>
           <span>输入悬浮窗位置</span>
           <select
-            :value="session.state.overlayPosition"
-            :disabled="!session.state.overlayEnabled"
+            :value="settingsState.overlayPosition"
+            :disabled="!settingsState.overlayEnabled"
             @change="updateOverlayPosition"
           >
             <option value="left">底部左侧</option>
@@ -147,7 +356,7 @@ async function updateShortcutEnabled(event: Event) {
           <label class="setting-toggle">
             <input
               type="checkbox"
-              :checked="session.state.overlayEnabled"
+              :checked="settingsState.overlayEnabled"
               @change="updateOverlayEnabled"
             />
             录音及处理期间显示
@@ -157,36 +366,118 @@ async function updateShortcutEnabled(event: Event) {
           <span>快捷键状态</span>
           <strong
             class="shortcut-status"
-            :data-status="session.state.shortcutListenerStatus"
+            :data-status="settingsState.shortcutListenerStatus"
           >
             {{
-              !session.state.shortcutDesiredEnabled
-                ? session.state.shortcutRegistered
+              !settingsState.shortcutDesiredEnabled
+                ? settingsState.shortcutRegistered
                   ? "关闭失败"
                   : "用户已关闭"
-                : session.state.shortcutRegistered &&
-                    session.state.shortcutListenerStatus === "running"
+                : settingsState.shortcutRegistered &&
+                    settingsState.shortcutListenerStatus === "running"
                   ? "全局监听正常"
-                  : session.state.shortcutListenerStatus === "starting"
+                  : settingsState.shortcutListenerStatus === "starting"
                     ? "监听器启动中"
-                    : session.state.shortcutRegistered
+                    : settingsState.shortcutRegistered
                       ? "监听器异常"
                       : "等待注册"
             }}
           </strong>
-          <small v-if="session.state.shortcutLastEventAt">
+          <small v-if="settingsState.shortcutLastEventAt">
             最近触发：
-            {{ new Date(session.state.shortcutLastEventAt).toLocaleTimeString() }}
+            {{ new Date(settingsState.shortcutLastEventAt).toLocaleTimeString() }}
           </small>
         </article>
         <h2 class="settings-category">录音与文本注入</h2>
         <article>
-          <span>录音格式</span>
-          <strong>16 kHz / Mono / PCM16LE</strong>
+          <span>麦克风</span>
+          <select
+            :value="settingsState.inputDeviceId ?? ''"
+            :disabled="
+              requestState.status === 'recording' || settingsState.audioDevicesLoading
+            "
+            @change="updateInputDevice"
+          >
+            <option value="">系统默认麦克风</option>
+            <option
+              v-for="device in settingsState.audioInputDevices"
+              :key="device.id"
+              :value="device.id"
+            >
+              {{ device.label }}
+            </option>
+          </select>
         </article>
         <article>
           <span>单次录音上限</span>
-          <strong>60 秒</strong>
+          <strong>{{ recordingLimitSeconds }} 秒</strong>
+        </article>
+        <article>
+          <span>麦克风测试</span>
+          <div class="shortcut-setting">
+            <button
+              class="button button-secondary"
+              type="button"
+              :disabled="
+                microphoneTestStatus === 'testing' ||
+                requestState.status === 'recording'
+              "
+              @click="testMicrophone"
+            >
+              {{ microphoneTestStatus === "testing" ? "测试中…" : "开始测试" }}
+            </button>
+            <progress :value="microphoneTestLevel" max="1" />
+          </div>
+          <small v-if="microphoneTestStatus === 'succeeded'">麦克风测试完成</small>
+        </article>
+        <article>
+          <span>识别语言</span>
+          <select :value="settingsState.language" @change="updateLanguage">
+            <option
+              v-for="option in languageOptions"
+              :key="option.id"
+              :value="option.id"
+            >
+              {{ option.name }}
+            </option>
+          </select>
+        </article>
+        <article>
+          <span>语音回复</span>
+          <label class="setting-toggle">
+            <input
+              type="checkbox"
+              :checked="settingsState.audioResponseEnabled"
+              @change="updateAudioResponse"
+            />
+            请求并播放 TTS 音频
+          </label>
+        </article>
+        <article>
+          <span>音色</span>
+          <select
+            :value="settingsState.voice"
+            :disabled="!settingsState.audioResponseEnabled"
+            @change="updateVoice"
+          >
+            <option v-for="option in voiceOptions" :key="option.id" :value="option.id">
+              {{ option.name }}
+            </option>
+          </select>
+        </article>
+        <article>
+          <span>播放音量</span>
+          <div class="number-setting">
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              :value="settingsState.playbackVolume"
+              @input="updatePlaybackVolume"
+            />
+            <small>{{ Math.round(settingsState.playbackVolume * 100) }}%</small>
+          </div>
         </article>
         <article>
           <span>自动注入</span>
@@ -194,7 +485,7 @@ async function updateShortcutEnabled(event: Event) {
             <label v-for="(label, mode) in VOICE_MODE_LABELS" :key="mode">
               <input
                 type="checkbox"
-                :checked="session.state.autoInjection[mode]"
+                :checked="settingsState.autoInjection[mode]"
                 @change="updateAutoInjection(mode, $event)"
               />
               {{ label }}
@@ -209,7 +500,7 @@ async function updateShortcutEnabled(event: Event) {
               min="1"
               max="8000"
               step="100"
-              :value="session.state.injectionMaxCodePoints"
+              :value="settingsState.injectionMaxCodePoints"
               @change="updateInjectionLimit"
             />
             <small>Unicode 字符，最大 8000</small>
@@ -219,12 +510,12 @@ async function updateShortcutEnabled(event: Event) {
         <article>
           <span>ASR</span>
           <select
-            :value="session.state.selectedAsrId"
-            :disabled="!session.state.serverHello"
+            :value="settingsState.selectedAsrId"
+            :disabled="!connectionState.serverHello"
             @change="updateOption('asr', $event)"
           >
             <option
-              v-for="option in session.state.serverHello?.inference_options.asr ?? []"
+              v-for="option in connectionState.serverHello?.inference_options.asr ?? []"
               :key="option.id"
               :value="option.id"
               :title="option.description"
@@ -236,12 +527,12 @@ async function updateShortcutEnabled(event: Event) {
         <article>
           <span>LLM</span>
           <select
-            :value="session.state.selectedLlmId"
-            :disabled="!session.state.serverHello"
+            :value="settingsState.selectedLlmId"
+            :disabled="!connectionState.serverHello"
             @change="updateOption('llm', $event)"
           >
             <option
-              v-for="option in session.state.serverHello?.inference_options.llm ?? []"
+              v-for="option in connectionState.serverHello?.inference_options.llm ?? []"
               :key="option.id"
               :value="option.id"
               :title="option.description"
@@ -253,12 +544,12 @@ async function updateShortcutEnabled(event: Event) {
         <article>
           <span>TTS</span>
           <select
-            :value="session.state.selectedTtsId"
-            :disabled="!session.state.serverHello"
+            :value="settingsState.selectedTtsId"
+            :disabled="!connectionState.serverHello"
             @change="updateOption('tts', $event)"
           >
             <option
-              v-for="option in session.state.serverHello?.inference_options.tts ?? []"
+              v-for="option in connectionState.serverHello?.inference_options.tts ?? []"
               :key="option.id"
               :value="option.id"
               :title="option.description"
@@ -270,12 +561,12 @@ async function updateShortcutEnabled(event: Event) {
         <article>
           <span>输出音频</span>
           <select
-            :value="session.state.selectedOutputAudioId"
-            :disabled="!session.state.serverHello"
+            :value="settingsState.selectedOutputAudioId"
+            :disabled="!connectionState.serverHello"
             @change="updateOption('output_audio', $event)"
           >
             <option
-              v-for="option in session.state.serverHello?.inference_options
+              v-for="option in connectionState.serverHello?.inference_options
                 .output_audio ?? []"
               :key="option.id"
               :value="option.id"
@@ -294,8 +585,23 @@ async function updateShortcutEnabled(event: Event) {
           <strong v-else>{{ appInfoError || "读取中…" }}</strong>
         </article>
       </div>
-      <p v-if="session.state.shortcutError" class="inline-error" role="alert">
-        {{ session.state.shortcutError }}
+      <p v-if="serviceSaveError" class="inline-error" role="alert">
+        {{ serviceSaveError }}
+      </p>
+      <p v-if="settingsState.connectionTestError" class="inline-error" role="alert">
+        {{ settingsState.connectionTestError }}
+      </p>
+      <p v-if="settingsState.audioDevicesError" class="inline-error" role="alert">
+        {{ settingsState.audioDevicesError }}
+      </p>
+      <p v-if="microphoneTestError" class="inline-error" role="alert">
+        {{ microphoneTestError }}
+      </p>
+      <p v-if="settingsState.shortcutError" class="inline-error" role="alert">
+        {{ settingsState.shortcutError }}
+      </p>
+      <p v-if="settingsState.saveError" class="inline-error" role="alert">
+        {{ settingsState.saveError }}
       </p>
     </div>
   </section>

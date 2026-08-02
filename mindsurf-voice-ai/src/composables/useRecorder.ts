@@ -158,7 +158,7 @@ export function useRecorder() {
     }
   }
 
-  async function prepareRecording() {
+  async function prepareRecording(inputDeviceId: string | null = null) {
     if (state.value === "prepared") {
       return true;
     }
@@ -173,7 +173,7 @@ export function useRecorder() {
     const currentOperationId = ++operationId;
 
     try {
-      await recorder.prepare();
+      await recorder.prepare(inputDeviceId);
       if (usesNativeRecorder) {
         await refreshPermissionState();
       }

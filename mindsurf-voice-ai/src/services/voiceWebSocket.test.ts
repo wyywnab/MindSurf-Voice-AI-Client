@@ -116,6 +116,53 @@ describe("VoiceWebSocketClient", () => {
 
     client.disconnect();
   });
+
+  it("sends bearer auth and does not reconnect after an auth failure", async () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const statuses: ServiceConnectionStatus[] = [];
+    const reconnectAttempts = vi.fn();
+    const client = new VoiceWebSocketClient(
+      "wss://voice.example.com/v1/voice/ws",
+      { version: "0.1.0", platform: "windows", arch: "x86_64" },
+      {
+        onAudioFrame: vi.fn(),
+        onControlMessage: vi.fn(),
+        onReconnectAttempt: reconnectAttempts,
+        onServerHello: vi.fn(),
+        onStatusChange: (status) => statuses.push(status),
+        onTransportError: vi.fn(),
+      },
+      { tokenProvider: async () => "secret-token" },
+    );
+
+    client.connect();
+    const socket = FakeWebSocket.instances[0];
+    socket?.open();
+    await vi.waitFor(() => expect(socket?.sent).toHaveLength(1));
+
+    const hello = JSON.parse(String(socket?.sent[0])) as ControlEnvelope<{
+      auth: { scheme: string; token: string };
+    }>;
+    expect(hello.payload.auth).toEqual({
+      scheme: "bearer",
+      token: "secret-token",
+    });
+
+    socket?.receive(
+      envelope("error", null, {
+        code: "authentication_failed",
+        message: "Token 无效",
+        stage: "session",
+        recoverable: false,
+        fatal: true,
+        details: {},
+      }),
+    );
+
+    expect(statuses[statuses.length - 1]).toBe("error");
+    expect(reconnectAttempts).not.toHaveBeenCalled();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
 });
 
 function envelope(

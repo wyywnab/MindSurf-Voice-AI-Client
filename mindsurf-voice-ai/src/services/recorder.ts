@@ -75,6 +75,7 @@ export class MicrophoneRecorder {
   private source: MediaStreamAudioSourceNode | null = null;
   private stream: MediaStream | null = null;
   private totalSamples = 0;
+  private inputDeviceId: string | null = null;
 
   get isRecording() {
     return this.acceptingAudio;
@@ -93,11 +94,11 @@ export class MicrophoneRecorder {
     );
   }
 
-  async prepare() {
+  async prepare(inputDeviceId: string | null = null) {
     if (this.acceptingAudio) {
       throw new Error("recording_already_active");
     }
-    if (this.isPrepared) {
+    if (this.isPrepared && this.inputDeviceId === inputDeviceId) {
       return;
     }
 
@@ -115,8 +116,12 @@ export class MicrophoneRecorder {
       ) {
         await this.cleanup();
       }
+      this.inputDeviceId = inputDeviceId;
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
+          ...(inputDeviceId && inputDeviceId !== "default"
+            ? { deviceId: { exact: inputDeviceId } }
+            : {}),
           channelCount: { ideal: 1 },
           echoCancellation: true,
           noiseSuppression: true,

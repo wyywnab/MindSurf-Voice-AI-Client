@@ -21,6 +21,8 @@ export class StreamingAudioPlayer {
   private format: OutputAudioStartPayload | null = null;
   private generation = 0;
   private metrics = emptyMetrics();
+  private outputGain: GainNode | null = null;
+  private volume = 1;
   private nextStartTime = 0;
   private outputDone = false;
   private pendingFrames = new Map<number, OutputAudioFrame>();
@@ -34,6 +36,11 @@ export class StreamingAudioPlayer {
   prepare() {
     try {
       this.context ??= new AudioContext({ latencyHint: "interactive" });
+      if (!this.outputGain) {
+        this.outputGain = this.context.createGain();
+        this.outputGain.gain.value = this.volume;
+        this.outputGain.connect(this.context.destination);
+      }
       void this.context.resume().catch(() => {
         this.fail("无法启动音频输出，请检查系统播放设备");
       });
@@ -125,8 +132,15 @@ export class StreamingAudioPlayer {
 
   dispose() {
     this.stop("idle");
+    this.outputGain?.disconnect();
+    this.outputGain = null;
     void this.context?.close();
     this.context = null;
+  }
+
+  setVolume(volume: number) {
+    this.volume = Math.min(1, Math.max(0, volume));
+    if (this.outputGain) this.outputGain.gain.value = this.volume;
   }
 
   private drainOrderedFrames() {
@@ -186,7 +200,7 @@ export class StreamingAudioPlayer {
 
       const source = context.createBufferSource();
       source.buffer = buffer;
-      source.connect(context.destination);
+      source.connect(this.outputGain ?? context.destination);
       source.onended = () => {
         source.disconnect();
         if (generation !== this.generation) {

@@ -12,6 +12,8 @@ const outputSampleRate = 24_000;
 const outputChunkDurationMs = 80;
 const outputSendIntervalMs = 40;
 const outputChunkBytes = (outputSampleRate * outputChunkDurationMs * 2) / 1_000;
+const requiredToken = process.env.MOCK_AUTH_TOKEN ?? "";
+const expiredToken = process.env.MOCK_EXPIRED_TOKEN ?? "expired-token";
 const mockPcm = loadMockAudio();
 
 const server = new WebSocketServer({
@@ -93,6 +95,34 @@ function handleControlMessage(socket, state, raw) {
       return;
     }
 
+    const auth = message.payload?.auth;
+    if (requiredToken && !auth) {
+      sendError(
+        socket,
+        null,
+        "authentication_required",
+        "服务需要 Token",
+        true,
+      );
+      socket.close(4_003, "authentication required");
+      return;
+    }
+    if (auth?.scheme !== undefined && auth.scheme !== "bearer") {
+      sendError(socket, null, "authentication_failed", "鉴权方式无效", true);
+      socket.close(4_003, "authentication failed");
+      return;
+    }
+    if (auth?.token === expiredToken) {
+      sendError(socket, null, "token_expired", "Token 已过期", true);
+      socket.close(4_003, "token expired");
+      return;
+    }
+    if (requiredToken && auth?.token !== requiredToken) {
+      sendError(socket, null, "authentication_failed", "Token 无效", true);
+      socket.close(4_003, "authentication failed");
+      return;
+    }
+
     state.handshaken = true;
     console.log("Protocol handshake completed.");
     send(socket, "server.hello", null, createServerHello());
@@ -141,6 +171,8 @@ function startRequest(socket, state, message) {
   const selection = message.payload?.selection ?? {};
   const wantsText = message.payload?.response?.text === true;
   const wantsAudio = message.payload?.response?.audio === true;
+  const language = message.payload?.language ?? "auto";
+  const voice = message.payload?.response?.voice ?? "default";
   if (mode !== "dictation" && mode !== "assistant") {
     sendError(socket, message.request_id, "invalid_request", "请求模式无效", false);
     return;
@@ -189,6 +221,14 @@ function startRequest(socket, state, message) {
     );
     return;
   }
+  if (!["auto", "zh-CN", "en-US"].includes(language)) {
+    sendError(socket, message.request_id, "invalid_request", "识别语言无效", false);
+    return;
+  }
+  if (!["default", "mock_audio"].includes(voice)) {
+    sendError(socket, message.request_id, "invalid_request", "语音音色无效", false);
+    return;
+  }
 
   state.request = {
     id: message.request_id,
@@ -199,18 +239,19 @@ function startRequest(socket, state, message) {
     mode,
     wantsAudio,
     wantsText,
+    voice,
   };
 
   send(socket, "request.accepted", message.request_id, {
     mode,
-    language: message.payload?.language ?? "zh-CN",
+    language,
     selection: {
       asr: "asr-mock",
       llm: mode === "assistant" ? "llm-mock" : null,
       tts: wantsAudio ? "tts-mock" : null,
       output_audio: wantsAudio ? "pcm16-24k-mono" : null,
     },
-    voice: "default",
+    voice,
     max_recording_ms: 60_000,
   });
   console.log(`Request accepted (${mode}).`);
@@ -471,6 +512,15 @@ function createServerHello() {
         },
       ],
     },
+    recognition_languages: [
+      { id: "auto", name: "自动识别" },
+      { id: "zh-CN", name: "简体中文" },
+      { id: "en-US", name: "English" },
+    ],
+    voices: [
+      { id: "default", name: "默认音色" },
+      { id: "mock_audio", name: "Mock Audio" },
+    ],
     heartbeat: {
       interval_ms: 15_000,
       timeout_ms: 10_000,
@@ -483,7 +533,7 @@ function streamMockAudio(socket, state, requestId, inputDurationMs) {
     encoding: "pcm_s16le",
     sample_rate: outputSampleRate,
     channels: 1,
-    voice: "mock_audio",
+    voice: state.request?.voice ?? "default",
   });
 
   const chunkCount = Math.ceil(mockPcm.length / outputChunkBytes);

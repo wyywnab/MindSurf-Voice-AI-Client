@@ -41,6 +41,11 @@ export interface VoiceWebSocketCallbacks {
   onTransportError: (error: VoiceTransportError) => void;
 }
 
+export interface VoiceTransportOptions {
+  autoReconnect?: boolean;
+  tokenProvider?: () => Promise<string | null>;
+}
+
 interface MessageWaiter {
   requestId: string;
   type: string;
@@ -77,6 +82,7 @@ export class VoiceWebSocketClient {
     private readonly url: string,
     private readonly identity: VoiceClientIdentity,
     private readonly callbacks: VoiceWebSocketCallbacks,
+    private readonly options: VoiceTransportOptions = {},
   ) {}
 
   get negotiatedServerHello() {
@@ -116,7 +122,7 @@ export class VoiceWebSocketClient {
       this.socket?.close();
     }, CONNECT_TIMEOUT_MS);
 
-    this.socket.onopen = () => this.handleOpen();
+    this.socket.onopen = () => void this.handleOpen();
     this.socket.onmessage = (event) => this.handleMessage(event);
     this.socket.onerror = () => {
       this.callbacks.onTransportError(
@@ -221,7 +227,7 @@ export class VoiceWebSocketClient {
     await cancelled;
   }
 
-  private handleOpen() {
+  private async handleOpen() {
     this.clearTimer("connect");
 
     if (this.socket?.protocol !== VOICE_SUBPROTOCOL) {
@@ -236,6 +242,32 @@ export class VoiceWebSocketClient {
       return;
     }
 
+    this.handshakeTimer = setTimeout(() => {
+      this.callbacks.onTransportError(
+        new VoiceTransportError("handshake_timeout", "协议握手超时"),
+      );
+      this.socket?.close(4_001, "handshake timeout");
+    }, HANDSHAKE_TIMEOUT_MS);
+
+    let token: string | null;
+    try {
+      token = this.options.tokenProvider
+        ? ((await this.options.tokenProvider()) ?? null)
+        : null;
+    } catch (error) {
+      this.callbacks.onTransportError(
+        new VoiceTransportError(
+          "credential_unavailable",
+          error instanceof Error ? error.message : "无法读取服务 Token",
+          false,
+        ),
+      );
+      this.userClosed = true;
+      this.setStatus("error");
+      this.socket?.close(4_003, "credential unavailable");
+      return;
+    }
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.sendControl("client.hello", null, {
       client: {
         name: "mindsurf-voice-ai",
@@ -259,14 +291,15 @@ export class VoiceWebSocketClient {
           channels: 1,
         },
       ],
+      ...(token
+        ? {
+            auth: {
+              scheme: "bearer",
+              token,
+            },
+          }
+        : {}),
     });
-
-    this.handshakeTimer = setTimeout(() => {
-      this.callbacks.onTransportError(
-        new VoiceTransportError("handshake_timeout", "协议握手超时"),
-      );
-      this.socket?.close(4_001, "handshake timeout");
-    }, HANDSHAKE_TIMEOUT_MS);
   }
 
   private handleMessage(event: MessageEvent) {
@@ -337,7 +370,7 @@ export class VoiceWebSocketClient {
       this.setStatus("connected");
       this.callbacks.onServerHello(message.payload);
       this.scheduleHeartbeatWatchdog();
-    } else if (!this.serverHello) {
+    } else if (!this.serverHello && message.type !== "error") {
       this.sendProtocolError("handshake_required", "握手完成前收到业务消息");
       this.socket?.close(1_002, "handshake required");
       return;
@@ -354,6 +387,16 @@ export class VoiceWebSocketClient {
 
     if (message.type === "error") {
       const payload = message.payload as Partial<ProtocolErrorPayload>;
+      if (
+        payload.fatal &&
+        ["authentication_required", "authentication_failed", "token_expired"].includes(
+          payload.code ?? "",
+        )
+      ) {
+        this.userClosed = true;
+        this.setStatus("error");
+        this.socket?.close(4_003, "authentication failed");
+      }
       this.rejectMatchingWaiters(
         message.request_id,
         new VoiceTransportError(
@@ -381,7 +424,7 @@ export class VoiceWebSocketClient {
     );
 
     if (this.userClosed) {
-      this.setStatus("disconnected");
+      if (this.status !== "error") this.setStatus("disconnected");
       return;
     }
 
@@ -394,6 +437,10 @@ export class VoiceWebSocketClient {
   }
 
   private scheduleReconnect() {
+    if (this.options.autoReconnect === false) {
+      this.setStatus("error");
+      return;
+    }
     this.setStatus("reconnecting");
     const delay =
       RECONNECT_DELAYS_MS[

@@ -16,7 +16,9 @@ export class RecordingController {
 
   async startPushToTalk(shouldContinue: () => boolean = () => true) {
     const attempt = ++this.attempt;
-    const prepared = await this.recorder.prepareRecording();
+    const prepared = await this.recorder.prepareRecording(
+      this.settings.state.inputDeviceId,
+    );
     if (!prepared || attempt !== this.attempt || !shouldContinue()) {
       await this.recorder.cancelRecording();
       return false;

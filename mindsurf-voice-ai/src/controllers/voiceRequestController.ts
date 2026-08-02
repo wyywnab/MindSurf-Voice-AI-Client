@@ -7,6 +7,7 @@ import {
 } from "../services/protocol";
 import type { RecordingResult } from "../services/recorder";
 import { DirectInjectionBackend } from "../services/text-output/directInjectionBackend";
+import { readServiceTokenForConnection } from "../services/settings/credentials";
 import { ProtocolEventRouter } from "../services/transport/protocolEventRouter";
 import {
   VoiceTransport,
@@ -36,6 +37,7 @@ export class VoiceRequestController {
   private focusListenerAttached = false;
   private llmTimer: ReturnType<typeof setTimeout> | null = null;
   private transport: VoiceTransport | null = null;
+  private identity: VoiceClientIdentity | null = null;
   private readonly connection = useConnectionStore();
   private readonly request = useRequestStore();
   private readonly settings = useSettingsStore();
@@ -54,44 +56,60 @@ export class VoiceRequestController {
   });
 
   connect(identity: VoiceClientIdentity) {
+    this.identity = identity;
     if (this.transport) {
       this.transport.connect();
       return;
     }
-    this.transport = new VoiceTransport(this.connection.state.serviceUrl, identity, {
-      onAudioFrame: (frame) => {
-        if (
-          frame.requestId === this.request.state.activeRequestId &&
-          !isTerminalRequestState(this.request.state.status)
-        ) {
-          this.player.enqueue(frame);
-        }
+    this.transport = new VoiceTransport(
+      this.settings.state.serviceUrl,
+      identity,
+      {
+        onAudioFrame: (frame) => {
+          if (
+            frame.requestId === this.request.state.activeRequestId &&
+            !isTerminalRequestState(this.request.state.status)
+          ) {
+            this.player.enqueue(frame);
+          }
+        },
+        onControlMessage: (message) => {
+          this.router.route(
+            message,
+            this.request.state.activeRequestId,
+            isTerminalRequestState(this.request.state.status),
+          );
+        },
+        onReconnectAttempt: connectionStoreActions.setReconnectAttempt,
+        onServerHello: (hello) => {
+          connectionStoreActions.setServerHello(hello);
+          settingsStoreActions.hydrateInferenceSelections(hello);
+        },
+        onStatusChange: (status) => {
+          connectionStoreActions.setStatus(status);
+          if (status !== "connected" && this.request.state.activeRequestId) {
+            this.fail("连接已断开，当前录音请求无法恢复", "connection_lost");
+          }
+        },
+        onTransportError: (error) => connectionStoreActions.setError(error.message),
       },
-      onControlMessage: (message) => {
-        this.router.route(
-          message,
-          this.request.state.activeRequestId,
-          isTerminalRequestState(this.request.state.status),
-        );
+      {
+        tokenProvider: readServiceTokenForConnection,
       },
-      onReconnectAttempt: connectionStoreActions.setReconnectAttempt,
-      onServerHello: (hello) => {
-        connectionStoreActions.setServerHello(hello);
-        settingsStoreActions.hydrateInferenceSelections(hello);
-      },
-      onStatusChange: (status) => {
-        connectionStoreActions.setStatus(status);
-        if (status !== "connected" && this.request.state.activeRequestId) {
-          this.fail("连接已断开，当前录音请求无法恢复", "connection_lost");
-        }
-      },
-      onTransportError: (error) => connectionStoreActions.setError(error.message),
-    });
+    );
     this.transport.connect();
     if (!this.focusListenerAttached) {
       window.addEventListener("focus", this.retryConnection);
       this.focusListenerAttached = true;
     }
+  }
+
+  setIdentity(identity: VoiceClientIdentity) {
+    this.identity = identity;
+  }
+
+  connectConfiguredService() {
+    if (this.identity) this.connect(this.identity);
   }
 
   disconnect() {
@@ -105,6 +123,18 @@ export class VoiceRequestController {
       window.removeEventListener("focus", this.retryConnection);
       this.focusListenerAttached = false;
     }
+  }
+
+  reconnectWithCurrentSettings() {
+    const identity = this.identity;
+    if (!identity) return;
+    this.disconnect();
+    this.identity = identity;
+    if (this.settings.state.autoConnect) this.connect(identity);
+  }
+
+  setPlaybackVolume(volume: number) {
+    this.player.setVolume(volume);
   }
 
   readonly retryConnection = () => {
@@ -251,16 +281,20 @@ export class VoiceRequestController {
     const protocolMode =
       this.settings.state.selectedMode === "dictation" ? "dictation" : "assistant";
     let wantsAudio = protocolMode === "assistant" && hello.features.streaming_audio;
+    wantsAudio = wantsAudio && this.settings.state.audioResponseEnabled;
     if (wantsAudio && !this.player.prepare()) wantsAudio = false;
+    this.player.setVolume(this.settings.state.playbackVolume);
     return Object.freeze({
       autoInjectionEnabled:
         this.settings.state.autoInjection[this.settings.state.selectedMode],
       injectionMaxCodePoints: this.settings.state.injectionMaxCodePoints,
+      inputDeviceId: this.settings.state.inputDeviceId,
       mode: this.settings.state.selectedMode,
       protocolMode,
-      language: "zh-CN",
+      language: this.settings.state.language,
       wantsAudio,
-      voice: "default",
+      voice: this.settings.state.voice,
+      playbackVolume: this.settings.state.playbackVolume,
       selection: Object.freeze({
         asr: this.settings.state.selectedAsrId || defaults.asr,
         llm:

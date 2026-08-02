@@ -7,11 +7,14 @@ import PermissionsPanel from "./components/PermissionsPanel.vue";
 import RecorderPanel from "./components/RecorderPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import TopTabs from "./components/TopTabs.vue";
+import { settingsController } from "./controllers/settingsController";
+import { voiceRequestController } from "./controllers/voiceRequestController";
 import { getAppInfo } from "./services/appInfo";
 import { hideOverlayWindow, setOverlayWindowPosition } from "./services/overlay";
 import { getSystemPermissionStatus } from "./services/permissions";
 import { subscribeTrayActions, syncTrayMode } from "./services/tray";
-import { useVoiceSessionStore } from "./stores/voiceSession";
+import { useConnectionStore } from "./stores/connectionStore";
+import { useSettingsStore } from "./stores/settingsStore";
 import type { AppInfo } from "./types/app";
 import type { MainTab, MainTabId } from "./types/navigation";
 import type { SystemPermission } from "./types/permissions";
@@ -28,13 +31,14 @@ const macPermissions: readonly SystemPermission[] = ["microphone", "accessibilit
 const activeTab = ref<MainTabId>("record");
 const appInfo = ref<AppInfo | null>(null);
 const appInfoError = ref("");
-const session = useVoiceSessionStore();
+const connection = useConnectionStore();
+const settings = useSettingsStore();
 let trayDisposed = false;
 let unlistenTray: (() => void) | null = null;
 
 async function configureStartupPermissions(platform: string) {
   if (platform !== "macos") {
-    await session.initializeRecordShortcut();
+    await settingsController.initializeRecordShortcut();
     return;
   }
 
@@ -50,14 +54,15 @@ async function configureStartupPermissions(platform: string) {
   if (hasMissingPermission) {
     activeTab.value = "permissions";
   }
-  await session.initializeRecordShortcut();
+  await settingsController.initializeRecordShortcut();
 }
 
 onMounted(async () => {
+  await settingsController.initialize();
   void subscribeTrayActions({
     onMode: (mode) => {
-      if (!session.setMode(mode)) {
-        void syncTrayMode(session.state.selectedMode);
+      if (!settingsController.setMode(mode)) {
+        void syncTrayMode(settings.state.selectedMode);
       }
     },
     onNavigate: (page) => {
@@ -74,9 +79,9 @@ onMounted(async () => {
     .catch(() => {
       // Tray events are unavailable in a regular browser preview.
     });
-  void syncTrayMode(session.state.selectedMode);
-  void setOverlayWindowPosition(session.state.overlayPosition);
-  if (!session.state.overlayEnabled) {
+  void syncTrayMode(settings.state.selectedMode);
+  void setOverlayWindowPosition(settings.state.overlayPosition);
+  if (!settings.state.overlayEnabled) {
     void hideOverlayWindow();
   }
   const result = await getAppInfo();
@@ -84,21 +89,27 @@ onMounted(async () => {
   if (result.ok) {
     appInfo.value = result.data;
     await configureStartupPermissions(result.data.platform);
-    session.connect({
+    voiceRequestController.setIdentity({
       version: result.data.version,
       platform: result.data.platform,
       arch: result.data.arch,
     });
+    if (settings.state.autoConnect) {
+      voiceRequestController.connectConfiguredService();
+    }
   } else {
     appInfoError.value = result.error.message;
     await configureStartupPermissions(
       globalThis.navigator.userAgent.includes("Mac OS") ? "macos" : "unknown",
     );
-    session.connect({
+    voiceRequestController.setIdentity({
       version: "0.1.0",
       platform: globalThis.navigator.userAgent.includes("Mac OS") ? "macos" : "unknown",
       arch: "unknown",
     });
+    if (settings.state.autoConnect) {
+      voiceRequestController.connectConfiguredService();
+    }
   }
 });
 
@@ -106,7 +117,7 @@ onBeforeUnmount(() => {
   trayDisposed = true;
   unlistenTray?.();
   unlistenTray = null;
-  session.disconnect();
+  voiceRequestController.disconnect();
 });
 </script>
 
@@ -120,7 +131,7 @@ onBeforeUnmount(() => {
 
       <TopTabs v-model="activeTab" :tabs="tabs" />
 
-      <ConnectionBadge :status="session.state.connectionStatus" />
+      <ConnectionBadge :status="connection.state.status" />
     </header>
 
     <main class="app-content">
@@ -135,7 +146,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="app-footer">
-      <span>Phase 2 · M1 核心架构</span>
+      <span>Phase 2 · M2 服务配置与鉴权</span>
       <span v-if="appInfo">v{{ appInfo.version }} · {{ appInfo.buildProfile }}</span>
     </footer>
   </div>

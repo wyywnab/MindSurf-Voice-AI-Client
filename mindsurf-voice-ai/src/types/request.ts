@@ -18,11 +18,13 @@ export type RequestTerminalState = "completed" | "cancelled" | "failed";
 export interface RequestOptionsSnapshot {
   autoInjectionEnabled: boolean;
   injectionMaxCodePoints: number;
+  inputDeviceId: string | null;
   mode: VoiceInteractionMode;
   protocolMode: "dictation" | "assistant";
   language: string;
   wantsAudio: boolean;
   voice: string;
+  playbackVolume: number;
   selection: {
     asr: string;
     llm: string | null;

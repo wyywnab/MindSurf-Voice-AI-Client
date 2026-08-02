@@ -7,7 +7,8 @@ import {
   requestSystemPermission,
 } from "../services/permissions";
 import { describeRecorderError, prepareMicrophone } from "../services/recorder";
-import { useVoiceSessionStore } from "../stores/voiceSession";
+import { settingsController } from "../controllers/settingsController";
+import { useSettingsStore } from "../stores/settingsStore";
 import type { AppInfo } from "../types/app";
 import type { SystemPermission, SystemPermissionState } from "../types/permissions";
 
@@ -15,7 +16,7 @@ const props = defineProps<{
   appInfo: AppInfo | null;
 }>();
 
-const session = useVoiceSessionStore();
+const settings = useSettingsStore();
 const isMacOS = computed(
   () =>
     props.appInfo?.platform === "macos" ||
@@ -35,9 +36,9 @@ const microphoneProbeState = ref<"unknown" | "checking" | "ready" | "failed">(
 );
 const shortcutReady = computed(
   () =>
-    !session.state.shortcutDesiredEnabled ||
-    (session.state.shortcutRegistered &&
-      session.state.shortcutListenerStatus === "running"),
+    !settings.state.shortcutDesiredEnabled ||
+    (settings.state.shortcutRegistered &&
+      settings.state.shortcutListenerStatus === "running"),
 );
 
 const permissionsReady = computed(
@@ -141,7 +142,7 @@ async function initializePermissions() {
   let firstError = "";
   try {
     if (isMacOS.value) {
-      await session.initializeRecordShortcut();
+      await settingsController.initializeRecordShortcut();
       for (const permission of macPermissions) {
         await refreshPermission(permission);
         if (permissionStates[permission] !== "granted") {
@@ -314,32 +315,32 @@ onBeforeUnmount(() => {
                 :data-status="
                   shortcutReady
                     ? 'granted'
-                    : session.state.shortcutListenerStatus === 'error'
+                    : settings.state.shortcutListenerStatus === 'error'
                       ? 'denied'
                       : 'unknown'
                 "
               >
                 {{
-                  !session.state.shortcutDesiredEnabled
+                  !settings.state.shortcutDesiredEnabled
                     ? "已关闭"
                     : shortcutReady
                       ? "监听器运行中"
-                      : session.state.shortcutListenerStatus === "error"
+                      : settings.state.shortcutListenerStatus === "error"
                         ? "监听器启动失败"
                         : "监听器启动中"
                 }}
               </strong>
               <small> 使用 macOS 系统全局热键注册，不依赖“输入监控”权限 </small>
-              <small v-if="session.state.shortcutError" class="inline-error">
-                {{ session.state.shortcutError }}
+              <small v-if="settings.state.shortcutError" class="inline-error">
+                {{ settings.state.shortcutError }}
               </small>
               <div>
                 <button
-                  v-if="session.state.shortcutDesiredEnabled && !shortcutReady"
+                  v-if="settings.state.shortcutDesiredEnabled && !shortcutReady"
                   class="button button-primary button-compact"
                   type="button"
                   :disabled="permissionInitializationBusy"
-                  @click="session.initializeRecordShortcut()"
+                  @click="settingsController.initializeRecordShortcut()"
                 >
                   重新启动监听器
                 </button>

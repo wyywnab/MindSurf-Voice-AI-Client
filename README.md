@@ -11,7 +11,9 @@ This is the Windows and macOS client for the MindSurf Voice AI project.
 - ASR、LLM 文本流式展示
 - TTS 音频流式播放
 - Windows/macOS 光标位置文本注入
-- WebSocket 协议接入
+- 可配置的 WebSocket 服务地址、自动连接和连通性测试
+- Bearer Token 加密存储与应用层鉴权
+- 麦克风、识别语言、语音回复和播放音量设置
 - 用于开发联调的本地 Mock 服务
 
 ## 目录
@@ -22,6 +24,7 @@ mindsurf-voice-mock/     本地 WebSocket Mock 服务
 docs/DELIVERY.md         客户端交付说明
 docs/WS_PROTOCOL.md      WebSocket 接口说明
 docs/PHASE1_IMPLEMENTATION.md
+docs/PHASE2_IMPLEMENTATION.md
 ```
 
 ## 本地运行
@@ -72,6 +75,19 @@ Mock 服务默认地址：
 ```text
 ws://127.0.0.1:8000/v1/voice/ws
 ```
+
+开发环境可为 Mock 启用 Token 鉴权：
+
+```powershell
+$env:MOCK_AUTH_TOKEN = "dev-token"
+npm start
+```
+
+```bash
+MOCK_AUTH_TOKEN=dev-token npm start
+```
+
+客户端可在“服务与音频”设置中保存同一 Token。Token 不写入明文配置，远程服务地址必须使用 `wss://`；`ws://` 仅允许本机回环地址。
 
 Windows 默认按住 `Ctrl + Win`，macOS 默认按住
 `Control + Command` 录音；松开后提交，按 `Escape` 取消。

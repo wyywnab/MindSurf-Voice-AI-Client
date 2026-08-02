@@ -16,6 +16,11 @@ export interface InferenceOption {
   description: string;
 }
 
+export interface NamedProtocolOption {
+  id: string;
+  name: string;
+}
+
 export interface OutputAudioOption extends InferenceOption {
   encoding: "pcm_s16le";
   sample_rate: 16_000 | 24_000;
@@ -49,6 +54,8 @@ export interface ServerHelloPayload {
     tts: InferenceOption[];
     output_audio: OutputAudioOption[];
   };
+  recognition_languages?: NamedProtocolOption[];
+  voices?: NamedProtocolOption[];
   heartbeat: {
     interval_ms: number;
     timeout_ms: number;

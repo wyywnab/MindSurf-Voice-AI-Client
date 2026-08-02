@@ -4,5 +4,6 @@ export {
 } from "../voiceWebSocket";
 export type {
   VoiceClientIdentity,
+  VoiceTransportOptions,
   VoiceWebSocketCallbacks as VoiceTransportCallbacks,
 } from "../voiceWebSocket";

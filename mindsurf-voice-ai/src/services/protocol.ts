@@ -114,6 +114,8 @@ export function validateServerHello(
   validateDefaultOption(options.llm, defaults.llm, "llm");
   validateDefaultOption(options.tts, defaults.tts, "tts");
   validateDefaultOption(options.output_audio, defaults.output_audio, "output_audio");
+  validateNamedOptions(payload.recognition_languages, "recognition_languages");
+  validateNamedOptions(payload.voices, "voices");
 }
 
 export function validateAssistantTextDelta(
@@ -323,6 +325,21 @@ function validateDefaultOption(options: unknown[], defaultId: unknown, name: str
       "invalid_message",
       `server.hello ${name} default is invalid`,
     );
+  }
+}
+
+function validateNamedOptions(options: unknown, name: string) {
+  if (options === undefined) return;
+  if (
+    !Array.isArray(options) ||
+    options.some(
+      (option) =>
+        !isRecord(option) ||
+        typeof option.id !== "string" ||
+        typeof option.name !== "string",
+    )
+  ) {
+    throw new ProtocolValidationError("invalid_message", `${name} options are invalid`);
   }
 }
 

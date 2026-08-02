@@ -1,7 +1,7 @@
 # MindSurf Voice AI 客户端交付说明
 
-> 更新日期：2026-07-30
-> 交付范围：Phase 1 Windows/macOS 客户端及联调 Mock
+> 更新日期：2026-08-02
+> 交付范围：Phase 2 M1-M2 Windows/macOS 客户端及联调 Mock
 
 ## 1. 交付定位
 
@@ -18,6 +18,7 @@
 | 原生桌面能力 | Windows API、macOS CoreGraphics/AppKit、全局快捷键、文本注入 |
 | 音频处理 | Web Audio API、重采样、PCM16 编码与分帧 |
 | 通信协议 | WebSocket、自定义 `mindsurf.voice.v1` 协议 |
+| 配置与凭据 | Tauri Store、AES-256-GCM、系统钥匙串 |
 | 本地 Mock | Node.js、`ws`、FFmpeg |
 | 工程质量 | Vitest、ESLint、Prettier、vue-tsc、Cargo |
 
@@ -43,6 +44,10 @@
 - 听写、助手、混合三种模式及状态管理。
 - 麦克风采集、音量计算、16 kHz 单声道 PCM16 重采样与分帧。
 - WebSocket 握手、控制消息、二进制音频帧、心跳、超时和自动重连。
+- 服务地址、自动连接、连通性测试及本机 `ws://`/远程 `wss://` 安全校验。
+- Bearer Token 应用层鉴权、加密落盘及鉴权失败停止重连。
+- 麦克风输入、识别语言、语音回复开关、声音和播放音量配置。
+- 连接、请求、设置和诊断状态域拆分，以及请求状态机和 Controller 编排。
 - ASR 与 LLM 文本的流式接收和展示。
 - TTS 音频分片缓冲、连续播放和停止。
 - Windows 全局按住说话快捷键及快捷键配置。
@@ -56,7 +61,7 @@
 
 ## 5. 客户端待实现
 
-- 完善鉴权、`wss://` 和生产环境配置。
+- 接入正式服务端凭据签发与轮换流程。
 - 继续优化界面、悬浮窗和快捷键交互。
 - 按需求进行 Linux 跨平台适配。
 - 接入正式服务地址，替换本地 Mock。
@@ -71,6 +76,7 @@ mindsurf-voice-mock/     		客户端联调用 WebSocket Mock
 README.md                		项目启动说明
 docs/WS_PROTOCOL.md           	WebSocket 协议
 docs/PHASE1_IMPLEMENTATION.md 	Phase 1 实现基线
+docs/PHASE2_IMPLEMENTATION.md 	Phase 2 实施计划与状态
 ```
 
 运行方法及环境要求见 [`README.md`](../README.md)，接口说明见 [`WS_PROTOCOL.md`](./WS_PROTOCOL.md)。

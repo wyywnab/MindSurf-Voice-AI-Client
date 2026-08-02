@@ -62,7 +62,8 @@ export class NativeMicrophoneRecorder {
     return this.prepared;
   }
 
-  async prepare() {
+  async prepare(inputDeviceId: string | null = null) {
+    void inputDeviceId;
     if (this.acceptingAudio) {
       throw new Error("recording_already_active");
     }

@@ -31,6 +31,14 @@ class FakeAudioContext {
     return Promise.resolve();
   }
 
+  createGain() {
+    return {
+      gain: { value: 1 },
+      connect: () => undefined,
+      disconnect: () => undefined,
+    };
+  }
+
   createBuffer(_channels: number, length: number, sampleRate: number) {
     return {
       duration: length / sampleRate,

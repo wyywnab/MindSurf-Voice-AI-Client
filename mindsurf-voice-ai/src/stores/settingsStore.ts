@@ -1,66 +1,62 @@
 import { reactive, readonly } from "vue";
 
+import { getCredentialStatus } from "../services/settings/credentials";
 import { settingsRepository } from "../services/settings/settingsRepository";
 import type { ServerHelloPayload } from "../types/protocol";
 import type { ShortcutBinding, ShortcutStatus } from "../types/shortcut";
+import {
+  DEFAULT_APP_SETTINGS,
+  type AppSettings,
+  type AudioInputDevice,
+  type ServiceConnectionTestResult,
+} from "../types/settings";
 import type { OverlayPosition, VoiceInteractionMode } from "../types/voice";
 
-const KEYS = {
-  mode: "mindsurf.voice.mode",
-  injectionLimit: "mindsurf.injection.maxCodePoints",
-  shortcut: "mindsurf.shortcut.record",
-  shortcutEnabled: "mindsurf.shortcut.enabled",
-  overlayEnabled: "mindsurf.overlay.enabled",
-  overlayPosition: "mindsurf.overlay.position",
-  autoInjection: {
-    dictation: "mindsurf.injection.auto.dictation",
-    assistant: "mindsurf.injection.auto.assistant",
-    mixed: "mindsurf.injection.auto.mixed",
-  },
-  inference: {
-    asr: "mindsurf.inference.asr",
-    llm: "mindsurf.inference.llm",
-    tts: "mindsurf.inference.tts",
-    output_audio: "mindsurf.inference.output_audio",
-  },
-} as const;
+export type InferenceOptionKind = "asr" | "llm" | "tts" | "output_audio";
 
-export type InferenceOptionKind = keyof typeof KEYS.inference;
+const defaults = structuredClone(DEFAULT_APP_SETTINGS);
+const initialShortcut = platformDefaultShortcut(defaults.shortcut.binding);
+const state = reactive({
+  initialized: false,
+  saveError: "",
+  serviceUrl: defaults.service.url,
+  tokenConfigured: false,
+  autoConnect: defaults.service.autoConnect,
+  connectionTestStatus: "idle" as "idle" | "testing" | "succeeded" | "failed",
+  connectionTestError: "",
+  connectionTestResult: null as ServiceConnectionTestResult | null,
+  inputDeviceId: defaults.audio.inputDeviceId,
+  audioInputDevices: [] as AudioInputDevice[],
+  audioDevicesLoading: false,
+  audioDevicesError: "",
+  language: defaults.audio.language,
+  audioResponseEnabled: defaults.audio.audioResponseEnabled,
+  voice: defaults.audio.voice,
+  playbackVolume: defaults.audio.playbackVolume,
+  selectedMode: defaults.interaction.defaultMode,
+  autoInjection: defaults.interaction.autoInjection,
+  injectionMaxCodePoints: defaults.interaction.injectionMaxCodePoints,
+  overlayEnabled: defaults.overlay.enabled,
+  overlayPosition: defaults.overlay.position,
+  shortcutBinding: initialShortcut,
+  shortcutDesiredEnabled: defaults.shortcut.enabled,
+  shortcutDisplay: shortcutDisplay(initialShortcut),
+  shortcutError: "",
+  shortcutLastEventAt: null as number | null,
+  shortcutListenerStatus: "starting" as ShortcutStatus["listenerStatus"],
+  shortcutRegistered: false,
+  selectedAsrId: defaults.inference.asrId,
+  selectedLlmId: defaults.inference.llmId,
+  selectedOutputAudioId: defaults.inference.outputAudioId,
+  selectedTtsId: defaults.inference.ttsId,
+});
 
-function readBoolean(key: string, fallback: boolean) {
-  const value = settingsRepository.get(key);
-  return value === null ? fallback : value === "true";
-}
-
-function readMode(): VoiceInteractionMode {
-  const value = settingsRepository.get(KEYS.mode);
-  return value === "assistant" || value === "mixed" ? value : "dictation";
-}
-
-function readOverlayPosition(): OverlayPosition {
-  const value = settingsRepository.get(KEYS.overlayPosition);
-  return value === "left" || value === "right" ? value : "center";
-}
-
-function readInjectionLimit() {
-  const value = Number(settingsRepository.get(KEYS.injectionLimit));
-  return Number.isInteger(value) && value >= 1 && value <= 8_000 ? value : 8_000;
-}
-
-function readShortcut(): ShortcutBinding {
-  const stored = settingsRepository.get(KEYS.shortcut);
-  if (
-    typeof navigator !== "undefined" &&
+function platformDefaultShortcut(binding: ShortcutBinding): ShortcutBinding {
+  return typeof navigator !== "undefined" &&
     navigator.userAgent.includes("Mac OS") &&
-    (stored === null || stored === "ctrl_win")
-  ) {
-    return "ctrl_win_space";
-  }
-  return stored === "ctrl_alt_space" ||
-    stored === "ctrl_shift_space" ||
-    stored === "ctrl_win_space"
-    ? stored
-    : "ctrl_win";
+    binding === "ctrl_win"
+    ? "ctrl_win_space"
+    : binding;
 }
 
 export function shortcutDisplay(binding: ShortcutBinding) {
@@ -76,29 +72,77 @@ export function shortcutDisplay(binding: ShortcutBinding) {
   return labels[binding];
 }
 
-const initialShortcut = readShortcut();
-const state = reactive({
-  selectedMode: readMode(),
-  autoInjection: {
-    dictation: readBoolean(KEYS.autoInjection.dictation, true),
-    assistant: readBoolean(KEYS.autoInjection.assistant, false),
-    mixed: readBoolean(KEYS.autoInjection.mixed, false),
-  } as Record<VoiceInteractionMode, boolean>,
-  injectionMaxCodePoints: readInjectionLimit(),
-  overlayEnabled: readBoolean(KEYS.overlayEnabled, true),
-  overlayPosition: readOverlayPosition(),
-  shortcutBinding: initialShortcut,
-  shortcutDesiredEnabled: readBoolean(KEYS.shortcutEnabled, true),
-  shortcutDisplay: shortcutDisplay(initialShortcut),
-  shortcutError: "",
-  shortcutLastEventAt: null as number | null,
-  shortcutListenerStatus: "starting" as ShortcutStatus["listenerStatus"],
-  shortcutRegistered: false,
-  selectedAsrId: "",
-  selectedLlmId: "",
-  selectedOutputAudioId: "",
-  selectedTtsId: "",
-});
+function applySettings(settings: AppSettings) {
+  state.serviceUrl = settings.service.url;
+  state.autoConnect = settings.service.autoConnect;
+  state.inputDeviceId = settings.audio.inputDeviceId;
+  state.language = settings.audio.language;
+  state.audioResponseEnabled = settings.audio.audioResponseEnabled;
+  state.voice = settings.audio.voice;
+  state.playbackVolume = settings.audio.playbackVolume;
+  state.selectedMode = settings.interaction.defaultMode;
+  state.autoInjection = { ...settings.interaction.autoInjection };
+  state.injectionMaxCodePoints = settings.interaction.injectionMaxCodePoints;
+  state.shortcutDesiredEnabled = settings.shortcut.enabled;
+  state.shortcutBinding = platformDefaultShortcut(settings.shortcut.binding);
+  state.shortcutDisplay = shortcutDisplay(state.shortcutBinding);
+  state.overlayEnabled = settings.overlay.enabled;
+  state.overlayPosition = settings.overlay.position;
+  state.selectedAsrId = settings.inference.asrId;
+  state.selectedLlmId = settings.inference.llmId;
+  state.selectedTtsId = settings.inference.ttsId;
+  state.selectedOutputAudioId = settings.inference.outputAudioId;
+}
+
+function snapshot(): AppSettings {
+  return {
+    schemaVersion: 1,
+    service: {
+      url: state.serviceUrl,
+      tokenConfigured: state.tokenConfigured,
+      autoConnect: state.autoConnect,
+    },
+    audio: {
+      inputDeviceId: state.inputDeviceId,
+      language: state.language,
+      audioResponseEnabled: state.audioResponseEnabled,
+      voice: state.voice,
+      playbackVolume: state.playbackVolume,
+    },
+    interaction: {
+      defaultMode: state.selectedMode,
+      autoInjection: { ...state.autoInjection },
+      injectionMaxCodePoints: state.injectionMaxCodePoints,
+    },
+    shortcut: {
+      enabled: state.shortcutDesiredEnabled,
+      binding: state.shortcutBinding,
+    },
+    overlay: {
+      enabled: state.overlayEnabled,
+      position: state.overlayPosition,
+    },
+    inference: {
+      asrId: state.selectedAsrId,
+      llmId: state.selectedLlmId,
+      ttsId: state.selectedTtsId,
+      outputAudioId: state.selectedOutputAudioId,
+    },
+  };
+}
+
+async function persist() {
+  try {
+    await settingsRepository.save(snapshot());
+    state.saveError = "";
+  } catch (error) {
+    state.saveError = error instanceof Error ? error.message : "设置保存失败";
+  }
+}
+
+function persistSoon() {
+  void persist();
+}
 
 function setSelectedOption(kind: InferenceOptionKind, id: string) {
   if (kind === "asr") state.selectedAsrId = id;
@@ -108,6 +152,17 @@ function setSelectedOption(kind: InferenceOptionKind, id: string) {
 }
 
 export const settingsStoreActions = {
+  async initialize() {
+    try {
+      applySettings(await settingsRepository.load());
+      state.tokenConfigured = await getCredentialStatus();
+      state.saveError = "";
+    } catch (error) {
+      state.saveError = error instanceof Error ? error.message : "设置读取失败";
+    } finally {
+      state.initialized = true;
+    }
+  },
   applyShortcutStatus(status: ShortcutStatus) {
     if (status.enabled) {
       state.shortcutBinding = status.binding;
@@ -121,55 +176,127 @@ export const settingsStoreActions = {
         : "";
   },
   hydrateInferenceSelections(hello: ServerHelloPayload) {
-    for (const kind of Object.keys(KEYS.inference) as InferenceOptionKind[]) {
-      const options = hello.inference_options[kind];
-      const saved = settingsRepository.get(KEYS.inference[kind]);
+    for (const kind of ["asr", "llm", "tts", "output_audio"] as const) {
       const selected =
-        saved && options.some((option) => option.id === saved)
-          ? saved
-          : hello.inference_options.defaults[kind];
-      setSelectedOption(kind, selected);
+        kind === "asr"
+          ? state.selectedAsrId
+          : kind === "llm"
+            ? state.selectedLlmId
+            : kind === "tts"
+              ? state.selectedTtsId
+              : state.selectedOutputAudioId;
+      const valid = hello.inference_options[kind].some(
+        (option) => option.id === selected,
+      );
+      setSelectedOption(
+        kind,
+        valid ? selected : hello.inference_options.defaults[kind],
+      );
     }
+    const languages = hello.recognition_languages ?? [];
+    if (languages.length && !languages.some((item) => item.id === state.language)) {
+      state.language = languages[0]?.id ?? "auto";
+    }
+    const voices = hello.voices ?? [];
+    if (voices.length && !voices.some((item) => item.id === state.voice)) {
+      state.voice = voices[0]?.id ?? "default";
+    }
+    persistSoon();
   },
   noteShortcutEvent(timestampMs: number) {
     state.shortcutLastEventAt = timestampMs;
     state.shortcutError = "";
   },
+  setAudioDevices(devices: AudioInputDevice[], error = "") {
+    const selectedDeviceMissing =
+      Boolean(state.inputDeviceId) &&
+      !devices.some((device) => device.id === state.inputDeviceId);
+    state.audioInputDevices = devices;
+    state.audioDevicesError = selectedDeviceMissing
+      ? "已选择的麦克风不可用，已回退到系统默认设备"
+      : error;
+    state.audioDevicesLoading = false;
+    if (selectedDeviceMissing) {
+      state.inputDeviceId = null;
+      persistSoon();
+    }
+  },
+  setAudioDevicesLoading() {
+    state.audioDevicesLoading = true;
+    state.audioDevicesError = "";
+  },
   setAutoInjection(mode: VoiceInteractionMode, enabled: boolean) {
     state.autoInjection[mode] = enabled;
-    settingsRepository.set(KEYS.autoInjection[mode], String(enabled));
+    persistSoon();
+  },
+  setAudioResponseEnabled(enabled: boolean) {
+    state.audioResponseEnabled = enabled;
+    persistSoon();
+  },
+  setConnectionTest(
+    status: typeof state.connectionTestStatus,
+    result: ServiceConnectionTestResult | null = null,
+    error = "",
+  ) {
+    state.connectionTestStatus = status;
+    state.connectionTestResult = result;
+    state.connectionTestError = error;
   },
   setInferenceOption(kind: InferenceOptionKind, id: string) {
     setSelectedOption(kind, id);
-    settingsRepository.set(KEYS.inference[kind], id);
+    persistSoon();
   },
   setInjectionMaxCodePoints(value: number) {
     state.injectionMaxCodePoints = value;
-    settingsRepository.set(KEYS.injectionLimit, String(value));
+    persistSoon();
+  },
+  setInputDeviceId(id: string | null) {
+    state.inputDeviceId = id;
+    persistSoon();
+  },
+  setLanguage(language: string) {
+    state.language = language;
+    persistSoon();
   },
   setMode(mode: VoiceInteractionMode) {
     state.selectedMode = mode;
-    settingsRepository.set(KEYS.mode, mode);
+    persistSoon();
   },
   setOverlayEnabled(enabled: boolean) {
     state.overlayEnabled = enabled;
-    settingsRepository.set(KEYS.overlayEnabled, String(enabled));
+    persistSoon();
   },
   setOverlayPosition(position: OverlayPosition) {
     state.overlayPosition = position;
-    settingsRepository.set(KEYS.overlayPosition, position);
+    persistSoon();
+  },
+  setPlaybackVolume(volume: number) {
+    state.playbackVolume = Math.min(1, Math.max(0, volume));
+    persistSoon();
+  },
+  setService(url: string, autoConnect: boolean) {
+    state.serviceUrl = url;
+    state.autoConnect = autoConnect;
+    persistSoon();
   },
   setShortcutBinding(binding: ShortcutBinding) {
     state.shortcutBinding = binding;
     state.shortcutDisplay = shortcutDisplay(binding);
-    settingsRepository.set(KEYS.shortcut, binding);
+    persistSoon();
   },
   setShortcutDesiredEnabled(enabled: boolean) {
     state.shortcutDesiredEnabled = enabled;
-    settingsRepository.set(KEYS.shortcutEnabled, String(enabled));
+    persistSoon();
   },
   setShortcutError(message: string) {
     state.shortcutError = message;
+  },
+  setTokenConfigured(configured: boolean) {
+    state.tokenConfigured = configured;
+  },
+  setVoice(voice: string) {
+    state.voice = voice;
+    persistSoon();
   },
 };
 

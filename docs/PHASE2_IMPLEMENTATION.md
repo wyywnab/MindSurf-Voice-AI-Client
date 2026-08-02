@@ -1,6 +1,6 @@
 # MindSurf Voice AI 第二阶段实现文档
 
-> 文档状态：Draft
+> 文档状态：实施中
 > 适用范围：`mindsurf-voice-ai` Windows/macOS Tauri 客户端与联调 Mock
 > 阶段定位：架构整理、稳定性提升与正式服务接入准备
 > 前置基线：Phase 1 已完成录音、WebSocket 语音请求、流式文本/音频、全局快捷键、悬浮窗及 Windows/macOS 文本注入闭环
@@ -10,11 +10,11 @@
 | 里程碑 | 状态 | 完成日期 | 说明 |
 |---|---|---|---|
 | M1 | 已完成 | 2026-08-02 | 已拆分连接、请求、设置和诊断状态域，引入请求状态机、请求/录音/悬浮窗控制器、协议事件路由与文本输出 Backend。 |
-| M2 | 未开始 | — | Tauri Store、服务配置、Token 鉴权和音频运行选项待实现。 |
+| M2 | 已完成 | 2026-08-02 | 已接入 Tauri Store、加密 Token、服务配置与连通性测试，并补齐麦克风、语言、语音和播放音量选项。 |
 | M3 | 未开始 | — | 当前诊断状态域仅保留有限状态转换窗口，完整时间线与文件日志待实现。 |
 | M4 | 未开始 | — | Mock 故障注入与异常路径验收待实现。 |
 
-M1 保留了 `voiceSession.ts` 作为旧组件的只读聚合入口；请求编排已经迁入 Controller。设置持久化通过 `SettingsRepository` 隔离，但 M1 仍使用 `localStorage` 适配器，M2 将直接替换为 Tauri Store，不增加旧设置迁移逻辑。
+M2 已删除 `voiceSession.ts` 兼容入口，组件直接依赖拆分后的 Store 与 Controller。设置统一写入 Tauri Store，不保留 `localStorage` 适配器或旧设置迁移逻辑；服务 Token 经系统钥匙串托管的密钥加密后再写入 Store。
 
 本文档定义 MindSurf Voice AI 客户端第二阶段的实现范围、模块边界、开发顺序和验收标准。第二阶段以现有功能的重构和稳定化为主，在不改变当前单次语音请求交互模型的前提下，补充服务配置、应用层鉴权、请求时间线和运行日志。
 
@@ -851,7 +851,7 @@ mindsurf-voice-ai/src-tauri/src/
 
 ### 11.1 架构验收
 
-- `voiceSession.ts` 不再承担全部业务职责；旧文件删除或只保留兼容聚合入口。
+- `voiceSession.ts` 已删除，UI 直接使用职责拆分后的 Store 与 Controller。
 - UI 组件不直接持有或操作 WebSocket 实例。
 - 所有请求状态变化通过统一状态机执行。
 - 所有请求均只有一个明确终态。
