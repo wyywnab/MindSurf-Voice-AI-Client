@@ -2,41 +2,232 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, CommandResult};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ShortcutBinding {
-    #[serde(rename = "ctrl_win")]
-    #[default]
-    Win,
-    #[serde(rename = "ctrl_alt_space")]
-    AltSpace,
-    #[serde(rename = "ctrl_shift_space")]
-    ShiftSpace,
-    #[serde(rename = "ctrl_win_space")]
-    WinSpace,
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct ShortcutBinding(String);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedShortcutBinding {
+    shift: bool,
+    control: bool,
+    alt: bool,
+    super_key: bool,
+    code: Option<String>,
 }
 
 impl ShortcutBinding {
-    fn display(self) -> &'static str {
-        #[cfg(target_os = "macos")]
-        {
-            match self {
-                Self::Win => "Control + Command + Space",
-                Self::AltSpace => "Control + Option + Space",
-                Self::ShiftSpace => "Control + Shift + Space",
-                Self::WinSpace => "Control + Command + Space",
-            }
-        }
+    fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
 
-        #[cfg(not(target_os = "macos"))]
-        {
-            match self {
-                Self::Win => "Ctrl + Win",
-                Self::AltSpace => "Ctrl + Alt + Space",
-                Self::ShiftSpace => "Ctrl + Shift + Space",
-                Self::WinSpace => "Ctrl + Win + Space",
+    fn parse(&self) -> Result<ParsedShortcutBinding, AppError> {
+        parse_binding(&self.0)
+    }
+
+    fn display(&self) -> String {
+        let labels = self.0.split('+').map(|part| match part {
+            "shift" => "Shift".to_owned(),
+            "control" if cfg!(target_os = "macos") => "Control".to_owned(),
+            "control" => "Ctrl".to_owned(),
+            "alt" if cfg!(target_os = "macos") => "Option".to_owned(),
+            "alt" => "Alt".to_owned(),
+            "super" if cfg!(target_os = "macos") => "Command".to_owned(),
+            "super" if cfg!(target_os = "windows") => "Win".to_owned(),
+            "super" => "Super".to_owned(),
+            "Space" => "Space".to_owned(),
+            code => code.strip_prefix("Key").unwrap_or(code).to_owned(),
+        });
+        labels.collect::<Vec<_>>().join(" + ")
+    }
+
+    fn canonical_value(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for ShortcutBinding {
+    fn default() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::new("control+super+Space")
+        } else {
+            Self::new("control+super")
+        }
+    }
+}
+
+impl Default for ParsedShortcutBinding {
+    fn default() -> Self {
+        Self {
+            shift: false,
+            control: true,
+            alt: false,
+            super_key: true,
+            code: None,
+        }
+    }
+}
+
+fn parse_binding(value: &str) -> Result<ParsedShortcutBinding, AppError> {
+    let mut parsed = ParsedShortcutBinding {
+        shift: false,
+        control: false,
+        alt: false,
+        super_key: false,
+        code: None,
+    };
+    for part in value.split('+') {
+        match part {
+            "shift" if !parsed.shift => parsed.shift = true,
+            "control" if !parsed.control => parsed.control = true,
+            "alt" if !parsed.alt => parsed.alt = true,
+            "super" if !parsed.super_key => parsed.super_key = true,
+            code if parsed.code.is_none() && valid_key_code(code) => {
+                parsed.code = Some(code.to_owned())
+            }
+            _ => {
+                return Err(shortcut_error(
+                    "shortcut_invalid",
+                    "shortcut format is invalid",
+                ))
             }
         }
+    }
+    let modifier_count = [parsed.shift, parsed.control, parsed.alt, parsed.super_key]
+        .into_iter()
+        .filter(|enabled| *enabled)
+        .count();
+    if modifier_count == 0 {
+        return Err(shortcut_error(
+            "shortcut_modifier_required",
+            "shortcut must include a modifier",
+        ));
+    }
+    if parsed.code.is_none() && modifier_count < 2 {
+        return Err(shortcut_error(
+            "shortcut_modifier_only_invalid",
+            "modifier-only shortcuts require at least two modifiers",
+        ));
+    }
+    let mut canonical = Vec::new();
+    if parsed.shift {
+        canonical.push("shift");
+    }
+    if parsed.control {
+        canonical.push("control");
+    }
+    if parsed.alt {
+        canonical.push("alt");
+    }
+    if parsed.super_key {
+        canonical.push("super");
+    }
+    if let Some(code) = parsed.code.as_deref() {
+        canonical.push(code);
+    }
+    if canonical.join("+") != value {
+        return Err(shortcut_error(
+            "shortcut_invalid",
+            "shortcut must use canonical modifier ordering",
+        ));
+    }
+    Ok(parsed)
+}
+
+fn valid_key_code(code: &str) -> bool {
+    matches!(
+        code,
+        "Space"
+            | "Enter"
+            | "Tab"
+            | "Backspace"
+            | "Delete"
+            | "Home"
+            | "End"
+            | "PageUp"
+            | "PageDown"
+            | "ArrowUp"
+            | "ArrowDown"
+            | "ArrowLeft"
+            | "ArrowRight"
+            | "Comma"
+            | "Period"
+            | "Slash"
+            | "Semicolon"
+            | "Quote"
+            | "BracketLeft"
+            | "BracketRight"
+            | "Backslash"
+            | "Minus"
+            | "Equal"
+    ) || code
+        .strip_prefix("Key")
+        .is_some_and(|key| key.len() == 1 && key.as_bytes()[0].is_ascii_uppercase())
+        || code
+            .strip_prefix("Digit")
+            .is_some_and(|key| key.len() == 1 && key.as_bytes()[0].is_ascii_digit())
+        || code
+            .strip_prefix('F')
+            .and_then(|key| key.parse::<u8>().ok())
+            .is_some_and(|key| (1..=12).contains(&key))
+}
+
+fn shortcut_error(code: &str, message: impl Into<String>) -> AppError {
+    AppError::new(code, message, true)
+}
+
+fn validate_system_reserved(binding: &ShortcutBinding) -> Result<(), AppError> {
+    let reserved = if cfg!(target_os = "macos") {
+        matches!(
+            binding.canonical_value(),
+            "super+KeyQ" | "super+Space" | "control+super+KeyQ"
+        )
+    } else if cfg!(target_os = "windows") {
+        matches!(
+            binding.canonical_value(),
+            "alt+F4" | "super+KeyL" | "control+alt+Delete"
+        )
+    } else {
+        binding.canonical_value() == "control+alt+Delete"
+    };
+    if reserved {
+        Err(shortcut_error(
+            "shortcut_system_reserved",
+            "shortcut is reserved by the operating system",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::{parse_binding, validate_system_reserved, ShortcutBinding};
+
+    #[test]
+    fn parses_canonical_arbitrary_binding() {
+        let parsed = parse_binding("shift+control+KeyR").expect("binding should parse");
+        assert!(parsed.shift);
+        assert!(parsed.control);
+        assert_eq!(parsed.code.as_deref(), Some("KeyR"));
+    }
+
+    #[test]
+    fn rejects_non_canonical_modifier_order() {
+        let error = parse_binding("control+shift+KeyR").expect_err("binding should fail");
+        assert_eq!(error.code, "shortcut_invalid");
+    }
+
+    #[test]
+    fn rejects_platform_reserved_binding_with_stable_code() {
+        let binding = if cfg!(target_os = "macos") {
+            ShortcutBinding::new("super+KeyQ")
+        } else if cfg!(target_os = "windows") {
+            ShortcutBinding::new("alt+F4")
+        } else {
+            ShortcutBinding::new("control+alt+Delete")
+        };
+        let error = validate_system_reserved(&binding).expect_err("binding should be reserved");
+        assert_eq!(error.code, "shortcut_system_reserved");
     }
 }
 
@@ -44,15 +235,17 @@ impl ShortcutBinding {
 #[serde(rename_all = "camelCase")]
 pub struct ShortcutStatus {
     binding: ShortcutBinding,
-    display: &'static str,
+    display: String,
     enabled: bool,
     listener_status: &'static str,
     last_error: Option<String>,
+    environment: &'static str,
+    supports_modifier_only: bool,
 }
 
 #[derive(Clone, Serialize)]
 struct RecordShortcutPayload {
-    shortcut: &'static str,
+    shortcut: String,
     timestamp_ms: u64,
 }
 
@@ -66,19 +259,11 @@ pub fn initialize(app: tauri::AppHandle) {
     platform::initialize(app);
 }
 
-#[cfg(target_os = "macos")]
 pub fn handle_global_shortcut(
     shortcut: &tauri_plugin_global_shortcut::Shortcut,
     event: tauri_plugin_global_shortcut::ShortcutEvent,
 ) {
     platform::handle_global_shortcut(shortcut, event);
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn handle_global_shortcut(
-    _shortcut: &tauri_plugin_global_shortcut::Shortcut,
-    _event: tauri_plugin_global_shortcut::ShortcutEvent,
-) {
 }
 
 #[tauri::command]
@@ -93,6 +278,12 @@ pub fn get_record_shortcut_status() -> CommandResult<ShortcutStatus> {
 pub fn register_record_shortcut(binding: ShortcutBinding) -> CommandResult<ShortcutStatus> {
     #[cfg(debug_assertions)]
     eprintln!("shortcut command: register ({})", binding.display());
+    if let Err(error) = binding.parse() {
+        return CommandResult::failure(error);
+    }
+    if let Err(error) = validate_system_reserved(&binding) {
+        return CommandResult::failure(error);
+    }
     match platform::register(binding) {
         Ok(status) => CommandResult::success(status),
         Err(error) => CommandResult::failure(error),
@@ -138,7 +329,7 @@ mod platform {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
         MOD_SHIFT, MOD_WIN, VIRTUAL_KEY, VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
-        VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SPACE,
+        VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
@@ -186,14 +377,24 @@ mod platform {
         thread::spawn(run_keyboard_hook);
     }
 
+    pub fn handle_global_shortcut(
+        _shortcut: &tauri_plugin_global_shortcut::Shortcut,
+        _event: tauri_plugin_global_shortcut::ShortcutEvent,
+    ) {
+    }
+
     pub fn status() -> Result<ShortcutStatus, AppError> {
         let state = state()?;
-        let binding = *state.binding.read().map_err(|_| {
-            shortcut_error(
-                "shortcut_state_unavailable",
-                "shortcut state is unavailable",
-            )
-        })?;
+        let binding = state
+            .binding
+            .read()
+            .map_err(|_| {
+                shortcut_error(
+                    "shortcut_state_unavailable",
+                    "shortcut state is unavailable",
+                )
+            })?
+            .clone();
         let last_error = state
             .last_error
             .lock()
@@ -205,18 +406,32 @@ mod platform {
             })?
             .clone();
 
+        let display = binding.display();
         Ok(ShortcutStatus {
             binding,
-            display: binding.display(),
+            display,
             enabled: state.enabled.load(Ordering::Acquire),
             listener_status: listener_status_label(state.listener_status.load(Ordering::Acquire)),
             last_error,
+            environment: "windows",
+            supports_modifier_only: true,
         })
     }
 
     pub fn register(binding: ShortcutBinding) -> Result<ShortcutStatus, AppError> {
-        probe_conflict(binding)?;
+        probe_conflict(&binding)?;
         let state = state()?;
+        if state.listener_status.load(Ordering::Acquire) == LISTENER_ERROR {
+            return Err(shortcut_error(
+                "shortcut_listener_unavailable",
+                state
+                    .last_error
+                    .lock()
+                    .ok()
+                    .and_then(|error| error.clone())
+                    .unwrap_or_else(|| "global keyboard listener is unavailable".to_owned()),
+            ));
+        }
 
         release_if_active(state);
         *state.binding.write().map_err(|_| {
@@ -321,10 +536,10 @@ mod platform {
         if !state.enabled.load(Ordering::Acquire) {
             return;
         }
-        let Ok(binding) = state.binding.read().map(|binding| *binding) else {
+        let Ok(binding) = state.binding.read().map(|binding| binding.clone()) else {
             return;
         };
-        let matches = binding_matches(binding, &pressed);
+        let matches = binding_matches(&binding, &pressed);
         let active = state.active.load(Ordering::Acquire);
 
         if matches && !active {
@@ -352,19 +567,21 @@ mod platform {
         }
     }
 
-    fn binding_matches(binding: ShortcutBinding, pressed: &HashSet<u32>) -> bool {
+    fn binding_matches(binding: &ShortcutBinding, pressed: &HashSet<u32>) -> bool {
+        let parsed = binding.parse().unwrap_or_default();
         let ctrl = pressed_any(pressed, &[VK_LCONTROL, VK_RCONTROL]);
         let alt = pressed_any(pressed, &[VK_LMENU, VK_RMENU]);
         let shift = pressed_any(pressed, &[VK_LSHIFT, VK_RSHIFT]);
         let windows = pressed_any(pressed, &[VK_LWIN, VK_RWIN]);
-        let space = pressed.contains(&key(VK_SPACE));
-
-        match binding {
-            ShortcutBinding::Win => ctrl && windows && !alt && !shift,
-            ShortcutBinding::AltSpace => ctrl && alt && space && !shift && !windows,
-            ShortcutBinding::ShiftSpace => ctrl && shift && space && !alt && !windows,
-            ShortcutBinding::WinSpace => ctrl && windows && space && !alt && !shift,
-        }
+        let terminal_key = parsed.code.as_deref().and_then(virtual_key_for_code);
+        ctrl == parsed.control
+            && alt == parsed.alt
+            && shift == parsed.shift
+            && windows == parsed.super_key
+            && terminal_key.is_none_or(|terminal| pressed.contains(&terminal))
+            && pressed.iter().all(|pressed_key| {
+                is_modifier_key(*pressed_key) || terminal_key == Some(*pressed_key)
+            })
     }
 
     fn pressed_any(pressed: &HashSet<u32>, keys: &[VIRTUAL_KEY]) -> bool {
@@ -381,7 +598,7 @@ mod platform {
             let binding = state
                 .binding
                 .read()
-                .map(|binding| *binding)
+                .map(|binding| binding.clone())
                 .unwrap_or_default();
             let _ = state.app.emit(
                 "shortcut://record-released",
@@ -393,7 +610,7 @@ mod platform {
         }
     }
 
-    fn probe_conflict(binding: ShortcutBinding) -> Result<(), AppError> {
+    fn probe_conflict(binding: &ShortcutBinding) -> Result<(), AppError> {
         let Some((modifiers, virtual_key)) = registration_probe(binding) else {
             return Ok(());
         };
@@ -417,14 +634,80 @@ mod platform {
         Ok(())
     }
 
-    fn registration_probe(binding: ShortcutBinding) -> Option<(HOT_KEY_MODIFIERS, u32)> {
-        let modifiers = match binding {
-            ShortcutBinding::Win => return None,
-            ShortcutBinding::AltSpace => MOD_CONTROL | MOD_ALT | MOD_NOREPEAT,
-            ShortcutBinding::ShiftSpace => MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
-            ShortcutBinding::WinSpace => MOD_CONTROL | MOD_WIN | MOD_NOREPEAT,
-        };
-        Some((modifiers, key(VK_SPACE)))
+    fn registration_probe(binding: &ShortcutBinding) -> Option<(HOT_KEY_MODIFIERS, u32)> {
+        let parsed = binding.parse().ok()?;
+        let virtual_key = parsed.code.as_deref().and_then(virtual_key_for_code)?;
+        let mut modifiers = MOD_NOREPEAT;
+        if parsed.control {
+            modifiers |= MOD_CONTROL;
+        }
+        if parsed.alt {
+            modifiers |= MOD_ALT;
+        }
+        if parsed.shift {
+            modifiers |= MOD_SHIFT;
+        }
+        if parsed.super_key {
+            modifiers |= MOD_WIN;
+        }
+        Some((modifiers, virtual_key))
+    }
+
+    fn virtual_key_for_code(code: &str) -> Option<u32> {
+        if let Some(letter) = code.strip_prefix("Key") {
+            return letter.as_bytes().first().copied().map(u32::from);
+        }
+        if let Some(digit) = code.strip_prefix("Digit") {
+            return digit.as_bytes().first().copied().map(u32::from);
+        }
+        if let Some(function) = code
+            .strip_prefix('F')
+            .and_then(|value| value.parse::<u32>().ok())
+        {
+            return (1..=12).contains(&function).then_some(0x70 + function - 1);
+        }
+        Some(match code {
+            "Space" => 0x20,
+            "Enter" => 0x0d,
+            "Tab" => 0x09,
+            "Backspace" => 0x08,
+            "Delete" => 0x2e,
+            "Home" => 0x24,
+            "End" => 0x23,
+            "PageUp" => 0x21,
+            "PageDown" => 0x22,
+            "ArrowLeft" => 0x25,
+            "ArrowUp" => 0x26,
+            "ArrowRight" => 0x27,
+            "ArrowDown" => 0x28,
+            "Comma" => 0xbc,
+            "Period" => 0xbe,
+            "Slash" => 0xbf,
+            "Semicolon" => 0xba,
+            "Quote" => 0xde,
+            "BracketLeft" => 0xdb,
+            "BracketRight" => 0xdd,
+            "Backslash" => 0xdc,
+            "Minus" => 0xbd,
+            "Equal" => 0xbb,
+            _ => return None,
+        })
+    }
+
+    fn is_modifier_key(virtual_key: u32) -> bool {
+        [
+            VK_LCONTROL,
+            VK_RCONTROL,
+            VK_LMENU,
+            VK_RMENU,
+            VK_LSHIFT,
+            VK_RSHIFT,
+            VK_LWIN,
+            VK_RWIN,
+        ]
+        .into_iter()
+        .map(key)
+        .any(|modifier| modifier == virtual_key)
     }
 
     fn state() -> Result<&'static ShortcutState, AppError> {
@@ -468,13 +751,19 @@ mod platform {
         #[test]
         fn modifier_only_binding_starts_when_ctrl_and_win_are_down() {
             let pressed = HashSet::from([key(VK_LCONTROL), key(VK_LWIN)]);
-            assert!(binding_matches(ShortcutBinding::Win, &pressed));
+            assert!(binding_matches(
+                &ShortcutBinding::new("control+super"),
+                &pressed
+            ));
         }
 
         #[test]
         fn extra_modifier_does_not_trigger_binding() {
             let pressed = HashSet::from([key(VK_LCONTROL), key(VK_LWIN), key(VK_LSHIFT)]);
-            assert!(!binding_matches(ShortcutBinding::Win, &pressed));
+            assert!(!binding_matches(
+                &ShortcutBinding::new("control+super"),
+                &pressed
+            ));
         }
 
         #[test]
@@ -482,8 +771,9 @@ mod platform {
             let without_space = HashSet::from([key(VK_LCONTROL), key(VK_LMENU)]);
             let with_space = HashSet::from([key(VK_LCONTROL), key(VK_LMENU), key(VK_SPACE)]);
 
-            assert!(!binding_matches(ShortcutBinding::AltSpace, &without_space));
-            assert!(binding_matches(ShortcutBinding::AltSpace, &with_space));
+            let binding = ShortcutBinding::new("control+alt+Space");
+            assert!(!binding_matches(&binding, &without_space));
+            assert!(binding_matches(&binding, &with_space));
         }
     }
 }
@@ -497,6 +787,12 @@ mod platform {
     use super::{AppError, ShortcutBinding, ShortcutStatus};
 
     pub fn initialize(_app: tauri::AppHandle) {}
+
+    pub fn handle_global_shortcut(
+        _shortcut: &tauri_plugin_global_shortcut::Shortcut,
+        _event: tauri_plugin_global_shortcut::ShortcutEvent,
+    ) {
+    }
 
     pub fn status() -> Result<ShortcutStatus, AppError> {
         Err(unsupported())
@@ -513,7 +809,7 @@ mod platform {
     fn unsupported() -> AppError {
         AppError::new(
             "unsupported_platform",
-            "global shortcuts are only implemented for Windows",
+            "global shortcuts are only implemented for Windows and macOS",
             false,
         )
     }

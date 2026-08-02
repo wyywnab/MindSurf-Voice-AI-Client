@@ -8,6 +8,7 @@ This is the Windows and macOS client for the MindSurf Voice AI project.
 
 - 听写、助手和混合模式
 - 全局按住说话快捷键
+- 可录入并校验冲突、失败自动回滚的全局快捷键配置
 - ASR、LLM 文本流式展示
 - TTS 音频流式播放
 - Windows/macOS 光标位置文本注入

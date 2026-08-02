@@ -4,6 +4,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { settingsController } from "../controllers/settingsController";
 import { subscribeAudioDeviceChanges } from "../services/audioInputDevices";
 import { runMicrophoneTest } from "../services/microphoneTest";
+import { formatShortcutBinding } from "../services/shortcutBinding";
+import { recordShortcutBinding } from "../services/shortcutRecorder";
 import { useConnectionStore } from "../stores/connectionStore";
 import { useRequestStore } from "../stores/requestStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -13,7 +15,6 @@ import {
   type OverlayPosition,
   type VoiceInteractionMode,
 } from "../types/voice";
-import type { ShortcutBinding } from "../types/shortcut";
 
 const props = defineProps<{
   appInfo: AppInfo | null;
@@ -31,23 +32,11 @@ const serviceSaveStatus = ref("");
 const microphoneTestStatus = ref<"idle" | "testing" | "succeeded" | "failed">("idle");
 const microphoneTestLevel = ref(0);
 const microphoneTestError = ref("");
+const shortcutCaptureStatus = ref<"idle" | "recording" | "saving">("idle");
+const shortcutCapturePreview = ref("");
+const shortcutCaptureMessage = ref("");
 let unsubscribeDeviceChanges: (() => void) | null = null;
-const isMacOS = computed(() => props.appInfo?.platform === "macos");
-const shortcutOptions = computed<Array<{ value: ShortcutBinding; label: string }>>(
-  () =>
-    isMacOS.value
-      ? [
-          { value: "ctrl_win_space", label: "Control + Command + Space" },
-          { value: "ctrl_alt_space", label: "Control + Option + Space" },
-          { value: "ctrl_shift_space", label: "Control + Shift + Space" },
-        ]
-      : [
-          { value: "ctrl_win", label: "Ctrl + Win" },
-          { value: "ctrl_alt_space", label: "Ctrl + Alt + Space" },
-          { value: "ctrl_shift_space", label: "Ctrl + Shift + Space" },
-          { value: "ctrl_win_space", label: "Ctrl + Win + Space" },
-        ],
-);
+let shortcutCaptureAbort: InstanceType<typeof globalThis.AbortController> | null = null;
 const languageOptions = computed(
   () =>
     connectionState.serverHello?.recognition_languages ?? [
@@ -101,13 +90,45 @@ function updateInjectionLimit(event: Event) {
   );
 }
 
-async function updateShortcut(event: Event) {
-  const target = event.target as HTMLSelectElement;
-  const updated = await settingsController.configureRecordShortcut(
-    target.value as ShortcutBinding,
-  );
-  if (!updated) {
-    target.value = settingsState.shortcutBinding;
+async function captureShortcut() {
+  shortcutCaptureMessage.value = "";
+  shortcutCapturePreview.value = "请按下组合键，按 Escape 取消";
+  shortcutCaptureStatus.value = "recording";
+  shortcutCaptureAbort = new globalThis.AbortController();
+  try {
+    await settingsController.beginRecordShortcutCapture();
+    if (shortcutCaptureAbort.signal.aborted) {
+      await settingsController.cancelRecordShortcutCapture();
+      return;
+    }
+    const binding = await recordShortcutBinding({
+      signal: shortcutCaptureAbort.signal,
+      onPreview: (preview) => {
+        shortcutCapturePreview.value = formatShortcutBinding(
+          preview,
+          props.appInfo?.platform ?? "windows",
+        );
+      },
+    });
+    if (!binding) {
+      await settingsController.cancelRecordShortcutCapture();
+      shortcutCaptureMessage.value = "已取消快捷键录制，旧配置保持不变";
+      return;
+    }
+    shortcutCaptureStatus.value = "saving";
+    const display = await settingsController.commitRecordedShortcut(
+      binding,
+      props.appInfo?.platform ?? "windows",
+    );
+    shortcutCaptureMessage.value = `已保存：${display}`;
+  } catch (error) {
+    await settingsController.cancelRecordShortcutCapture();
+    shortcutCaptureMessage.value =
+      error instanceof Error ? error.message : "快捷键录制失败";
+  } finally {
+    shortcutCaptureAbort = null;
+    shortcutCaptureStatus.value = "idle";
+    shortcutCapturePreview.value = "";
   }
 }
 
@@ -215,6 +236,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (shortcutCaptureStatus.value !== "idle") {
+    shortcutCaptureAbort?.abort();
+    void settingsController.cancelRecordShortcutCapture();
+  }
   unsubscribeDeviceChanges?.();
   unsubscribeDeviceChanges = null;
 });
@@ -320,15 +345,18 @@ onBeforeUnmount(() => {
         <article>
           <span>按住说话快捷键</span>
           <div class="shortcut-setting">
-            <select :value="settingsState.shortcutBinding" @change="updateShortcut">
-              <option
-                v-for="option in shortcutOptions"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ option.label }}
-              </option>
-            </select>
+            <kbd>{{ shortcutCapturePreview || settingsState.shortcutDisplay }}</kbd>
+            <button
+              class="button button-secondary"
+              type="button"
+              :disabled="
+                shortcutCaptureStatus !== 'idle' ||
+                Boolean(requestState.activeRequestId)
+              "
+              @click="captureShortcut"
+            >
+              {{ shortcutCaptureStatus === "recording" ? "录制中…" : "录制快捷键" }}
+            </button>
             <label>
               <input
                 type="checkbox"
@@ -338,6 +366,15 @@ onBeforeUnmount(() => {
               启用
             </label>
           </div>
+          <small v-if="shortcutCaptureMessage">{{ shortcutCaptureMessage }}</small>
+          <small v-else>
+            {{ settingsState.shortcutEnvironment }} ·
+            {{
+              settingsState.shortcutSupportsModifierOnly
+                ? "支持仅修饰键组合"
+                : "需要一个普通按键"
+            }}
+          </small>
         </article>
         <article>
           <span>输入悬浮窗位置</span>

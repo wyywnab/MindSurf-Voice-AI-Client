@@ -1,7 +1,8 @@
-export type ShortcutBinding =
-  "ctrl_win" | "ctrl_alt_space" | "ctrl_shift_space" | "ctrl_win_space";
+export type ShortcutBinding = string;
 
 export type ShortcutListenerStatus = "starting" | "running" | "error";
+export type ShortcutPlatformEnvironment =
+  "windows" | "macos" | "unsupported";
 
 export interface ShortcutStatus {
   binding: ShortcutBinding;
@@ -9,6 +10,8 @@ export interface ShortcutStatus {
   enabled: boolean;
   listenerStatus: ShortcutListenerStatus;
   lastError: string | null;
+  environment: ShortcutPlatformEnvironment;
+  supportsModifierOnly: boolean;
 }
 
 export interface RecordShortcutEvent {

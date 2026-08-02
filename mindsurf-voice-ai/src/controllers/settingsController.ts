@@ -10,6 +10,10 @@ import { testVoiceServiceConnection } from "../services/transport/testConnection
 import type { VoiceClientIdentity } from "../services/transport/voiceTransport";
 import { syncTrayMode } from "../services/tray";
 import { listAudioInputDevices } from "../services/audioInputDevices";
+import {
+  ShortcutBindingError,
+  validateShortcutBinding,
+} from "../services/shortcutBinding";
 import { isTerminalRequestState } from "./requestStateMachine";
 import { useConnectionStore } from "../stores/connectionStore";
 import { useRequestStore } from "../stores/requestStore";
@@ -23,6 +27,10 @@ import type { OverlayPosition, VoiceInteractionMode } from "../types/voice";
 import { voiceRequestController } from "./voiceRequestController";
 
 export class SettingsController {
+  private shortcutCapture: {
+    binding: ShortcutBinding;
+    enabled: boolean;
+  } | null = null;
   private readonly connection = useConnectionStore();
   private readonly request = useRequestStore();
   private readonly settings = useSettingsStore();
@@ -173,31 +181,128 @@ export class SettingsController {
     settingsStoreActions.setShortcutError(message);
   }
 
-  async configureRecordShortcut(binding: ShortcutBinding) {
-    settingsStoreActions.setShortcutError("");
-    if (!this.settings.state.shortcutDesiredEnabled) {
-      settingsStoreActions.setShortcutBinding(binding);
-      return true;
+  async beginRecordShortcutCapture() {
+    if (this.request.state.activeRequestId) {
+      throw new ShortcutBindingError(
+        "shortcut_request_active",
+        "请求进行中不能录制快捷键",
+      );
     }
-    const result = await registerRecordShortcut(binding);
+    if (this.shortcutCapture) {
+      throw new ShortcutBindingError("shortcut_capture_active", "快捷键录制已经开始");
+    }
+    settingsStoreActions.setShortcutError("");
+    const capture = {
+      binding: this.settings.state.shortcutBinding,
+      enabled: this.settings.state.shortcutDesiredEnabled,
+    };
+    const paused = await unregisterRecordShortcut();
+    if (!paused.ok) {
+      throw new ShortcutBindingError(
+        paused.error.code,
+        describeShortcutError(paused.error.code),
+      );
+    }
+    settingsStoreActions.applyShortcutStatus(paused.data);
+    this.shortcutCapture = capture;
+    return capture;
+  }
+
+  async commitRecordedShortcut(binding: ShortcutBinding, platform: string) {
+    const capture = this.shortcutCapture;
+    if (!capture) {
+      throw new ShortcutBindingError(
+        "shortcut_capture_not_started",
+        "请先开始录制快捷键",
+      );
+    }
+    this.shortcutCapture = null;
+    try {
+      if (binding === capture.binding) {
+        throw new ShortcutBindingError(
+          "shortcut_duplicate_binding",
+          "新快捷键与当前绑定相同",
+        );
+      }
+      validateShortcutBinding(
+        binding,
+        platform,
+        { 取消当前请求: "Escape" },
+        "按住说话",
+      );
+      const result = await registerRecordShortcut(binding);
+      if (!result.ok) {
+        throw new ShortcutBindingError(
+          result.error.code,
+          describeShortcutError(result.error.code),
+        );
+      }
+      if (!capture.enabled) {
+        const disabled = await unregisterRecordShortcut();
+        if (!disabled.ok) {
+          throw new ShortcutBindingError(
+            disabled.error.code,
+            describeShortcutError(disabled.error.code),
+          );
+        }
+        settingsStoreActions.applyShortcutStatus(disabled.data);
+      } else {
+        settingsStoreActions.applyShortcutStatus(result.data);
+      }
+      settingsStoreActions.setShortcutBinding(binding);
+      return result.data.display;
+    } catch (error) {
+      const restored = await this.restoreShortcutCapture(capture);
+      const message = restored
+        ? error instanceof Error
+          ? error.message
+          : "快捷键配置失败"
+        : describeShortcutError("shortcut_restore_failed");
+      settingsStoreActions.setShortcutError(message);
+      if (!restored) {
+        throw new ShortcutBindingError("shortcut_restore_failed", message);
+      }
+      throw error;
+    }
+  }
+
+  async cancelRecordShortcutCapture() {
+    const capture = this.shortcutCapture;
+    if (!capture) return;
+    this.shortcutCapture = null;
+    await this.restoreShortcutCapture(capture);
+  }
+
+  private async restoreShortcutCapture(capture: {
+    binding: ShortcutBinding;
+    enabled: boolean;
+  }) {
+    const result = capture.enabled
+      ? await registerRecordShortcut(capture.binding)
+      : await unregisterRecordShortcut();
     if (!result.ok) {
-      settingsStoreActions.setShortcutError(describeShortcutError(result.error.code));
+      settingsStoreActions.setShortcutError(
+        describeShortcutError("shortcut_restore_failed"),
+      );
       return false;
     }
     settingsStoreActions.applyShortcutStatus(result.data);
-    settingsStoreActions.setShortcutBinding(binding);
     return true;
   }
 
   async setRecordShortcutEnabled(enabled: boolean) {
     settingsStoreActions.setShortcutError("");
-    settingsStoreActions.setShortcutDesiredEnabled(enabled);
+    const previous = this.settings.state.shortcutDesiredEnabled;
     const result = enabled
       ? await registerRecordShortcut(this.settings.state.shortcutBinding)
       : await unregisterRecordShortcut();
-    if (result.ok) settingsStoreActions.applyShortcutStatus(result.data);
-    else
+    if (result.ok) {
+      settingsStoreActions.setShortcutDesiredEnabled(enabled);
+      settingsStoreActions.applyShortcutStatus(result.data);
+    } else {
+      settingsStoreActions.setShortcutDesiredEnabled(previous);
       settingsStoreActions.setShortcutError(describeShortcutError(result.error.code));
+    }
   }
 
   private async refreshShortcutStatus() {
@@ -212,6 +317,15 @@ function describeShortcutError(code: string) {
   const messages: Record<string, string> = {
     accessibility_required: "请先在系统设置中授予辅助功能权限",
     shortcut_conflict: "该快捷键已被系统或其他程序占用，请选择其他组合",
+    shortcut_duplicate_binding: "新快捷键与当前绑定相同",
+    shortcut_internal_conflict: "该组合已绑定到其他应用动作",
+    shortcut_invalid: "快捷键格式无效",
+    shortcut_key_unsupported: "该按键暂不支持全局绑定",
+    shortcut_modifier_required: "快捷键必须包含至少一个修饰键",
+    shortcut_modifier_only_invalid: "仅修饰键组合至少需要两个修饰键",
+    shortcut_modifier_only_unsupported: "当前平台不支持仅修饰键的全局组合",
+    shortcut_system_reserved: "该组合由系统保留，请选择其他组合",
+    shortcut_restore_failed: "快捷键注册失败，且旧配置未能恢复，请重新启用",
     shortcut_listener_unavailable: "系统全局快捷键监听器不可用",
     shortcut_state_unavailable: "快捷键状态暂时不可用，请重试",
     unsupported_platform: "当前平台不支持全局快捷键",

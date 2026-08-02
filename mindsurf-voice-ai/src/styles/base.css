@@ -1026,6 +1026,19 @@ h1 {
   flex: 1;
 }
 
+.shortcut-setting kbd {
+  min-width: 150px;
+  flex: 1;
+  padding: 6px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--surface-muted);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
 .shortcut-setting label {
   display: inline-flex;
   flex: none;

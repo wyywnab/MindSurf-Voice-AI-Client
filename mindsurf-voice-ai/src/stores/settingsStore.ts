@@ -1,6 +1,10 @@
 import { reactive, readonly } from "vue";
 
 import { getCredentialStatus } from "../services/settings/credentials";
+import {
+  defaultShortcutBinding,
+  formatShortcutBinding,
+} from "../services/shortcutBinding";
 import { diagnosticsStoreActions } from "./diagnosticsStore";
 import { settingsRepository } from "../services/settings/settingsRepository";
 import type { ServerHelloPayload } from "../types/protocol";
@@ -46,6 +50,8 @@ const state = reactive({
   shortcutLastEventAt: null as number | null,
   shortcutListenerStatus: "starting" as ShortcutStatus["listenerStatus"],
   shortcutRegistered: false,
+  shortcutEnvironment: "unsupported" as ShortcutStatus["environment"],
+  shortcutSupportsModifierOnly: false,
   selectedAsrId: defaults.inference.asrId,
   selectedLlmId: defaults.inference.llmId,
   selectedOutputAudioId: defaults.inference.outputAudioId,
@@ -53,24 +59,20 @@ const state = reactive({
 });
 
 function platformDefaultShortcut(binding: ShortcutBinding): ShortcutBinding {
-  return typeof navigator !== "undefined" &&
-    navigator.userAgent.includes("Mac OS") &&
-    binding === "ctrl_win"
-    ? "ctrl_win_space"
+  return binding === defaults.shortcut.binding
+    ? defaultShortcutBinding(shortcutPlatform())
     : binding;
 }
 
 export function shortcutDisplay(binding: ShortcutBinding) {
-  const isMacOS =
-    typeof navigator !== "undefined" && navigator.userAgent.includes("Mac OS");
-  const modifier = isMacOS ? "Control + Command" : "Ctrl + Win";
-  const labels: Record<ShortcutBinding, string> = {
-    ctrl_win: isMacOS ? `${modifier} + Space` : modifier,
-    ctrl_alt_space: isMacOS ? "Control + Option + Space" : "Ctrl + Alt + Space",
-    ctrl_shift_space: isMacOS ? "Control + Shift + Space" : "Ctrl + Shift + Space",
-    ctrl_win_space: `${modifier} + Space`,
-  };
-  return labels[binding];
+  return formatShortcutBinding(binding, shortcutPlatform());
+}
+
+function shortcutPlatform() {
+  if (typeof navigator === "undefined") return "windows";
+  if (navigator.userAgent.includes("Mac OS")) return "macos";
+  if (navigator.userAgent.includes("Windows")) return "windows";
+  return "unsupported";
 }
 
 function applySettings(settings: AppSettings) {
@@ -188,6 +190,8 @@ export const settingsStoreActions = {
       state.shortcutDisplay = status.display;
     }
     state.shortcutRegistered = status.enabled;
+    state.shortcutEnvironment = status.environment;
+    state.shortcutSupportsModifierOnly = status.supportsModifierOnly;
     state.shortcutListenerStatus = status.listenerStatus;
     state.shortcutError =
       status.listenerStatus === "error" || status.lastError

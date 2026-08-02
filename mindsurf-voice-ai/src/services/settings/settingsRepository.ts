@@ -2,6 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { load, type Store } from "@tauri-apps/plugin-store";
 
 import { DEFAULT_APP_SETTINGS, type AppSettings } from "../../types/settings";
+import { parseShortcutBinding } from "../shortcutBinding";
 
 const STORE_PATH = "settings.json";
 const SETTINGS_KEY = "settings";
@@ -129,12 +130,13 @@ function isVoiceMode(
 function isShortcutBinding(
   value: unknown,
 ): value is AppSettings["shortcut"]["binding"] {
-  return (
-    value === "ctrl_win" ||
-    value === "ctrl_alt_space" ||
-    value === "ctrl_shift_space" ||
-    value === "ctrl_win_space"
-  );
+  if (typeof value !== "string") return false;
+  try {
+    parseShortcutBinding(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isOverlayPosition(

@@ -288,6 +288,53 @@ Transport 不得直接修改 `requestStore`；控制器不得直接操作底层 
 - 录音上限使用本地安全上限与 `server.hello.limits.max_recording_ms` 的较小值，不再在 UI 中固定显示或仅依赖硬编码的 60 秒。
 - Recorder 仍只负责设备采集、编码、分帧和资源释放，不负责创建网络请求。
 
+### 5.7.1 快捷键录入与平台注册
+
+设置页不再提供固定快捷键下拉选项。用户点击“录制快捷键”后按以下事务流程执行：
+
+1. 保存当前绑定和启用状态，并暂停按住说话快捷键。
+2. 在捕获阶段监听窗口级 `keydown`/`keyup`，阻止组合触发页面默认行为。
+3. 将物理按键 `KeyboardEvent.code` 与修饰键规范化为统一字符串，并实时显示组合。
+4. 检查格式、系统保留组合、同一动作重复绑定和应用内部动作冲突。
+5. 调用统一 Rust 命令尝试平台注册；只有平台注册成功才写入 `SettingsRepository`。
+6. 录制取消、校验失败或平台注册失败时重新注册旧组合，持久设置保持不变。
+
+规范化顺序固定为 `shift + control + alt + super + code`，例如：
+
+```text
+shift+control+KeyR
+control+alt+Space
+control+super
+```
+
+其中 `code` 使用物理键位名称，不受当前键盘布局字符影响。绑定必须包含至少一个修饰键；仅修饰键组合至少包含两个修饰键。同一动作录入与旧值相同的组合返回 `shortcut_duplicate_binding`，不同动作使用同一组合返回 `shortcut_internal_conflict`，不得静默覆盖。
+
+平台策略：
+
+| 平台 | 默认值 | 注册方式 | 仅修饰键 | 能力检测 |
+|---|---|---|---|---|
+| Windows | `control+super` | Rust 低层键盘钩子；带普通键的组合额外使用 `RegisterHotKey` 探测系统冲突 | 支持 | `windows` |
+| macOS | `control+super+Space` | Tauri Global Shortcut / 系统全局热键 | 当前需要普通键 | `macos` |
+
+Linux 不在本阶段实现范围内；其他平台统一通过相同接口返回 `unsupported_platform`。
+
+仅修饰键组合不经过无法稳定表达该组合的通用插件。Windows 继续使用 Rust 平台监听层；其他平台若平台层尚无稳定实现，必须通过相同命令接口返回 `shortcut_modifier_only_unsupported`，上层不得伪装注册成功。
+
+稳定错误码至少包括：
+
+- `shortcut_invalid`
+- `shortcut_key_unsupported`
+- `shortcut_modifier_required`
+- `shortcut_modifier_only_invalid`
+- `shortcut_modifier_only_unsupported`
+- `shortcut_duplicate_binding`
+- `shortcut_internal_conflict`
+- `shortcut_system_reserved`
+- `shortcut_conflict`
+- `shortcut_listener_unavailable`
+- `shortcut_state_unavailable`
+- `shortcut_restore_failed`
+
 ### 5.8 文本输出接口
 
 第二阶段不实现输入法模式，但必须把“文本结果输出”从直接注入实现中抽象出来，避免上层业务永久绑定当前注入方式。
@@ -861,6 +908,8 @@ mindsurf-voice-ai/src-tauri/src/
 ### 11.2 功能验收
 
 - Windows/macOS 上 Phase 1 的三种模式、快捷键、悬浮窗、流式播放和文本注入行为无回归。
+- 快捷键可通过实际按键录入；注册失败或取消后恢复旧绑定，系统保留和应用内部冲突均有稳定错误码。
+- Windows/macOS 使用各自默认值，且平台能力状态与实际注册结果一致。
 - 可在界面修改服务地址并完成测试连接。
 - 非 loopback 明文 `ws://` 地址被拒绝。
 - Token 可保存、覆盖和清除，Store 文件中不存在明文 Token。

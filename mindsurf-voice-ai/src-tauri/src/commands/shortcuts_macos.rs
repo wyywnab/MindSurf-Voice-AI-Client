@@ -7,9 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
 use objc2_web_kit::{WKInactiveSchedulingPolicy, WKWebView};
 use tauri::{Emitter, Manager};
-use tauri_plugin_global_shortcut::{
-    Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState,
-};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 
 use super::{AppError, RecordShortcutPayload, ShortcutBinding, ShortcutStatus};
 
@@ -41,7 +39,7 @@ pub fn initialize(app: tauri::AppHandle) {
     if STATE
         .set(ShortcutStateData {
             app: app.clone(),
-            binding: RwLock::new(ShortcutBinding::WinSpace),
+            binding: RwLock::new(ShortcutBinding::default()),
             enabled: AtomicBool::new(false),
             active: AtomicBool::new(false),
             registered: Mutex::new(None),
@@ -61,22 +59,24 @@ pub fn initialize(app: tauri::AppHandle) {
 
 pub fn status() -> Result<ShortcutStatus, AppError> {
     let state = state()?;
-    let binding = *state.binding.read().map_err(|_| state_error())?;
+    let binding = state.binding.read().map_err(|_| state_error())?.clone();
     let last_error = state.last_error.lock().map_err(|_| state_error())?.clone();
 
+    let display = binding.display();
     Ok(ShortcutStatus {
         binding,
-        display: binding.display(),
+        display,
         enabled: state.enabled.load(Ordering::Acquire),
         listener_status: listener_status_label(state.listener_status.load(Ordering::Acquire)),
         last_error,
+        environment: "macos",
+        supports_modifier_only: false,
     })
 }
 
 pub fn register(binding: ShortcutBinding) -> Result<ShortcutStatus, AppError> {
     let state = state()?;
-    let binding = normalized_binding(binding);
-    let shortcut = shortcut_for_binding(binding);
+    let shortcut = shortcut_for_binding(&binding)?;
     let mut registered = state.registered.lock().map_err(|_| state_error())?;
 
     if registered.as_ref() != Some(&shortcut) {
@@ -101,7 +101,7 @@ pub fn register(binding: ShortcutBinding) -> Result<ShortcutStatus, AppError> {
     drop(registered);
 
     release_if_active(state);
-    *state.binding.write().map_err(|_| state_error())? = binding;
+    *state.binding.write().map_err(|_| state_error())? = binding.clone();
     state.enabled.store(true, Ordering::Release);
     state
         .listener_status
@@ -146,7 +146,7 @@ pub fn handle_global_shortcut(shortcut: &Shortcut, event: ShortcutEvent) {
     }
     drop(registered);
 
-    let Ok(binding) = state.binding.read().map(|binding| *binding) else {
+    let Ok(binding) = state.binding.read().map(|binding| binding.clone()) else {
         return;
     };
     match event.state {
@@ -168,22 +168,18 @@ pub fn handle_global_shortcut(shortcut: &Shortcut, event: ShortcutEvent) {
     }
 }
 
-fn normalized_binding(binding: ShortcutBinding) -> ShortcutBinding {
-    match binding {
-        ShortcutBinding::Win => ShortcutBinding::WinSpace,
-        binding => binding,
+fn shortcut_for_binding(binding: &ShortcutBinding) -> Result<Shortcut, AppError> {
+    let parsed = binding.parse()?;
+    if parsed.code.is_none() {
+        return Err(shortcut_error(
+            "shortcut_modifier_only_unsupported",
+            "modifier-only shortcuts are not supported on macOS",
+        ));
     }
-}
-
-fn shortcut_for_binding(binding: ShortcutBinding) -> Shortcut {
-    let (modifiers, code) = match normalized_binding(binding) {
-        ShortcutBinding::AltSpace => (Modifiers::CONTROL | Modifiers::ALT, Code::Space),
-        ShortcutBinding::ShiftSpace => (Modifiers::CONTROL | Modifiers::SHIFT, Code::Space),
-        ShortcutBinding::Win | ShortcutBinding::WinSpace => {
-            (Modifiers::CONTROL | Modifiers::SUPER, Code::Space)
-        }
-    };
-    Shortcut::new(Some(modifiers), code)
+    binding
+        .canonical_value()
+        .parse::<Shortcut>()
+        .map_err(|error| shortcut_error("shortcut_invalid", error))
 }
 
 fn release_if_active(state: &ShortcutStateData) {
@@ -191,8 +187,8 @@ fn release_if_active(state: &ShortcutStateData) {
         let binding = state
             .binding
             .read()
-            .map(|binding| *binding)
-            .unwrap_or(ShortcutBinding::WinSpace);
+            .map(|binding| binding.clone())
+            .unwrap_or_default();
         let _ = state
             .event_sender
             .send(ShortcutNotification::Released(binding, timestamp_ms()));
@@ -326,29 +322,18 @@ fn timestamp_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalized_binding, shortcut_for_binding, ShortcutBinding};
+    use super::{shortcut_for_binding, ShortcutBinding};
 
     #[test]
-    fn migrates_modifier_only_binding_to_system_hotkey() {
-        assert_eq!(
-            normalized_binding(ShortcutBinding::Win),
-            ShortcutBinding::WinSpace
-        );
-        assert_eq!(
-            shortcut_for_binding(ShortcutBinding::Win),
-            shortcut_for_binding(ShortcutBinding::WinSpace)
-        );
+    fn rejects_modifier_only_binding() {
+        assert!(shortcut_for_binding(&ShortcutBinding::new("control+super")).is_err());
     }
 
     #[test]
     fn configurable_system_hotkeys_are_distinct() {
         assert_ne!(
-            shortcut_for_binding(ShortcutBinding::AltSpace),
-            shortcut_for_binding(ShortcutBinding::ShiftSpace)
-        );
-        assert_ne!(
-            shortcut_for_binding(ShortcutBinding::ShiftSpace),
-            shortcut_for_binding(ShortcutBinding::WinSpace)
+            shortcut_for_binding(&ShortcutBinding::new("control+alt+Space")).unwrap(),
+            shortcut_for_binding(&ShortcutBinding::new("control+shift+Space")).unwrap()
         );
     }
 }

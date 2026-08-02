@@ -76,7 +76,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   },
   shortcut: {
     enabled: true,
-    binding: "ctrl_win",
+    binding: "control+super",
   },
   overlay: {
     enabled: true,

@@ -25,7 +25,7 @@ describe("shortcut service", () => {
     invokeMock.mockResolvedValue({
       ok: true,
       data: {
-        binding: "ctrl_shift_space",
+        binding: "shift+control+Space",
         display: "Ctrl + Shift + Space",
         enabled: true,
         listenerStatus: "running",
@@ -33,10 +33,10 @@ describe("shortcut service", () => {
       },
     });
 
-    const result = await registerRecordShortcut("ctrl_shift_space");
+    const result = await registerRecordShortcut("shift+control+Space");
 
     expect(invokeMock).toHaveBeenCalledWith("register_record_shortcut", {
-      binding: "ctrl_shift_space",
+      binding: "shift+control+Space",
     });
     expect(result.ok).toBe(true);
   });
