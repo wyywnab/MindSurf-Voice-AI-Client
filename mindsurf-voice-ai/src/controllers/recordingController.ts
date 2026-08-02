@@ -1,6 +1,7 @@
 import type { useRecorder } from "../composables/useRecorder";
 import { useConnectionStore } from "../stores/connectionStore";
-import { useRequestStore } from "../stores/requestStore";
+import { diagnosticsStoreActions } from "../stores/diagnosticsStore";
+import { requestStoreActions, useRequestStore } from "../stores/requestStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { voiceRequestController } from "./voiceRequestController";
 
@@ -16,15 +17,28 @@ export class RecordingController {
 
   async startPushToTalk(shouldContinue: () => boolean = () => true) {
     const attempt = ++this.attempt;
+    diagnosticsStoreActions.beginTimeline(this.settings.state.selectedMode);
+    requestStoreActions.beginPreparation();
+    diagnosticsStoreActions.recordTimeline(
+      "recording.prepare_started",
+      "input",
+      "开始准备麦克风",
+    );
     const prepared = await this.recorder.prepareRecording(
       this.settings.state.inputDeviceId,
     );
     if (!prepared || attempt !== this.attempt || !shouldContinue()) {
       await this.recorder.cancelRecording();
+      await voiceRequestController.cancelCurrentRequest("user_cancelled");
       return false;
     }
     if (this.settings.state.autoInjection[this.settings.state.selectedMode]) {
-      await voiceRequestController.textOutput.prepareTarget();
+      try {
+        await voiceRequestController.textOutput.prepareTarget();
+      } catch {
+        await voiceRequestController.cancelCurrentRequest("user_cancelled");
+        return false;
+      }
     }
     try {
       await voiceRequestController.startRequest();
@@ -48,8 +62,14 @@ export class RecordingController {
         voiceRequestController.sendAudioFrame(frame, sequence);
       },
     });
-    if (started) voiceRequestController.markRecording();
-    else await voiceRequestController.cancelCurrentRequest("user_cancelled");
+    if (started) {
+      diagnosticsStoreActions.recordTimeline(
+        "recording.started",
+        "input",
+        "录音已开始",
+      );
+      voiceRequestController.markRecording();
+    } else await voiceRequestController.cancelCurrentRequest("user_cancelled");
     return started;
   }
 
@@ -59,6 +79,10 @@ export class RecordingController {
       await voiceRequestController.cancelCurrentRequest("user_cancelled");
       return;
     }
+    diagnosticsStoreActions.recordTimeline("recording.stopped", "input", "录音已停止", {
+      durationMs: Math.round(result.durationMs),
+      frameCount: result.frameCount,
+    });
     try {
       await voiceRequestController.commitInput(result);
     } catch {

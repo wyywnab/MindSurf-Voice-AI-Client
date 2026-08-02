@@ -15,6 +15,7 @@ import {
   type VoiceClientIdentity,
 } from "../services/transport/voiceTransport";
 import { connectionStoreActions, useConnectionStore } from "../stores/connectionStore";
+import { diagnosticsStoreActions } from "../stores/diagnosticsStore";
 import { requestStoreActions, useRequestStore } from "../stores/requestStore";
 import { settingsStoreActions, useSettingsStore } from "../stores/settingsStore";
 import type {
@@ -38,6 +39,8 @@ export class VoiceRequestController {
   private llmTimer: ReturnType<typeof setTimeout> | null = null;
   private transport: VoiceTransport | null = null;
   private identity: VoiceClientIdentity | null = null;
+  private lastLoggedUnderrunCount = 0;
+  private playbackRequestId: string | null = null;
   private readonly connection = useConnectionStore();
   private readonly request = useRequestStore();
   private readonly settings = useSettingsStore();
@@ -46,9 +49,47 @@ export class VoiceRequestController {
     onError: (message) => {
       requestStoreActions.setPlaybackError(message);
       requestStoreActions.setAssistantWarning(message);
+      diagnosticsStoreActions.log("error", "player", "player.error", message, {
+        requestId: this.request.state.activeRequestId ?? undefined,
+      });
     },
-    onMetrics: requestStoreActions.setPlaybackMetrics,
-    onStatusChange: requestStoreActions.setPlaybackStatus,
+    onMetrics: (metrics) => {
+      requestStoreActions.setPlaybackMetrics(metrics);
+      if (metrics.underrunCount > this.lastLoggedUnderrunCount) {
+        this.lastLoggedUnderrunCount = metrics.underrunCount;
+        diagnosticsStoreActions.log(
+          "warn",
+          "player",
+          "player.underrun",
+          "播放器发生缓冲中断",
+          {
+            requestId: this.request.state.activeRequestId ?? undefined,
+            fields: { underrunCount: metrics.underrunCount },
+          },
+        );
+      }
+    },
+    onStatusChange: (status) => {
+      requestStoreActions.setPlaybackStatus(status);
+      if (status === "playing") {
+        diagnosticsStoreActions.recordTimeline(
+          "output.playback_started",
+          "output",
+          "语音开始播放",
+          undefined,
+          this.playbackRequestId ?? undefined,
+        );
+      } else if (status === "done") {
+        diagnosticsStoreActions.recordTimeline(
+          "output.playback_done",
+          "output",
+          "语音播放完成",
+          undefined,
+          this.playbackRequestId ?? undefined,
+        );
+        this.playbackRequestId = null;
+      }
+    },
   });
   private readonly router = new ProtocolEventRouter({
     onConnectionEvent: (message) => this.handleConnectionEvent(message),
@@ -70,28 +111,79 @@ export class VoiceRequestController {
             frame.requestId === this.request.state.activeRequestId &&
             !isTerminalRequestState(this.request.state.status)
           ) {
+            diagnosticsStoreActions.recordTimeline(
+              "output.first_chunk",
+              "tts",
+              "收到首个语音分片",
+            );
             this.player.enqueue(frame);
           }
         },
         onControlMessage: (message) => {
-          this.router.route(
+          const route = this.router.route(
             message,
             this.request.state.activeRequestId,
             isTerminalRequestState(this.request.state.status),
           );
+          if (
+            ["duplicate", "stale_request", "terminal_request", "unknown"].includes(
+              route,
+            )
+          ) {
+            diagnosticsStoreActions.log(
+              "warn",
+              "protocol",
+              `message.${route}`,
+              `协议消息未进入业务处理：${message.type}`,
+              {
+                requestId: message.request_id ?? undefined,
+                fields: { route, messageType: message.type },
+              },
+            );
+          }
         },
-        onReconnectAttempt: connectionStoreActions.setReconnectAttempt,
+        onReconnectAttempt: (attempt) => {
+          connectionStoreActions.setReconnectAttempt(attempt);
+          diagnosticsStoreActions.log(
+            "warn",
+            "connection",
+            "connection.reconnect",
+            "服务连接正在重试",
+            { fields: { attempt } },
+          );
+        },
         onServerHello: (hello) => {
           connectionStoreActions.setServerHello(hello);
           settingsStoreActions.hydrateInferenceSelections(hello);
+          diagnosticsStoreActions.log(
+            "info",
+            "connection",
+            "connection.handshake_succeeded",
+            "服务握手成功",
+            {
+              fields: {
+                protocolVersion: hello.protocol_version,
+                pipeline: hello.pipeline,
+              },
+            },
+          );
         },
         onStatusChange: (status) => {
           connectionStoreActions.setStatus(status);
+          diagnosticsStoreActions.log(
+            status === "error" ? "error" : "info",
+            "connection",
+            `connection.${status}`,
+            `连接状态变更为 ${status}`,
+          );
           if (status !== "connected" && this.request.state.activeRequestId) {
             this.fail("连接已断开，当前录音请求无法恢复", "connection_lost");
           }
         },
-        onTransportError: (error) => connectionStoreActions.setError(error.message),
+        onTransportError: (error) => {
+          connectionStoreActions.setError(error.message);
+          diagnosticsStoreActions.log("error", "protocol", error.code, error.message);
+        },
       },
       {
         tokenProvider: readServiceTokenForConnection,
@@ -152,8 +244,10 @@ export class VoiceRequestController {
     }
 
     this.player.stop("idle");
+    this.playbackRequestId = null;
+    this.lastLoggedUnderrunCount = 0;
     const snapshot = this.createOptionsSnapshot();
-    requestStoreActions.begin(snapshot);
+    requestStoreActions.setOptionsSnapshot(snapshot);
     if (snapshot.protocolMode === "assistant" && !hello.features.streaming_text) {
       const error = new VoiceTransportError(
         "streaming_text_unsupported",
@@ -187,6 +281,14 @@ export class VoiceRequestController {
         },
       });
       requestStoreActions.setActiveRequest(accepted.requestId);
+      diagnosticsStoreActions.bindRequestId(accepted.requestId);
+      diagnosticsStoreActions.log(
+        "info",
+        "request",
+        "request.accepted",
+        "服务端已接受请求",
+        { requestId: accepted.requestId },
+      );
       return accepted.requestId;
     } catch (error) {
       this.fail(describeTransportError(error), "protocol_error");
@@ -209,6 +311,13 @@ export class VoiceRequestController {
       requestStoreActions.setNetworkCongested(
         this.transport.sendInputAudio(requestId, sequence, sequence * 20_000, frame),
       );
+      if (sequence === 0) {
+        diagnosticsStoreActions.recordTimeline(
+          "audio.first_frame_sent",
+          "input",
+          "首个音频帧已发送",
+        );
+      }
       return true;
     } catch (error) {
       requestStoreActions.setNetworkCongested(false);
@@ -226,6 +335,11 @@ export class VoiceRequestController {
     requestStoreActions.transition("committing", "recording_stopped");
     requestStoreActions.setNetworkCongested(false);
     try {
+      diagnosticsStoreActions.recordTimeline(
+        "input.commit_sent",
+        "input",
+        "录音提交已发送",
+      );
       await this.transport.commitInput(requestId, {
         last_sequence: result.frameCount > 0 ? result.frameCount - 1 : null,
         frame_count: result.frameCount,
@@ -237,6 +351,11 @@ export class VoiceRequestController {
         this.request.state.status === "committing"
       ) {
         requestStoreActions.transition("recognizing", "input_committed");
+        diagnosticsStoreActions.recordTimeline(
+          "input.committed",
+          "input",
+          "服务端已确认音频提交",
+        );
         this.startAsrTimer(requestId);
       }
     } catch (error) {
@@ -253,6 +372,14 @@ export class VoiceRequestController {
     if (isTerminalRequestState(this.request.state.status)) return;
     if (this.request.state.status === "idle") return;
     requestStoreActions.transition("cancelling", reason);
+    if (this.transport && requestId) {
+      diagnosticsStoreActions.recordTimeline(
+        "request.cancel_sent",
+        "request",
+        "取消请求已发送",
+        { reason },
+      );
+    }
     try {
       if (this.transport && requestId) {
         await this.transport.cancelRequest(requestId, reason);
@@ -263,6 +390,12 @@ export class VoiceRequestController {
       if (!isTerminalRequestState(this.request.state.status)) {
         requestStoreActions.transition("cancelled", "local_cleanup_completed");
       }
+      diagnosticsStoreActions.finishTimeline(
+        "request.cancelled",
+        "cancelled",
+        "请求已取消",
+        { reason },
+      );
       requestStoreActions.clearActiveRequest();
     }
   }
@@ -313,6 +446,12 @@ export class VoiceRequestController {
     if (message.type !== "error") return;
     const payload = message.payload as ProtocolErrorPayload;
     connectionStoreActions.setError(payload.message || payload.code);
+    diagnosticsStoreActions.log(
+      "error",
+      "protocol",
+      payload.code,
+      payload.message || payload.code,
+    );
   }
 
   private handleRequestEvent(message: ControlEnvelope<unknown>) {
@@ -325,6 +464,11 @@ export class VoiceRequestController {
           payload.revision > this.request.state.asrRevision
         ) {
           requestStoreActions.setAsrPartial(payload.text, payload.revision);
+          diagnosticsStoreActions.recordTimeline(
+            "asr.first_partial",
+            "asr",
+            "收到首个临时识别结果",
+          );
         }
         break;
       }
@@ -354,6 +498,11 @@ export class VoiceRequestController {
           break;
         }
         requestStoreActions.transition("cancelled", "server_cancelled");
+        diagnosticsStoreActions.finishTimeline(
+          "request.cancelled",
+          "cancelled",
+          "服务端已确认取消请求",
+        );
         requestStoreActions.clearActiveRequest();
         break;
       case "error":
@@ -374,6 +523,9 @@ export class VoiceRequestController {
       requestStoreActions.transition("recognizing", "asr_final_before_commit_ack");
     }
     requestStoreActions.setAsrFinal(payload.text, payload.language);
+    diagnosticsStoreActions.recordTimeline("asr.final", "asr", "收到最终识别结果", {
+      language: payload.language,
+    });
     const snapshot = this.request.state.optionsSnapshot;
     if (snapshot?.protocolMode === "assistant") {
       requestStoreActions.transition("generating", "asr_final");
@@ -396,6 +548,11 @@ export class VoiceRequestController {
         requestStoreActions.transition("generating", "assistant_first_token");
       }
       requestStoreActions.setAssistantDelta(payload.delta, payload.sequence);
+      diagnosticsStoreActions.recordTimeline(
+        "assistant.first_token",
+        "llm",
+        "收到助手首个文本分片",
+      );
     } catch {
       this.fail(`回复文本分片序号异常：期望 ${expectedSequence}`, "protocol_error");
     }
@@ -418,6 +575,11 @@ export class VoiceRequestController {
         );
       }
       requestStoreActions.setAssistantFinal(payload.text);
+      diagnosticsStoreActions.recordTimeline(
+        "assistant.text_done",
+        "llm",
+        "助手文本接收完成",
+      );
       const snapshot = this.request.state.optionsSnapshot;
       if (snapshot?.autoInjectionEnabled) {
         void this.textOutput.output(payload.text, 0, snapshot.injectionMaxCodePoints);
@@ -438,6 +600,7 @@ export class VoiceRequestController {
       }
       requestStoreActions.transition("playing", "output_audio_started");
       requestStoreActions.setPlaybackError("");
+      this.playbackRequestId = message.request_id;
       this.player.start(message.request_id, payload);
     } catch {
       requestStoreActions.setPlaybackError("服务端返回了不受支持的语音格式");
@@ -486,6 +649,7 @@ export class VoiceRequestController {
       return;
     }
     requestStoreActions.transition("completed", "request_done");
+    diagnosticsStoreActions.finishTimeline("request.done", "completed", "请求已完成");
     requestStoreActions.clearActiveRequest();
   }
 
@@ -496,6 +660,9 @@ export class VoiceRequestController {
     if (!isTerminalRequestState(this.request.state.status)) {
       requestStoreActions.transition("failed", reason);
     }
+    diagnosticsStoreActions.finishTimeline("request.failed", "failed", message, {
+      reason,
+    });
     requestStoreActions.clearActiveRequest();
   }
 

@@ -1,6 +1,7 @@
 import { reactive, readonly } from "vue";
 
 import { getCredentialStatus } from "../services/settings/credentials";
+import { diagnosticsStoreActions } from "./diagnosticsStore";
 import { settingsRepository } from "../services/settings/settingsRepository";
 import type { ServerHelloPayload } from "../types/protocol";
 import type { ShortcutBinding, ShortcutStatus } from "../types/shortcut";
@@ -137,6 +138,12 @@ async function persist() {
     state.saveError = "";
   } catch (error) {
     state.saveError = error instanceof Error ? error.message : "设置保存失败";
+    diagnosticsStoreActions.log(
+      "error",
+      "settings",
+      "settings.save_failed",
+      state.saveError,
+    );
   }
 }
 
@@ -157,8 +164,20 @@ export const settingsStoreActions = {
       applySettings(await settingsRepository.load());
       state.tokenConfigured = await getCredentialStatus();
       state.saveError = "";
+      diagnosticsStoreActions.log(
+        "info",
+        "settings",
+        "settings.loaded",
+        "应用设置加载完成",
+      );
     } catch (error) {
       state.saveError = error instanceof Error ? error.message : "设置读取失败";
+      diagnosticsStoreActions.log(
+        "error",
+        "settings",
+        "settings.load_failed",
+        state.saveError,
+      );
     } finally {
       state.initialized = true;
     }
@@ -216,7 +235,21 @@ export const settingsStoreActions = {
       ? "已选择的麦克风不可用，已回退到系统默认设备"
       : error;
     state.audioDevicesLoading = false;
+    if (error) {
+      diagnosticsStoreActions.log(
+        "warn",
+        "recorder",
+        "input_device.list_failed",
+        error,
+      );
+    }
     if (selectedDeviceMissing) {
+      diagnosticsStoreActions.log(
+        "warn",
+        "recorder",
+        "input_device.fallback",
+        "已选择的麦克风不可用，已回退到系统默认设备",
+      );
       state.inputDeviceId = null;
       persistSoon();
     }
@@ -277,6 +310,13 @@ export const settingsStoreActions = {
   setService(url: string, autoConnect: boolean) {
     state.serviceUrl = url;
     state.autoConnect = autoConnect;
+    diagnosticsStoreActions.log(
+      "info",
+      "settings",
+      "service_settings.changed",
+      "服务连接设置已更新",
+      { fields: { autoConnect } },
+    );
     persistSoon();
   },
   setShortcutBinding(binding: ShortcutBinding) {
@@ -290,6 +330,14 @@ export const settingsStoreActions = {
   },
   setShortcutError(message: string) {
     state.shortcutError = message;
+    if (message) {
+      diagnosticsStoreActions.log(
+        "error",
+        "shortcut",
+        "shortcut.registration_failed",
+        message,
+      );
+    }
   },
   setTokenConfigured(configured: boolean) {
     state.tokenConfigured = configured;

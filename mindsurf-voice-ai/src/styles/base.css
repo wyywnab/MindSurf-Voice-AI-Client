@@ -1129,6 +1129,193 @@ h1 {
   font-size: 0.62rem;
 }
 
+.diagnostics-body {
+  display: grid;
+  gap: 12px;
+}
+
+.diagnostics-section {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.section-title-row,
+.timeline-summary,
+.metric-strip,
+.log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-title-row {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.section-title-row h2 {
+  margin: 0;
+  font-size: 0.83rem;
+}
+
+.section-title-row small,
+.timeline-list small,
+.log-list small {
+  color: var(--text-muted);
+  font-size: 0.62rem;
+}
+
+.section-title-row select,
+.log-filters select,
+.log-filters input {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+  font-size: 0.68rem;
+}
+
+.timeline-summary,
+.metric-strip {
+  margin-bottom: 10px;
+}
+
+.timeline-summary span,
+.metric-strip span {
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: var(--surface-muted);
+  font-size: 0.67rem;
+}
+
+.timeline-list {
+  display: grid;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.timeline-list li {
+  display: grid;
+  grid-template-columns: 66px 10px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 42px;
+}
+
+.timeline-list time {
+  padding-top: 2px;
+  color: var(--text-muted);
+  font: 0.62rem/1.4 monospace;
+  text-align: right;
+}
+
+.timeline-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.timeline-dot::after {
+  position: absolute;
+  top: 10px;
+  bottom: -27px;
+  left: 3px;
+  width: 1px;
+  background: var(--border-strong);
+  content: "";
+}
+
+.timeline-list li:last-child .timeline-dot::after {
+  display: none;
+}
+
+.timeline-list li > div {
+  display: grid;
+  gap: 2px;
+  padding-bottom: 9px;
+}
+
+.timeline-list strong {
+  font-size: 0.69rem;
+}
+
+.timeline-list code {
+  color: var(--text-muted);
+  font-size: 0.61rem;
+}
+
+.log-filters {
+  margin-bottom: 8px;
+}
+
+.log-filters input {
+  flex: 1 1 150px;
+}
+
+.log-list {
+  max-height: 260px;
+  margin-bottom: 8px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-muted);
+}
+
+.log-list article {
+  display: grid;
+  grid-template-columns: 66px 42px minmax(120px, 0.65fr) minmax(180px, 1fr);
+  gap: 7px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.63rem;
+}
+
+.log-list article:last-child {
+  border-bottom: 0;
+}
+
+.log-list time,
+.log-list code {
+  color: var(--text-muted);
+}
+
+.log-level {
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.log-level[data-level="warn"] {
+  color: var(--warning);
+}
+
+.log-level[data-level="error"] {
+  color: var(--danger);
+}
+
+.log-level[data-level="info"],
+.inline-success {
+  color: var(--success);
+}
+
+.log-list small {
+  grid-column: 3 / -1;
+}
+
+.empty-state {
+  margin: 8px 0;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
 @keyframes recording-pulse {
   0%,
   100% {

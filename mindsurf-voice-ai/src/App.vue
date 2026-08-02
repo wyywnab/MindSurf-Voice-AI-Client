@@ -14,6 +14,7 @@ import { hideOverlayWindow, setOverlayWindowPosition } from "./services/overlay"
 import { getSystemPermissionStatus } from "./services/permissions";
 import { subscribeTrayActions, syncTrayMode } from "./services/tray";
 import { useConnectionStore } from "./stores/connectionStore";
+import { diagnosticsStoreActions } from "./stores/diagnosticsStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import type { AppInfo } from "./types/app";
 import type { MainTab, MainTabId } from "./types/navigation";
@@ -21,7 +22,7 @@ import type { SystemPermission } from "./types/permissions";
 
 const tabs: readonly MainTab[] = [
   { id: "record", label: "录音" },
-  { id: "connection", label: "连接" },
+  { id: "connection", label: "诊断" },
   { id: "permissions", label: "权限" },
   { id: "settings", label: "设置" },
 ];
@@ -51,6 +52,17 @@ async function configureStartupPermissions(platform: string) {
   const hasMissingPermission = checks.some(
     ({ result }) => !result.ok || result.data.status !== "granted",
   );
+  for (const { permission, result } of checks) {
+    if (!result.ok || result.data.status !== "granted") {
+      diagnosticsStoreActions.log(
+        "warn",
+        "permissions",
+        "permission.unavailable",
+        `${permission} 权限尚未授权`,
+        { fields: { permission } },
+      );
+    }
+  }
   if (hasMissingPermission) {
     activeTab.value = "permissions";
   }
@@ -146,7 +158,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="app-footer">
-      <span>Phase 2 · M2 服务配置与鉴权</span>
+      <span>Phase 2 · M3 时间线与运行日志</span>
       <span v-if="appInfo">v{{ appInfo.version }} · {{ appInfo.buildProfile }}</span>
     </footer>
   </div>

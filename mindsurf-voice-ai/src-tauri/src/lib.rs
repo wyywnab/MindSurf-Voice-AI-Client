@@ -13,6 +13,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            let _ = commands::diagnostics::initialize(app.handle());
             commands::shortcuts::initialize(app.handle().clone());
             commands::overlay::initialize(app)?;
             commands::tray::initialize(app)?;
@@ -32,6 +33,9 @@ pub fn run() {
             commands::credentials::get_credential_status,
             commands::credentials::get_service_token,
             commands::credentials::save_service_token,
+            commands::diagnostics::export_diagnostics,
+            commands::diagnostics::read_recent_log_entries,
+            commands::diagnostics::write_log_entry,
             commands::permissions::get_system_permission_status,
             commands::permissions::open_permission_settings,
             commands::permissions::request_system_permission,

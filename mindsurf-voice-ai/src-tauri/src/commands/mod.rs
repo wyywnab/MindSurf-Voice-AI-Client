@@ -1,5 +1,6 @@
 pub(crate) mod app_info;
 pub(crate) mod credentials;
+pub(crate) mod diagnostics;
 pub(crate) mod native_recorder;
 pub(crate) mod overlay;
 pub(crate) mod permissions;

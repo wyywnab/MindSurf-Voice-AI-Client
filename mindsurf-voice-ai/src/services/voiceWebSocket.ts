@@ -129,7 +129,7 @@ export class VoiceWebSocketClient {
         new VoiceTransportError("connection_failed", "推理服务连接异常"),
       );
     };
-    this.socket.onclose = () => this.handleClose();
+    this.socket.onclose = (event) => this.handleClose(event);
   }
 
   disconnect() {
@@ -412,7 +412,7 @@ export class VoiceWebSocketClient {
     this.callbacks.onControlMessage(message);
   }
 
-  private handleClose() {
+  private handleClose(event?: CloseEvent) {
     this.clearTimer("connect");
     this.clearTimer("handshake");
     this.clearTimer("heartbeat");
@@ -428,6 +428,12 @@ export class VoiceWebSocketClient {
       return;
     }
 
+    const closeReason = event?.reason
+      ? `WebSocket 已断开：${event.reason} (${event.code})`
+      : `WebSocket 已断开 (${event?.code ?? 1006})`;
+    this.callbacks.onTransportError(
+      new VoiceTransportError("connection_closed", closeReason),
+    );
     this.scheduleReconnect();
   }
 

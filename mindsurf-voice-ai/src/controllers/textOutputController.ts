@@ -3,6 +3,7 @@ import type {
   TextOutputTarget,
 } from "../services/text-output/types";
 import { requestStoreActions, useRequestStore } from "../stores/requestStore";
+import { diagnosticsStoreActions } from "../stores/diagnosticsStore";
 import { useSettingsStore } from "../stores/settingsStore";
 
 export class TextOutputController {
@@ -43,6 +44,14 @@ export class TextOutputController {
     }
 
     const sequence = ++this.sequence;
+    const requestId = this.request.state.activeRequestId ?? undefined;
+    diagnosticsStoreActions.recordTimeline(
+      "text_output.started",
+      "output",
+      "开始输出文本",
+      undefined,
+      requestId,
+    );
     requestStoreActions.setInjectionResult({
       status: delayMs > 0 ? "waiting" : "injecting",
       error: "",
@@ -72,6 +81,7 @@ export class TextOutputController {
         status: "failed",
         error: describeInjectionError(result.code),
       });
+      diagnosticsStoreActions.log("error", "text_output", result.code, "文本输出失败");
       return;
     }
     requestStoreActions.setInjectionResult({
@@ -82,6 +92,13 @@ export class TextOutputController {
       remainingText: result.report.remainingText,
       report: result.report,
     });
+    diagnosticsStoreActions.recordTimeline(
+      "text_output.done",
+      "output",
+      result.report.complete ? "文本输出完成" : "文本仅完成部分输出",
+      { injectedCodePoints: result.report.injectedCodePoints },
+      requestId,
+    );
   }
 
   async retry(delayMs = 1_500) {

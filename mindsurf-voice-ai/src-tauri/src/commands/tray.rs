@@ -29,7 +29,7 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
     let handle = app.handle();
     let open = MenuItem::with_id(handle, "open", "打开主窗口", true, None::<&str>)?;
     let page_record = MenuItem::with_id(handle, "page_record", "录音", true, None::<&str>)?;
-    let page_connection = MenuItem::with_id(handle, "page_connection", "连接", true, None::<&str>)?;
+    let page_connection = MenuItem::with_id(handle, "page_connection", "诊断", true, None::<&str>)?;
     let page_settings = MenuItem::with_id(handle, "page_settings", "设置", true, None::<&str>)?;
     let pages = Submenu::with_items(
         handle,

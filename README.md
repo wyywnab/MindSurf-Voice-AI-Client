@@ -14,6 +14,8 @@ This is the Windows and macOS client for the MindSurf Voice AI project.
 - 可配置的 WebSocket 服务地址、自动连接和连通性测试
 - Bearer Token 加密存储与应用层鉴权
 - 麦克风、识别语言、语音回复和播放音量设置
+- 请求时间线、关键耗时和可筛选的结构化运行日志
+- 默认排除正文、音频和凭据的脱敏诊断导出
 - 用于开发联调的本地 Mock 服务
 
 ## 目录

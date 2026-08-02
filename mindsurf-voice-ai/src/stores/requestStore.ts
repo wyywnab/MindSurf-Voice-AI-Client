@@ -41,10 +41,14 @@ const state = reactive({
 });
 
 export const requestStoreActions = {
-  begin(snapshot: RequestOptionsSnapshot) {
+  beginPreparation() {
     requestStoreActions.resetResult();
-    state.optionsSnapshot = snapshot;
+    state.optionsSnapshot = null;
     requestStoreActions.transition("preparing", "request_started");
+  },
+  begin(snapshot: RequestOptionsSnapshot) {
+    requestStoreActions.beginPreparation();
+    state.optionsSnapshot = snapshot;
   },
   clearActiveRequest() {
     state.activeRequestId = null;
@@ -105,6 +109,9 @@ export const requestStoreActions = {
   },
   setNetworkCongested(congested: boolean) {
     state.networkCongested = congested;
+  },
+  setOptionsSnapshot(snapshot: RequestOptionsSnapshot) {
+    state.optionsSnapshot = snapshot;
   },
   setPlaybackError(message: string) {
     state.playbackError = message;

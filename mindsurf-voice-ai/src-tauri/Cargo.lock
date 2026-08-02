@@ -1865,6 +1865,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-store",
+ "url",
  "windows",
  "zeroize",
 ]
