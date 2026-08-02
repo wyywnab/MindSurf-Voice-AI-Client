@@ -135,7 +135,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="app-footer">
-      <span>M5.2 · 输入悬浮窗</span>
+      <span>Phase 2 · M1 核心架构</span>
       <span v-if="appInfo">v{{ appInfo.version }} · {{ appInfo.buildProfile }}</span>
     </footer>
   </div>

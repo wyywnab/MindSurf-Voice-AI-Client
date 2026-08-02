@@ -19,6 +19,7 @@ export type RecorderState =
   "idle" | "requesting" | "prepared" | "recording" | "stopping" | "ready" | "error";
 
 export interface StartRecordingOptions {
+  maxDurationMs?: number;
   onAutoStop?: () => void;
   onFrame?: (frame: Int16Array, sequence: number) => void;
 }
@@ -114,7 +115,11 @@ export function useRecorder() {
       await recorder.start({
         onDuration: (value) => {
           durationMs.value = value;
-          if (value >= MAX_RECORDING_MS && state.value === "recording") {
+          const maxDurationMs = Math.min(
+            MAX_RECORDING_MS,
+            options.maxDurationMs ?? MAX_RECORDING_MS,
+          );
+          if (value >= maxDurationMs && state.value === "recording") {
             if (options.onAutoStop) {
               options.onAutoStop();
             } else {

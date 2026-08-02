@@ -26,23 +26,6 @@ const FATAL_BACKPRESSURE_BYTES = 1_024 * 1_024;
 const MAX_CONGESTION_MS = 2_000;
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000, 15_000];
 
-const KNOWN_MESSAGE_TYPES = new Set([
-  "server.hello",
-  "session.ping",
-  "session.pong",
-  "request.accepted",
-  "input.committed",
-  "asr.partial",
-  "asr.final",
-  "assistant.text.delta",
-  "assistant.text.done",
-  "output.audio.start",
-  "output.audio.done",
-  "request.done",
-  "request.cancelled",
-  "error",
-]);
-
 export interface VoiceClientIdentity {
   version: string;
   platform: string;
@@ -80,7 +63,6 @@ export class VoiceTransportError extends Error {
 export class VoiceWebSocketClient {
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private congestionStartedAt: number | null = null;
-  private eventIds = new Set<string>();
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
@@ -332,24 +314,6 @@ export class VoiceWebSocketClient {
       this.sendProtocolError(validationError.code, validationError.message);
       this.callbacks.onTransportError(
         new VoiceTransportError(validationError.code, validationError.message),
-      );
-      return;
-    }
-
-    if (this.eventIds.has(message.event_id)) {
-      return;
-    }
-    this.eventIds.add(message.event_id);
-    if (this.eventIds.size > 1_024) {
-      this.eventIds.clear();
-      this.eventIds.add(message.event_id);
-    }
-
-    if (!KNOWN_MESSAGE_TYPES.has(message.type)) {
-      this.sendProtocolError(
-        "unsupported_message_type",
-        `不支持消息类型 ${message.type}`,
-        message.request_id,
       );
       return;
     }

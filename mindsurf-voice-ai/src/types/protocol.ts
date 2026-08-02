@@ -125,16 +125,3 @@ export interface ProtocolErrorPayload {
   fatal: boolean;
   details?: Record<string, unknown>;
 }
-
-export type RequestLifecycleStatus =
-  | "idle"
-  | "starting"
-  | "accepted"
-  | "recording"
-  | "committing"
-  | "recognizing"
-  | "thinking"
-  | "responding"
-  | "done"
-  | "cancelling"
-  | "failed";

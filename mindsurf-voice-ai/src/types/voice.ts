@@ -42,7 +42,7 @@ export interface VoiceSessionState {
   playbackMetrics: PlaybackMetrics;
   playbackStatus: PlaybackStatus;
   reconnectAttempt: number;
-  requestStatus: RequestLifecycleStatus;
+  requestStatus: RequestLifecycleState;
   shortcutBinding: ShortcutBinding;
   shortcutDesiredEnabled: boolean;
   shortcutDisplay: string;
@@ -72,6 +72,7 @@ export const CONNECTION_STATUS_LABELS: Record<ServiceConnectionStatus, string> =
   reconnecting: "正在重连",
   error: "连接异常",
 };
-import type { RequestLifecycleStatus, ServerHelloPayload } from "./protocol";
+import type { ServerHelloPayload } from "./protocol";
+import type { RequestLifecycleState } from "./request";
 import type { ShortcutBinding, ShortcutListenerStatus } from "./shortcut";
 import type { TextInjectionReport, TextInjectionStatus } from "./injection";
