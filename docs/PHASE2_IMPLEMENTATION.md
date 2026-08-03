@@ -13,7 +13,7 @@
 | M2 | 已完成 | 2026-08-03 | 已接入 Tauri Store、按档案隔离的加密 Token、多服务档案与连通性测试，并补齐 Windows/macOS 多麦克风、语言、语音和播放音量选项。 |
 | M3 | 已完成 | 2026-08-03 | 已实现请求时间线、完整运行摘要、结构化文件日志、时间筛选、清理/目录操作、轮转和脱敏 ZIP 诊断导出。 |
 | 发布前安全加固 | 已完成 | 2026-08-03 | 已启用发布 CSP、按窗口拆分 Capability，并提供一键清除设置、全部 Token/加密密钥和诊断日志。 |
-| M4 | 未开始 | — | Mock 故障注入与异常路径验收待实现。 |
+| M4 | 已完成（待双平台人工签收） | 2026-08-03 | 已实现 19 类可配置 Mock 故障、控制器/传输/路由集成测试和完整质量门；Windows/macOS 原生交互按 8.4 清单签收。 |
 
 M2 已删除 `voiceSession.ts` 兼容入口，组件直接依赖拆分后的 Store 与 Controller。设置统一写入 Tauri Store，不保留 `localStorage` 适配器或旧设置迁移逻辑；服务 Token 经系统钥匙串托管的密钥加密后再写入 Store。
 
@@ -833,6 +833,40 @@ cargo test
 ```
 
 涉及 Windows/macOS 原生能力时，必须保证两个平台 CI 均通过；无法在 CI 自动验证的权限和注入行为，应在 PR 中附人工验证记录。
+
+### 8.4 实施结果与人工签收
+
+Mock 使用稳定场景名，通过 `node server.mjs --fault <name>` 或 `MOCK_FAULTS=<name>` 启用；多个场景使用逗号组合，延迟类场景使用 `--fault-delay-ms` 或 `MOCK_FAULT_DELAY_MS`。未指定场景时仍为正常路径。
+
+| 故障类别 | 稳定场景名 |
+|---|---|
+| 握手延迟/超时 | `handshake_delay`、`handshake_timeout` |
+| 鉴权缺失/错误/过期 | `auth_missing`、`auth_invalid`、`auth_expired` |
+| 请求确认超时 | `request_accepted_timeout`、`input_committed_timeout` |
+| 推理阶段异常 | `asr_final_missing`、`llm_first_token_delay`、`tts_midstream_failure` |
+| 连接与取消异常 | `disconnect_during_request`、`cancellation_timeout` |
+| 协议健壮性 | `duplicate_event_id`、`stale_request_id`、`unknown_message_type`、`out_of_order_control`、`corrupt_audio_frame` |
+| 请求终态异常 | `request_done_early`、`request_done_missing` |
+
+自动化验收已经覆盖：
+
+- Mock 正常听写/助手流程、Bearer Token 正确/缺失/错误/过期，以及重复事件、过期请求、未知消息和乱序控制消息的真实 WebSocket 流。
+- 请求状态机正常、取消、失败和非法终态转换；协议事件按连接/当前请求路由、事件去重和终态拒收。
+- `VoiceRequestController + Mock Transport` 完整听写、提交、ASR final、请求完成和资源释放；ASR final 缺失时拒绝提前 `request.done`，`request.done` 缺失时通过总终态计时器失败并取消。
+- 握手、`request.accepted` 超时与损坏服务端音频帧的稳定错误码。
+- 时间线事件幂等、日志脱敏、设置默认值和边界、服务 URL 规则、麦克风/语言/voice/模型回退，以及文本输出 Backend 选择。
+- Rust Token 加解密、诊断日志轮转/脱敏/标准 ZIP、快捷键解析和平台文本输出单元测试。
+
+以下项目依赖真实系统权限、前台应用和音频设备，不能用 Mock 代替。发布候选包必须在 Windows 与 macOS 各执行一次并记录版本、系统版本、执行人、日期和结果：
+
+- [ ] 听写、助手、混合模式完成请求。
+- [ ] 全局按住说话、释放提交与 Escape 取消。
+- [ ] 自动注入、手动注入及部分失败重试。
+- [ ] TTS 播放与播放中断。
+- [ ] 处理中断线、自动重连及恢复后新请求。
+- [ ] Token 正确、错误、过期与清除。
+- [ ] 请求时间线、日志查看和脱敏 ZIP 导出。
+- [ ] 麦克风、辅助功能权限缺失/授予后的行为。
 
 ## 9. 建议目录结构
 

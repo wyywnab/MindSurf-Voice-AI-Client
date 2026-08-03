@@ -6,7 +6,7 @@ import {
   validateOutputAudioStart,
 } from "../services/protocol";
 import type { RecordingResult } from "../services/recorder";
-import { DirectInjectionBackend } from "../services/text-output/directInjectionBackend";
+import { createTextOutputBackend } from "../services/text-output/backendFactory";
 import { readServiceTokenForConnection } from "../services/settings/credentials";
 import { ProtocolEventRouter } from "../services/transport/protocolEventRouter";
 import {
@@ -32,6 +32,7 @@ import { TextOutputController } from "./textOutputController";
 
 const ASR_FINAL_TIMEOUT_MS = 10_000;
 const LLM_FIRST_TOKEN_TIMEOUT_MS = 15_000;
+const REQUEST_DONE_TIMEOUT_MS = 30_000;
 
 export class VoiceRequestController {
   private asrTimer: ReturnType<typeof setTimeout> | null = null;
@@ -41,10 +42,11 @@ export class VoiceRequestController {
   private identity: VoiceClientIdentity | null = null;
   private lastLoggedUnderrunCount = 0;
   private playbackRequestId: string | null = null;
+  private requestDoneTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly connection = useConnectionStore();
   private readonly request = useRequestStore();
   private readonly settings = useSettingsStore();
-  readonly textOutput = new TextOutputController(new DirectInjectionBackend());
+  readonly textOutput = new TextOutputController(createTextOutputBackend());
   private readonly player = new StreamingAudioPlayer({
     onError: (message) => {
       requestStoreActions.setPlaybackError(message);
@@ -388,6 +390,7 @@ export class VoiceRequestController {
           "服务端已确认音频提交",
         );
         this.startAsrTimer(requestId);
+        this.startRequestDoneTimer(requestId);
       }
     } catch (error) {
       this.fail(describeTransportError(error), "client_timeout");
@@ -675,6 +678,10 @@ export class VoiceRequestController {
       return;
     }
     const snapshot = this.request.state.optionsSnapshot;
+    if (!this.request.state.asrFinal) {
+      this.fail("请求提前结束，未收到最终识别结果", "protocol_error");
+      return;
+    }
     if (snapshot?.protocolMode === "assistant" && !this.request.state.assistantFinal) {
       this.fail("请求提前结束，未收到完整的助手回复", "protocol_error");
       return;
@@ -737,6 +744,18 @@ export class VoiceRequestController {
   private clearRequestTimers() {
     this.clearAsrTimer();
     this.clearLlmTimer();
+    if (this.requestDoneTimer) clearTimeout(this.requestDoneTimer);
+    this.requestDoneTimer = null;
+  }
+
+  private startRequestDoneTimer(requestId: string) {
+    if (this.requestDoneTimer) clearTimeout(this.requestDoneTimer);
+    this.requestDoneTimer = setTimeout(() => {
+      if (this.request.state.activeRequestId === requestId) {
+        this.fail("等待请求结束消息超时", "client_timeout");
+        void this.transport?.cancelRequest(requestId, "client_timeout");
+      }
+    }, REQUEST_DONE_TIMEOUT_MS);
   }
 }
 

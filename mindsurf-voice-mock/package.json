@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node --watch server.mjs",
     "start": "node server.mjs",
-    "test": "node test.mjs"
+    "test": "node --test faults.test.mjs && node test.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"

@@ -39,6 +39,10 @@ class FakeWebSocket {
     this.onmessage?.({ data: JSON.stringify(message) });
   }
 
+  receiveData(data: unknown) {
+    this.onmessage?.({ data });
+  }
+
   send(data: unknown) {
     this.sent.push(data);
   }
@@ -51,6 +55,7 @@ class FakeWebSocket {
 
 afterEach(() => {
   FakeWebSocket.instances = [];
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -163,7 +168,69 @@ describe("VoiceWebSocketClient", () => {
     expect(reconnectAttempts).not.toHaveBeenCalled();
     expect(FakeWebSocket.instances).toHaveLength(1);
   });
+
+  it("times out handshake and request acceptance with stable error codes", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const transportErrors = vi.fn();
+    const client = createClient(transportErrors);
+
+    client.connect();
+    const firstSocket = FakeWebSocket.instances[0];
+    firstSocket?.open();
+    await vi.advanceTimersByTimeAsync(3_001);
+    expect(transportErrors.mock.calls[0]?.[0]).toMatchObject({
+      code: "handshake_timeout",
+    });
+
+    const connectedClient = createClient(transportErrors);
+    connectedClient.connect();
+    const secondSocket = FakeWebSocket.instances[1];
+    secondSocket?.open();
+    secondSocket?.receive(envelope("server.hello", null, serverHello()));
+    const accepted = connectedClient.startRequest({ mode: "dictation" });
+    const rejection = expect(accepted).rejects.toMatchObject({
+      code: "request.accepted_timeout",
+    });
+    await vi.advanceTimersByTimeAsync(2_001);
+    await rejection;
+    connectedClient.disconnect();
+  });
+
+  it("rejects malformed output audio without delivering it", () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const onAudioFrame = vi.fn();
+    const onTransportError = vi.fn();
+    const client = createClient(onTransportError, onAudioFrame);
+    client.connect();
+    const socket = FakeWebSocket.instances[0];
+    socket?.open();
+    socket?.receive(envelope("server.hello", null, serverHello()));
+    socket?.receiveData(new ArrayBuffer(8));
+
+    expect(onAudioFrame).not.toHaveBeenCalled();
+    expect(onTransportError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "invalid_audio_frame" }),
+    );
+    client.disconnect();
+  });
 });
+
+function createClient(onTransportError = vi.fn(), onAudioFrame = vi.fn()) {
+  return new VoiceWebSocketClient(
+    "ws://127.0.0.1:8000/v1/voice/ws",
+    { version: "0.1.0", platform: "windows", arch: "x86_64" },
+    {
+      onAudioFrame,
+      onControlMessage: vi.fn(),
+      onReconnectAttempt: vi.fn(),
+      onServerHello: vi.fn(),
+      onStatusChange: vi.fn(),
+      onTransportError,
+    },
+    { autoReconnect: false },
+  );
+}
 
 function envelope(
   type: string,

@@ -4,6 +4,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { WebSocket, WebSocketServer } from "ws";
+import { parseFaultConfiguration, printFaultHelp } from "./faults.mjs";
+
+if (process.argv.includes("--help")) {
+  console.log(printFaultHelp());
+  process.exit(0);
+}
 
 const port = Number.parseInt(process.env.PORT ?? "8000", 10);
 const path = "/v1/voice/ws";
@@ -14,6 +20,7 @@ const outputSendIntervalMs = 40;
 const outputChunkBytes = (outputSampleRate * outputChunkDurationMs * 2) / 1_000;
 const requiredToken = process.env.MOCK_AUTH_TOKEN ?? "";
 const expiredToken = process.env.MOCK_EXPIRED_TOKEN ?? "expired-token";
+const faultConfig = parseFaultConfiguration();
 const mockPcm = loadMockAudio();
 
 const server = new WebSocketServer({
@@ -77,7 +84,14 @@ server.on("connection", (socket) => {
 
 server.on("listening", () => {
   console.log(`MindSurf mock listening on ws://127.0.0.1:${port}${path}`);
+  if (faultConfig.names.size) {
+    console.log(`Enabled faults: ${[...faultConfig.names].join(", ")}`);
+  }
 });
+
+function hasFault(name) {
+  return faultConfig.names.has(name);
+}
 
 function handleControlMessage(socket, state, raw) {
   let message;
@@ -96,6 +110,27 @@ function handleControlMessage(socket, state, raw) {
     }
 
     const auth = message.payload?.auth;
+    if (hasFault("auth_missing")) {
+      sendError(
+        socket,
+        null,
+        "authentication_required",
+        "服务需要 Token",
+        true,
+      );
+      socket.close(4_003, "authentication required");
+      return;
+    }
+    if (hasFault("auth_invalid")) {
+      sendError(socket, null, "authentication_failed", "Token 无效", true);
+      socket.close(4_003, "authentication failed");
+      return;
+    }
+    if (hasFault("auth_expired")) {
+      sendError(socket, null, "token_expired", "Token 已过期", true);
+      socket.close(4_003, "token expired");
+      return;
+    }
     if (requiredToken && !auth) {
       sendError(
         socket,
@@ -123,9 +158,18 @@ function handleControlMessage(socket, state, raw) {
       return;
     }
 
-    state.handshaken = true;
-    console.log("Protocol handshake completed.");
-    send(socket, "server.hello", null, createServerHello());
+    if (hasFault("handshake_timeout")) return;
+    const completeHandshake = () => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      state.handshaken = true;
+      console.log("Protocol handshake completed.");
+      send(socket, "server.hello", null, createServerHello());
+    };
+    if (hasFault("handshake_delay")) {
+      setTimeout(completeHandshake, faultConfig.delayMs);
+    } else {
+      completeHandshake();
+    }
     return;
   }
 
@@ -174,7 +218,13 @@ function startRequest(socket, state, message) {
   const language = message.payload?.language ?? "auto";
   const voice = message.payload?.response?.voice ?? "default";
   if (mode !== "dictation" && mode !== "assistant") {
-    sendError(socket, message.request_id, "invalid_request", "请求模式无效", false);
+    sendError(
+      socket,
+      message.request_id,
+      "invalid_request",
+      "请求模式无效",
+      false,
+    );
     return;
   }
   if (
@@ -222,11 +272,23 @@ function startRequest(socket, state, message) {
     return;
   }
   if (!["auto", "zh-CN", "en-US"].includes(language)) {
-    sendError(socket, message.request_id, "invalid_request", "识别语言无效", false);
+    sendError(
+      socket,
+      message.request_id,
+      "invalid_request",
+      "识别语言无效",
+      false,
+    );
     return;
   }
   if (!["default", "mock_audio"].includes(voice)) {
-    sendError(socket, message.request_id, "invalid_request", "语音音色无效", false);
+    sendError(
+      socket,
+      message.request_id,
+      "invalid_request",
+      "语音音色无效",
+      false,
+    );
     return;
   }
 
@@ -241,6 +303,8 @@ function startRequest(socket, state, message) {
     wantsText,
     voice,
   };
+
+  if (hasFault("request_accepted_timeout")) return;
 
   send(socket, "request.accepted", message.request_id, {
     mode,
@@ -351,19 +415,30 @@ function commitInput(socket, state, message) {
     return;
   }
 
+  if (hasFault("input_committed_timeout")) return;
+
   send(socket, "input.committed", request.id, {
-    accepted_duration_ms: Math.round(
-      (request.sampleCount / 16_000) * 1_000,
-    ),
+    accepted_duration_ms: Math.round((request.sampleCount / 16_000) * 1_000),
   });
   console.log(`Input committed (${request.frameCount} frames).`);
 
   const requestId = request.id;
   const durationMs = Math.round((request.sampleCount / 16_000) * 1_000);
+  injectProtocolFaults(socket, requestId);
+  if (hasFault("disconnect_during_request")) {
+    socket.close(1_011, "injected disconnect");
+    return;
+  }
+  if (hasFault("request_done_early")) {
+    sendRequestDone(socket, requestId, durationMs);
+    state.request = null;
+    return;
+  }
   setTimeout(() => {
     if (state.request?.id !== requestId) {
       return;
     }
+    if (hasFault("asr_final_missing")) return;
     send(socket, "asr.final", requestId, {
       text: "这是来自本地 Mock 服务的识别结果。",
       language: "zh-CN",
@@ -374,6 +449,9 @@ function commitInput(socket, state, message) {
 
   if (request.mode === "assistant") {
     const deltas = ["这是", "来自本地 Mock 服务的", "流式助手回复。"];
+    const llmDelay = hasFault("llm_first_token_delay")
+      ? faultConfig.delayMs
+      : 350;
     deltas.forEach((delta, sequence) => {
       setTimeout(
         () => {
@@ -385,48 +463,50 @@ function commitInput(socket, state, message) {
             delta,
           });
         },
-        350 + sequence * 80,
+        llmDelay + sequence * 80,
       );
     });
 
-    setTimeout(() => {
-      if (state.request?.id !== requestId) {
-        return;
-      }
-      send(socket, "assistant.text.done", requestId, {
-        text: deltas.join(""),
-        last_sequence: deltas.length - 1,
-        finish_reason: "stop",
-        usage: {
-          input_tokens: 12,
-          output_tokens: 18,
-        },
-      });
-    }, 350 + deltas.length * 80);
-
-    if (request.wantsAudio) {
-      setTimeout(() => {
+    setTimeout(
+      () => {
         if (state.request?.id !== requestId) {
           return;
         }
-        streamMockAudio(socket, state, requestId, durationMs);
-      }, 430);
-    } else {
-      setTimeout(() => {
-        if (state.request?.id !== requestId) {
-          return;
-        }
-        send(socket, "request.done", requestId, {
-          result: "success",
-          timing_ms: {
-            input_duration: durationMs,
-            asr_final_after_commit: 250,
-            llm_first_token_after_commit: 350,
-            server_total_after_commit: 650,
+        send(socket, "assistant.text.done", requestId, {
+          text: deltas.join(""),
+          last_sequence: deltas.length - 1,
+          finish_reason: "stop",
+          usage: {
+            input_tokens: 12,
+            output_tokens: 18,
           },
         });
-        state.request = null;
-      }, 650);
+      },
+      llmDelay + deltas.length * 80,
+    );
+
+    if (request.wantsAudio) {
+      setTimeout(
+        () => {
+          if (state.request?.id !== requestId) {
+            return;
+          }
+          streamMockAudio(socket, state, requestId, durationMs);
+        },
+        Math.max(430, llmDelay + 80),
+      );
+    } else {
+      setTimeout(
+        () => {
+          if (state.request?.id !== requestId) {
+            return;
+          }
+          if (hasFault("request_done_missing")) return;
+          sendRequestDone(socket, requestId, durationMs, llmDelay);
+          state.request = null;
+        },
+        Math.max(650, llmDelay + deltas.length * 80 + 50),
+      );
     }
     return;
   }
@@ -435,19 +515,14 @@ function commitInput(socket, state, message) {
     if (state.request?.id !== requestId) {
       return;
     }
-    send(socket, "request.done", requestId, {
-      result: "success",
-      timing_ms: {
-        input_duration: durationMs,
-        asr_final_after_commit: 250,
-        server_total_after_commit: 300,
-      },
-    });
+    if (hasFault("request_done_missing")) return;
+    sendRequestDone(socket, requestId, durationMs);
     state.request = null;
   }, 300);
 }
 
 function cancelRequest(socket, state, message) {
+  if (hasFault("cancellation_timeout")) return;
   if (state.request?.id === message.request_id) {
     state.request = null;
   }
@@ -547,15 +622,37 @@ function streamMockAudio(socket, state, requestId, inputDurationMs) {
     }
     const start = sequence * outputChunkBytes;
     const end = Math.min(start + outputChunkBytes, mockPcm.length);
-    socket.send(
-      createOutputAudioFrame(
-        requestId,
-        sequence,
-        sequence * outputChunkDurationMs * 1_000,
-        mockPcm.subarray(start, end),
-      ),
+    let frame = createOutputAudioFrame(
+      requestId,
+      sequence,
+      sequence * outputChunkDurationMs * 1_000,
+      mockPcm.subarray(start, end),
     );
+    if (hasFault("corrupt_audio_frame") && sequence === 0) {
+      frame = Buffer.from(frame);
+      frame.write("BAD!", 0, "ascii");
+    }
+    socket.send(frame);
     sequence += 1;
+
+    if (hasFault("tts_midstream_failure") && sequence === 1) {
+      sendProtocolError(
+        socket,
+        requestId,
+        "tts_stream_failed",
+        "注入的 TTS 中途失败",
+        "tts",
+        false,
+      );
+      setTimeout(() => {
+        if (state.request?.id !== requestId) return;
+        if (!hasFault("request_done_missing")) {
+          sendRequestDone(socket, requestId, inputDurationMs);
+        }
+        state.request = null;
+      }, 300);
+      return;
+    }
 
     if (sequence < chunkCount) {
       setTimeout(sendNext, outputSendIntervalMs);
@@ -570,17 +667,13 @@ function streamMockAudio(socket, state, requestId, inputDurationMs) {
       sample_count: sampleCount,
       duration_ms: durationMs,
     });
-    send(socket, "request.done", requestId, {
-      result: "success",
-      timing_ms: {
-        input_duration: inputDurationMs,
-        asr_final_after_commit: 250,
-        llm_first_token_after_commit: 350,
+    if (!hasFault("request_done_missing")) {
+      sendRequestDone(socket, requestId, inputDurationMs, 350, {
         audio_first_chunk_after_commit: 430,
         server_total_after_commit:
           430 + (chunkCount - 1) * outputSendIntervalMs,
-      },
-    });
+      });
+    }
     state.request = null;
   };
 
@@ -602,7 +695,10 @@ function createOutputAudioFrame(requestId, sequence, timestampUs, pcm) {
 }
 
 function loadMockAudio() {
-  const audioPath = join(dirname(fileURLToPath(import.meta.url)), "mock_audio.m4a");
+  const audioPath = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "mock_audio.m4a",
+  );
   const result = spawnSync(
     "ffmpeg",
     [
@@ -637,7 +733,7 @@ function loadMockAudio() {
   return result.stdout;
 }
 
-function send(socket, type, requestId, payload) {
+function send(socket, type, requestId, payload, eventId = randomUUID()) {
   if (socket.readyState !== WebSocket.OPEN) {
     return;
   }
@@ -645,7 +741,7 @@ function send(socket, type, requestId, payload) {
     JSON.stringify({
       v: 1,
       type,
-      event_id: randomUUID(),
+      event_id: eventId,
       request_id: requestId,
       sent_at_ms: Date.now(),
       payload,
@@ -654,20 +750,87 @@ function send(socket, type, requestId, payload) {
 }
 
 function sendError(socket, requestId, code, message, fatal) {
+  sendProtocolError(
+    socket,
+    requestId,
+    code,
+    message,
+    requestId ? "input" : "protocol",
+    fatal,
+  );
+}
+
+function sendProtocolError(socket, requestId, code, message, stage, fatal) {
   send(socket, "error", requestId, {
     code,
     message,
-    stage: requestId ? "input" : "protocol",
+    stage,
     recoverable: !fatal,
     fatal,
     details: {},
   });
 }
 
+function sendRequestDone(
+  socket,
+  requestId,
+  inputDuration,
+  llmFirstToken = 350,
+  extra = {},
+) {
+  send(socket, "request.done", requestId, {
+    result: "success",
+    timing_ms: {
+      input_duration: inputDuration,
+      asr_final_after_commit: 250,
+      llm_first_token_after_commit: llmFirstToken,
+      server_total_after_commit: Math.max(300, llmFirstToken + 300),
+      ...extra,
+    },
+  });
+}
+
+function injectProtocolFaults(socket, requestId) {
+  if (hasFault("duplicate_event_id")) {
+    const eventId = randomUUID();
+    send(
+      socket,
+      "asr.partial",
+      requestId,
+      { text: "重复事件", revision: 0 },
+      eventId,
+    );
+    send(
+      socket,
+      "asr.partial",
+      requestId,
+      { text: "重复事件", revision: 0 },
+      eventId,
+    );
+  }
+  if (hasFault("stale_request_id")) {
+    send(socket, "asr.partial", randomUUID(), {
+      text: "过期请求",
+      revision: 0,
+    });
+  }
+  if (hasFault("unknown_message_type")) {
+    send(socket, "mock.unknown", requestId, { injected: true });
+  }
+  if (hasFault("out_of_order_control")) {
+    send(socket, "output.audio.done", requestId, {
+      last_sequence: 0,
+      chunk_count: 1,
+      sample_count: 1,
+      duration_ms: 1,
+    });
+  }
+}
+
 function bytesToUuid(bytes) {
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
-    "",
-  );
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
   return [
     hex.slice(0, 8),
     hex.slice(8, 12),

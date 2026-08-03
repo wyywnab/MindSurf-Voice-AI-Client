@@ -46,4 +46,18 @@ describe("ProtocolEventRouter", () => {
       "terminal_request",
     );
   });
+
+  it("separates connection, unknown and request-scoped errors", () => {
+    const onConnectionEvent = vi.fn();
+    const onRequestEvent = vi.fn();
+    const router = new ProtocolEventRouter({ onConnectionEvent, onRequestEvent });
+
+    expect(router.route(event("server.hello", null), null, false)).toBe("connection");
+    expect(router.route(event("mock.unknown", "current"), "current", false)).toBe(
+      "unknown",
+    );
+    expect(router.route(event("error", "current"), "current", false)).toBe("request");
+    expect(onConnectionEvent).toHaveBeenCalledTimes(1);
+    expect(onRequestEvent).toHaveBeenCalledTimes(1);
+  });
 });

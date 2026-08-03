@@ -37,4 +37,29 @@ describe("requestStateMachine", () => {
       expect(canTransitionRequest(state, "preparing")).toBe(true);
     }
   });
+
+  it("allows cancellation and failure from every active state", () => {
+    for (const state of [
+      "preparing",
+      "recording",
+      "committing",
+      "recognizing",
+      "generating",
+      "playing",
+    ] as const) {
+      expect(canTransitionRequest(state, "cancelling")).toBe(true);
+      expect(canTransitionRequest(state, "failed")).toBe(true);
+    }
+    expect(canTransitionRequest("cancelling", "cancelled")).toBe(true);
+    expect(canTransitionRequest("cancelling", "completed")).toBe(false);
+  });
+
+  it("records deterministic transition metadata", () => {
+    expect(createRequestTransition("idle", "preparing", "test", () => 123)).toEqual({
+      from: "idle",
+      to: "preparing",
+      reason: "test",
+      atMonotonicMs: 123,
+    });
+  });
 });
