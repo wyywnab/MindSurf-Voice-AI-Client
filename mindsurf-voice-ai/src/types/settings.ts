@@ -36,6 +36,9 @@ export interface AppSettings {
     useWebViewContextMenu: boolean;
     showDiagnosticsPage: boolean;
   };
+  interface: {
+    locale: "zh-CN" | "en-US";
+  };
 }
 
 export interface ServiceProfile {
@@ -113,5 +116,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
     enabled: false,
     useWebViewContextMenu: false,
     showDiagnosticsPage: false,
+  },
+  interface: {
+    locale: "zh-CN",
   },
 };

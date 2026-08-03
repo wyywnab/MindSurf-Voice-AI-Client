@@ -56,6 +56,7 @@ export function parseSettings(value: unknown): AppSettings {
   const overlay = isRecord(value.overlay) ? value.overlay : {};
   const inference = isRecord(value.inference) ? value.inference : {};
   const developer = isRecord(value.developer) ? value.developer : {};
+  const interfaceSettings = isRecord(value.interface) ? value.interface : {};
   const autoInjection = isRecord(interaction.autoInjection)
     ? interaction.autoInjection
     : {};
@@ -113,7 +114,16 @@ export function parseSettings(value: unknown): AppSettings {
       useWebViewContextMenu: booleanValue(developer.useWebViewContextMenu, false),
       showDiagnosticsPage: booleanValue(developer.showDiagnosticsPage, false),
     },
+    interface: {
+      locale: isAppLocale(interfaceSettings.locale)
+        ? interfaceSettings.locale
+        : defaults.interface.locale,
+    },
   };
+}
+
+function isAppLocale(value: unknown): value is AppSettings["interface"]["locale"] {
+  return value === "zh-CN" || value === "en-US";
 }
 
 function parseServiceProfile(value: unknown) {

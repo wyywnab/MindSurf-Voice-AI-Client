@@ -43,6 +43,19 @@ describe("parseSettings", () => {
     expect(parseSettings(legacy).developer).toEqual(DEFAULT_APP_SETTINGS.developer);
   });
 
+  it("loads a supported interface locale and falls back for legacy settings", () => {
+    const settings = structuredClone(DEFAULT_APP_SETTINGS);
+    settings.interface.locale = "en-US";
+    expect(parseSettings(settings).interface.locale).toBe("en-US");
+
+    const legacy = structuredClone(DEFAULT_APP_SETTINGS) as unknown as Record<
+      string,
+      unknown
+    >;
+    delete legacy.interface;
+    expect(parseSettings(legacy).interface.locale).toBe("zh-CN");
+  });
+
   it("keeps valid service profiles and rejects malformed entries", () => {
     const settings = structuredClone(DEFAULT_APP_SETTINGS) as unknown as Record<
       string,

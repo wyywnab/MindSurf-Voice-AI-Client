@@ -3,6 +3,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 
 import { getNativeAudioRecordingMeter } from "./services/nativeRecorder";
+import { useI18n } from "./services/i18n";
 import {
   notifyOverlayReady,
   requestOverlayCancel,
@@ -10,6 +11,9 @@ import {
 } from "./services/overlay";
 import type { OverlaySnapshot } from "./types/overlay";
 import { VOICE_MODE_LABELS } from "./types/voice";
+import { settingsStoreActions } from "./stores/settingsStore";
+
+const { t } = useI18n();
 
 const snapshot = reactive<OverlaySnapshot>({
   assistantText: "",
@@ -38,7 +42,7 @@ let targetLevel = 0;
 let unlisten: (() => void) | null = null;
 
 const displayText = computed(
-  () => snapshot.assistantText || snapshot.transcript || "正在等待语音输入…",
+  () => snapshot.assistantText || snapshot.transcript || t("正在等待语音输入…"),
 );
 const displayedDuration = computed(() => formatDuration(displayedDurationMs.value));
 const meterWidth = computed(() => `${Math.max(4, displayedLevel.value * 100)}%`);
@@ -117,6 +121,7 @@ async function pollNativeMeter() {
 }
 
 onMounted(() => {
+  void settingsStoreActions.initialize();
   lastAnimationAt = globalThis.performance.now();
   animationFrame = globalThis.requestAnimationFrame(animate);
   if (usesNativeMeter) {
@@ -152,19 +157,19 @@ onBeforeUnmount(() => {
   <main class="voice-overlay" :data-active="snapshot.cancellable">
     <div class="overlay-status">
       <span class="overlay-status-dot" aria-hidden="true"></span>
-      <strong>{{ snapshot.status }}</strong>
-      <span>{{ VOICE_MODE_LABELS[snapshot.mode] }}</span>
+      <strong>{{ t(snapshot.status) }}</strong>
+      <span>{{ t(VOICE_MODE_LABELS[snapshot.mode]) }}</span>
       <time>{{ displayedDuration }}</time>
     </div>
 
     <p :title="displayText">{{ displayText }}</p>
 
     <div class="overlay-footer">
-      <div class="overlay-meter" aria-label="输入音量">
+      <div class="overlay-meter" :aria-label="t('输入音量')">
         <span :style="{ width: meterWidth }"></span>
       </div>
       <button v-if="snapshot.cancellable" type="button" @click="requestOverlayCancel">
-        取消
+        {{ t("取消") }}
       </button>
     </div>
   </main>

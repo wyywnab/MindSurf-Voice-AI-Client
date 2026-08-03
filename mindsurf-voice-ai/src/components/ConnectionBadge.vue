@@ -2,12 +2,14 @@
 import { computed } from "vue";
 
 import { CONNECTION_STATUS_LABELS, type ServiceConnectionStatus } from "../types/voice";
+import { useI18n } from "../services/i18n";
 
 const props = defineProps<{
   status: ServiceConnectionStatus;
 }>();
 
-const label = computed(() => CONNECTION_STATUS_LABELS[props.status]);
+const { t } = useI18n();
+const label = computed(() => t(CONNECTION_STATUS_LABELS[props.status]));
 </script>
 
 <template>

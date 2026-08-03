@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { menuNew, popup } = vi.hoisted(() => ({
   menuNew: vi.fn(),
@@ -13,8 +13,14 @@ vi.mock("@tauri-apps/api/menu", () => ({
 }));
 
 import { installNativeContextMenu } from "./nativeContextMenu";
+import { setLocale } from "./i18n";
 
 describe("nativeContextMenu", () => {
+  beforeEach(() => {
+    setLocale("zh-CN");
+    menuNew.mockClear();
+    popup.mockClear();
+  });
   it("intercepts right-clicks and opens the native edit menu", async () => {
     const target = contextMenuTarget();
     const dispose = installNativeContextMenu(() => false, target);
@@ -48,6 +54,19 @@ describe("nativeContextMenu", () => {
     target.dispatch({ preventDefault } as unknown as MouseEvent);
 
     expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("builds each menu with the active locale", async () => {
+    setLocale("en-US");
+    const target = contextMenuTarget();
+    installNativeContextMenu(() => false, target);
+
+    target.dispatch({ preventDefault: vi.fn() } as unknown as MouseEvent);
+
+    await vi.waitFor(() => expect(menuNew).toHaveBeenCalledOnce());
+    expect(menuNew).toHaveBeenCalledWith({
+      items: expect.arrayContaining([{ item: "Copy", text: "Copy" }]),
+    });
   });
 });
 

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, watch } from "vue";
 
 import { useRecorder } from "../composables/useRecorder";
+import { useI18n } from "../services/i18n";
 import { RecordingController } from "../controllers/recordingController";
 import { OverlaySyncController } from "../controllers/overlaySyncController";
 import { settingsController } from "../controllers/settingsController";
@@ -16,6 +17,8 @@ import { settingsStoreActions, useSettingsStore } from "../stores/settingsStore"
 import type { OverlaySnapshot } from "../types/overlay";
 import { VOICE_MODE_LABELS, type VoiceInteractionMode } from "../types/voice";
 import AudioMeter from "./AudioMeter.vue";
+
+const { t } = useI18n();
 
 const recorder = useRecorder();
 const recordingController = new RecordingController(recorder);
@@ -45,45 +48,48 @@ const formattedDuration = computed(() => {
     .padStart(2, "0")}.${tenths}`;
 });
 
-const permissionLabel = computed(
-  () =>
-    ({
+const permissionLabel = computed(() =>
+  t(
+    {
       unknown: "检查中",
       prompt: "等待授权",
       granted: "已授权",
       denied: "已拒绝",
       unsupported: "不支持",
-    })[recorder.permissionState.value],
+    }[recorder.permissionState.value],
+  ),
 );
 
 const stateLabel = computed(() => {
   if (recorder.state.value === "ready") {
     if (requestState.status === "committing") {
-      return "正在提交录音";
+      return t("正在提交录音");
     }
     if (requestState.status === "recognizing") {
-      return "正在等待最终识别";
+      return t("正在等待最终识别");
     }
     if (requestState.status === "generating") {
-      return "正在生成回复";
+      return t("正在生成回复");
     }
     if (requestState.status === "playing") {
-      return "正在播放回复";
+      return t("正在播放回复");
     }
     if (requestState.status === "completed") {
-      return "识别完成";
+      return t("识别完成");
     }
   }
 
-  return {
-    idle: "准备录音",
-    requesting: "正在请求麦克风权限",
-    prepared: "麦克风已就绪，正在创建请求",
-    recording: "正在录音",
-    stopping: "正在处理音频",
-    ready: "录音已完成",
-    error: "录音不可用",
-  }[recorder.state.value];
+  return t(
+    {
+      idle: "准备录音",
+      requesting: "正在请求麦克风权限",
+      prepared: "麦克风已就绪，正在创建请求",
+      recording: "正在录音",
+      stopping: "正在处理音频",
+      ready: "录音已完成",
+      error: "录音不可用",
+    }[recorder.state.value],
+  );
 });
 
 const transcript = computed(() => requestState.asrFinal || requestState.asrPartial);
@@ -93,16 +99,17 @@ const assistantText = computed(
 const playbackActive = computed(() =>
   ["buffering", "playing"].includes(requestState.playbackStatus),
 );
-const playbackStatusLabel = computed(
-  () =>
-    ({
+const playbackStatusLabel = computed(() =>
+  t(
+    {
       idle: "等待语音",
       buffering: "正在缓冲",
       playing: "正在播放",
       done: "播放完成",
       stopped: "已停止",
       error: "播放失败",
-    })[requestState.playbackStatus],
+    }[requestState.playbackStatus],
+  ),
 );
 const firstPlaybackDelay = computed(() => {
   const { firstChunkAt, playbackStartedAt } = requestState.playbackMetrics;
@@ -110,16 +117,17 @@ const firstPlaybackDelay = computed(() => {
     ? `${playbackStartedAt - firstChunkAt} ms`
     : "—";
 });
-const injectionStatusLabel = computed(
-  () =>
-    ({
+const injectionStatusLabel = computed(() =>
+  t(
+    {
       idle: "",
       waiting: "请切换到目标窗口，稍后开始注入…",
       injecting: "正在向当前前台窗口注入文本…",
       succeeded: "文本注入完成",
       partial: "部分文本未能注入",
       failed: "文本注入失败",
-    })[requestState.injectionStatus],
+    }[requestState.injectionStatus],
+  ),
 );
 const overlayActive = computed(
   () =>
@@ -140,7 +148,7 @@ function createOverlaySnapshot(): OverlaySnapshot {
     recording: recorder.isRecording.value,
     status:
       requestState.status === "failed"
-        ? "处理失败"
+        ? t("处理失败")
         : playbackActive.value
           ? playbackStatusLabel.value
           : stateLabel.value,
@@ -309,12 +317,16 @@ onBeforeUnmount(() => {
   <section class="panel recorder-panel" aria-labelledby="recording-title">
     <header class="panel-heading recorder-heading">
       <div>
-        <h1 id="recording-title">录音控制</h1>
+        <h1 id="recording-title">{{ t("录音控制") }}</h1>
         <p class="panel-description">
-          按住 {{ settingsState.shortcutDisplay }} 说话，松开后提交录音。
+          {{
+            t("按住 {shortcut} 说话，松开后提交录音。", {
+              shortcut: settingsState.shortcutDisplay,
+            })
+          }}
         </p>
       </div>
-      <div class="mode-selector" aria-label="交互模式">
+      <div class="mode-selector" :aria-label="t('交互模式')">
         <button
           v-for="(label, mode) in VOICE_MODE_LABELS"
           :key="mode"
@@ -323,12 +335,12 @@ onBeforeUnmount(() => {
           :disabled="Boolean(requestState.activeRequestId)"
           @click="selectMode(mode)"
         >
-          {{ label }}
+          {{ t(label) }}
         </button>
       </div>
       <div class="permission-chip" :data-state="recorder.permissionState.value">
         <span class="status-dot"></span>
-        麦克风 {{ permissionLabel }}
+        {{ t("麦克风") }} {{ permissionLabel }}
       </div>
     </header>
 
@@ -359,10 +371,10 @@ onBeforeUnmount(() => {
             >
               {{
                 connectionState.status !== "connected"
-                  ? "等待服务连接"
+                  ? t("等待服务连接")
                   : recorder.state.value === "requesting"
-                    ? "正在授权…"
-                    : "开始录音"
+                    ? t("正在授权…")
+                    : t("开始录音")
               }}
             </button>
             <button
@@ -371,7 +383,7 @@ onBeforeUnmount(() => {
               type="button"
               @click="stopNetworkRecording"
             >
-              停止并生成 WAV
+              {{ t("停止并生成 WAV") }}
             </button>
             <button
               class="button button-secondary"
@@ -379,7 +391,7 @@ onBeforeUnmount(() => {
               :disabled="!recorder.isBusy.value"
               @click="cancelNetworkRecording"
             >
-              取消
+              {{ t("取消") }}
             </button>
           </div>
         </div>
@@ -389,22 +401,22 @@ onBeforeUnmount(() => {
           aria-labelledby="transcript-title"
         >
           <header>
-            <strong id="transcript-title">识别文本</strong>
+            <strong id="transcript-title">{{ t("识别文本") }}</strong>
             <span v-if="requestState.networkCongested" class="warning-text">
-              网络拥塞
+              {{ t("网络拥塞") }}
             </span>
             <span v-else>
               {{
                 requestState.asrFinal
-                  ? requestState.asrLanguage || "已完成"
+                  ? requestState.asrLanguage || t("已完成")
                   : requestState.asrPartial
                     ? `revision ${requestState.asrRevision}`
-                    : "等待录音"
+                    : t("等待录音")
               }}
             </span>
           </header>
           <p :class="{ 'is-partial': !requestState.asrFinal }">
-            {{ transcript || "录音过程中将在这里显示临时识别结果。" }}
+            {{ transcript || t("录音过程中将在这里显示临时识别结果。") }}
           </p>
           <div v-if="requestState.asrFinal" class="transcript-actions">
             <button
@@ -415,26 +427,26 @@ onBeforeUnmount(() => {
               "
               @click="injectManually(requestState.asrFinal)"
             >
-              切换窗口后注入
+              {{ t("切换窗口后注入") }}
             </button>
           </div>
         </section>
       </div>
 
       <p v-if="recorder.errorMessage.value" class="inline-error" role="alert">
-        {{ recorder.errorMessage }}
+        {{ t(recorder.errorMessage.value) }}
         <button
           v-if="recorder.permissionState.value === 'denied'"
           class="inline-action"
           type="button"
           @click="recorder.openPermissionSettings"
         >
-          打开麦克风设置
+          {{ t("打开麦克风设置") }}
         </button>
       </p>
 
       <p v-if="requestState.lastError" class="inline-error" role="alert">
-        {{ requestState.lastError }}
+        {{ t(requestState.lastError) }}
       </p>
 
       <section
@@ -443,24 +455,24 @@ onBeforeUnmount(() => {
         aria-labelledby="assistant-title"
       >
         <header>
-          <strong id="assistant-title">助手回复</strong>
+          <strong id="assistant-title">{{ t("助手回复") }}</strong>
           <span>
             {{
               requestState.assistantFinal
-                ? "已完成"
+                ? t("已完成")
                 : requestState.assistantStreaming
-                  ? `片段 ${requestState.assistantLastSequence + 1}`
+                  ? t("片段 {count}", { count: requestState.assistantLastSequence + 1 })
                   : requestState.status === "generating"
-                    ? "正在思考"
-                    : "等待识别"
+                    ? t("正在思考")
+                    : t("等待识别")
             }}
           </span>
         </header>
         <p :class="{ 'is-partial': !requestState.assistantFinal }">
-          {{ assistantText || "识别完成后将在这里流式显示回复。" }}
+          {{ assistantText || t("识别完成后将在这里流式显示回复。") }}
         </p>
         <small v-if="requestState.assistantWarning" class="warning-text">
-          {{ requestState.assistantWarning }}
+          {{ t(requestState.assistantWarning) }}
         </small>
         <div v-if="requestState.assistantFinal" class="transcript-actions">
           <button
@@ -469,7 +481,7 @@ onBeforeUnmount(() => {
             :disabled="['waiting', 'injecting'].includes(requestState.injectionStatus)"
             @click="injectManually(requestState.assistantFinal)"
           >
-            切换窗口后注入
+            {{ t("切换窗口后注入") }}
           </button>
         </div>
       </section>
@@ -484,20 +496,20 @@ onBeforeUnmount(() => {
         aria-live="polite"
       >
         <div>
-          <strong>语音播放</strong>
+          <strong>{{ t("语音播放") }}</strong>
           <span>{{ playbackStatusLabel }}</span>
         </div>
         <dl>
           <div>
-            <dt>首包至首播</dt>
+            <dt>{{ t("首包至首播") }}</dt>
             <dd>{{ firstPlaybackDelay }}</dd>
           </div>
           <div>
-            <dt>分片</dt>
+            <dt>{{ t("分片") }}</dt>
             <dd>{{ requestState.playbackMetrics.receivedChunks }}</dd>
           </div>
           <div>
-            <dt>欠载</dt>
+            <dt>{{ t("欠载") }}</dt>
             <dd>{{ requestState.playbackMetrics.underrunCount }}</dd>
           </div>
         </dl>
@@ -507,7 +519,7 @@ onBeforeUnmount(() => {
           type="button"
           @click="recordingController.interruptPlayback"
         >
-          停止播放
+          {{ t("停止播放") }}
         </button>
       </section>
 
@@ -520,12 +532,16 @@ onBeforeUnmount(() => {
         <div>
           <strong>{{ injectionStatusLabel }}</strong>
           <span v-if="requestState.injectionReport">
-            已注入 {{ requestState.injectionReport.injectedCodePoints }} /
-            {{ requestState.injectionReport.requestedCodePoints }} 字符，耗时
-            {{ requestState.injectionReport.elapsedMs }} ms
+            {{
+              t("已注入 {injected} / {requested} 字符，耗时 {elapsed} ms", {
+                injected: requestState.injectionReport.injectedCodePoints,
+                requested: requestState.injectionReport.requestedCodePoints,
+                elapsed: requestState.injectionReport.elapsedMs,
+              })
+            }}
           </span>
           <span v-if="requestState.injectionError">
-            {{ requestState.injectionError }}
+            {{ t(requestState.injectionError) }}
           </span>
         </div>
         <p
@@ -546,7 +562,7 @@ onBeforeUnmount(() => {
             type="button"
             @click="voiceRequestController.textOutput.retry()"
           >
-            切换窗口后重试剩余文本
+            {{ t("切换窗口后重试剩余文本") }}
           </button>
           <button
             v-if="!['waiting', 'injecting'].includes(requestState.injectionStatus)"
@@ -554,50 +570,56 @@ onBeforeUnmount(() => {
             type="button"
             @click="voiceRequestController.textOutput.dismiss"
           >
-            {{ requestState.injectionRemainingText ? "放弃待注入文本" : "关闭" }}
+            {{ requestState.injectionRemainingText ? t("放弃待注入文本") : t("关闭") }}
           </button>
         </div>
       </section>
 
       <div class="metrics-grid">
         <article class="metric-card">
-          <span>目标格式</span>
+          <span>{{ t("目标格式") }}</span>
           <strong>16 kHz · PCM16</strong>
-          <small>单声道 / 20 ms 分帧</small>
+          <small>{{ t("单声道 / 20 ms 分帧") }}</small>
         </article>
         <article class="metric-card">
-          <span>已完成录音</span>
+          <span>{{ t("已完成录音") }}</span>
           <strong>{{ recorder.completedRecordingCount.value }}</strong>
-          <small>当前活动 Track：{{ recorder.activeTrackCount.value }}</small>
+          <small>{{
+            t("当前活动 Track：{count}", { count: recorder.activeTrackCount.value })
+          }}</small>
         </article>
         <article class="metric-card">
-          <span>最近结果</span>
+          <span>{{ t("最近结果") }}</span>
           <strong>
             {{
               recorder.latestRecording.value
-                ? `${recorder.latestRecording.value.frameCount} 帧`
-                : "暂无"
+                ? t("{count} 帧", { count: recorder.latestRecording.value.frameCount })
+                : t("暂无")
             }}
           </strong>
           <small v-if="recorder.latestRecording.value">
-            输入 {{ recorder.latestRecording.value.sourceSampleRate }} Hz ·
-            {{ recorder.latestRecording.value.sampleCount }} samples
+            {{
+              t("输入 {rate} Hz · {count} samples", {
+                rate: recorder.latestRecording.value.sourceSampleRate,
+                count: recorder.latestRecording.value.sampleCount,
+              })
+            }}
           </small>
-          <small v-else>停止录音后显示统计</small>
+          <small v-else>{{ t("停止录音后显示统计") }}</small>
         </article>
       </div>
 
       <footer v-if="recorder.latestRecording.value" class="result-bar">
         <div>
-          <strong>WAV 已在内存中生成</strong>
-          <span>导出后可进行离线播放和格式检查</span>
+          <strong>{{ t("WAV 已在内存中生成") }}</strong>
+          <span>{{ t("导出后可进行离线播放和格式检查") }}</span>
         </div>
         <button
           class="button button-secondary"
           type="button"
           @click="recorder.downloadLatestRecording"
         >
-          导出 WAV
+          {{ t("导出 WAV") }}
         </button>
       </footer>
     </div>

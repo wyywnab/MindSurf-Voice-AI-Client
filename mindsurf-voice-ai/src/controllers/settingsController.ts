@@ -27,7 +27,7 @@ import {
   useSettingsStore,
 } from "../stores/settingsStore";
 import type { ShortcutBinding } from "../types/shortcut";
-import type { ServiceProfile } from "../types/settings";
+import type { AppSettings, ServiceProfile } from "../types/settings";
 import type { OverlayPosition, VoiceInteractionMode } from "../types/voice";
 import { voiceRequestController } from "./voiceRequestController";
 
@@ -197,6 +197,10 @@ export class SettingsController {
 
   setDeveloperShowDiagnosticsPage(enabled: boolean) {
     settingsStoreActions.setDeveloperShowDiagnosticsPage(enabled);
+  }
+
+  setInterfaceLocale(locale: AppSettings["interface"]["locale"]) {
+    settingsStoreActions.setInterfaceLocale(locale);
   }
 
   setLanguage(language: string) {

@@ -11,6 +11,7 @@ import TopTabs from "./components/TopTabs.vue";
 import { settingsController } from "./controllers/settingsController";
 import { voiceRequestController } from "./controllers/voiceRequestController";
 import { getAppInfo } from "./services/appInfo";
+import { useI18n } from "./services/i18n";
 import { hideOverlayWindow, setOverlayWindowPosition } from "./services/overlay";
 import { getSystemPermissionStatus } from "./services/permissions";
 import { subscribeTrayActions, syncTrayMode } from "./services/tray";
@@ -27,18 +28,19 @@ const activeTab = ref<MainTabId>("record");
 const appInfo = ref<AppInfo | null>(null);
 const appInfoError = ref("");
 const connection = useConnectionStore();
+const { t } = useI18n();
 const settings = useSettingsStore();
 const diagnosticsPageVisible = computed(
   () =>
     settings.state.developerModeEnabled && settings.state.developerShowDiagnosticsPage,
 );
 const tabs = computed<readonly MainTab[]>(() => [
-  { id: "record", label: "录音" },
+  { id: "record", label: t("录音") },
   ...(diagnosticsPageVisible.value
-    ? ([{ id: "connection", label: "诊断" }] satisfies MainTab[])
+    ? ([{ id: "connection", label: t("诊断") }] satisfies MainTab[])
     : []),
-  { id: "permissions", label: "权限" },
-  { id: "settings", label: "设置" },
+  { id: "permissions", label: t("权限") },
+  { id: "settings", label: t("设置") },
 ]);
 let trayDisposed = false;
 let unlistenTray: (() => void) | null = null;
@@ -176,7 +178,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="app-footer">
-      <span>Phase 2 · 服务档案与诊断增强</span>
+      <span>{{ t("Phase 2 · 服务档案与诊断增强") }}</span>
       <span v-if="appInfo">v{{ appInfo.version }} · {{ appInfo.buildProfile }}</span>
     </footer>
   </div>

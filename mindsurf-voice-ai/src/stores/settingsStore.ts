@@ -1,6 +1,7 @@
 import { reactive, readonly } from "vue";
 
 import { getCredentialStatus } from "../services/settings/credentials";
+import { setLocale } from "../services/i18n";
 import {
   defaultShortcutBinding,
   formatShortcutBinding,
@@ -63,6 +64,7 @@ const state = reactive({
   developerModeEnabled: defaults.developer.enabled,
   developerUseWebViewContextMenu: defaults.developer.useWebViewContextMenu,
   developerShowDiagnosticsPage: defaults.developer.showDiagnosticsPage,
+  interfaceLocale: defaults.interface.locale,
 });
 
 function platformDefaultShortcut(binding: ShortcutBinding): ShortcutBinding {
@@ -106,6 +108,8 @@ function applySettings(settings: AppSettings) {
   state.developerModeEnabled = settings.developer.enabled;
   state.developerUseWebViewContextMenu = settings.developer.useWebViewContextMenu;
   state.developerShowDiagnosticsPage = settings.developer.showDiagnosticsPage;
+  state.interfaceLocale = settings.interface.locale;
+  setLocale(settings.interface.locale);
 }
 
 function snapshot(): AppSettings {
@@ -143,6 +147,9 @@ function snapshot(): AppSettings {
       enabled: state.developerModeEnabled,
       useWebViewContextMenu: state.developerUseWebViewContextMenu,
       showDiagnosticsPage: state.developerShowDiagnosticsPage,
+    },
+    interface: {
+      locale: state.interfaceLocale,
     },
   };
 }
@@ -317,6 +324,11 @@ export const settingsStoreActions = {
   },
   setDeveloperShowDiagnosticsPage(enabled: boolean) {
     state.developerShowDiagnosticsPage = enabled;
+    persistSoon();
+  },
+  setInterfaceLocale(locale: AppSettings["interface"]["locale"]) {
+    state.interfaceLocale = locale;
+    setLocale(locale);
     persistSoon();
   },
   setInferenceOption(kind: InferenceOptionKind, id: string) {

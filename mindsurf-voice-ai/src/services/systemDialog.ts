@@ -5,6 +5,7 @@ import {
   message as nativeMessage,
 } from "@tauri-apps/plugin-dialog";
 import { reactive, readonly } from "vue";
+import { translate as t } from "./i18n";
 
 export type SystemDialogKind = "info" | "warning" | "error";
 
@@ -36,8 +37,8 @@ function labels(type: BrowserDialogRequest["type"], options: SystemDialogOptions
   return {
     confirmLabel:
       options.confirmLabel ??
-      (type === "ask" ? "是" : type === "message" ? "确定" : "确认"),
-    cancelLabel: options.cancelLabel ?? (type === "ask" ? "否" : "取消"),
+      (type === "ask" ? t("是") : type === "message" ? t("确定") : t("确认")),
+    cancelLabel: options.cancelLabel ?? (type === "ask" ? t("否") : t("取消")),
   };
 }
 
@@ -82,7 +83,7 @@ export async function showMessage(text: string, options: SystemDialogOptions = {
     await nativeMessage(text, {
       title: options.title,
       kind: options.kind,
-      buttons: { ok: options.confirmLabel ?? "确定" },
+      buttons: { ok: options.confirmLabel ?? t("确定") },
     });
     return;
   }
@@ -94,8 +95,8 @@ export async function showConfirm(text: string, options: SystemDialogOptions = {
     return nativeConfirm(text, {
       title: options.title,
       kind: options.kind,
-      okLabel: options.confirmLabel ?? "确认",
-      cancelLabel: options.cancelLabel ?? "取消",
+      okLabel: options.confirmLabel ?? t("确认"),
+      cancelLabel: options.cancelLabel ?? t("取消"),
     });
   }
   return showBrowserDialog("confirm", text, options);
@@ -106,8 +107,8 @@ export async function showAsk(text: string, options: SystemDialogOptions = {}) {
     return nativeAsk(text, {
       title: options.title,
       kind: options.kind,
-      okLabel: options.confirmLabel ?? "是",
-      cancelLabel: options.cancelLabel ?? "否",
+      okLabel: options.confirmLabel ?? t("是"),
+      cancelLabel: options.cancelLabel ?? t("否"),
     });
   }
   return showBrowserDialog("ask", text, options);

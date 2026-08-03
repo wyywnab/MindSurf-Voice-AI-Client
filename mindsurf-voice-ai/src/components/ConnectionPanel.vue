@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 
 import { voiceRequestController } from "../controllers/voiceRequestController";
 import { calculateTimelineMetrics } from "../services/diagnostics/timeline";
+import { useI18n } from "../services/i18n";
 import { showConfirm } from "../services/systemDialog";
 import { useConnectionStore } from "../stores/connectionStore";
 import {
@@ -15,8 +16,10 @@ import { VOICE_MODE_LABELS } from "../types/voice";
 import ConnectionBadge from "./ConnectionBadge.vue";
 
 const connection = useConnectionStore();
+const { t } = useI18n();
 const diagnostics = useDiagnosticsStore();
 const settings = useSettingsStore();
+const connectionLabel = computed(() => t(connection.connectionLabel.value));
 const selectedRequestId = ref("");
 const logLevel = ref<LogLevel | "all">("all");
 const logModule = ref("all");
@@ -57,7 +60,9 @@ function relativeTime(monotonicMs: number) {
 }
 
 function formatClock(timestampMs: number) {
-  return new Date(timestampMs).toLocaleTimeString("zh-CN", { hour12: false });
+  return new Date(timestampMs).toLocaleTimeString(settings.state.interfaceLocale, {
+    hour12: false,
+  });
 }
 
 function formatFields(fields: Record<string, unknown> | undefined) {
@@ -74,8 +79,10 @@ function serviceOrigin(value: string) {
 
 async function confirmExport() {
   const confirmed = await showConfirm(
-    "诊断包将包含应用信息、脱敏后的服务地址、请求时间线和轮转日志；不会包含 Token、完整转录、完整回复或音频。确认导出？",
-    { title: "导出诊断包", kind: "warning", confirmLabel: "导出" },
+    t(
+      "诊断包将包含应用信息、脱敏后的服务地址、请求时间线和轮转日志；不会包含 Token、完整转录、完整回复或音频。确认导出？",
+    ),
+    { title: t("导出诊断包"), kind: "warning", confirmLabel: t("导出") },
   );
   if (confirmed) {
     await diagnosticsStoreActions.export({
@@ -101,10 +108,10 @@ function selectLogRequest(requestId: string | undefined) {
 
 async function clearLogs() {
   if (
-    await showConfirm("确认清空全部本地运行日志？", {
-      title: "清空运行日志",
+    await showConfirm(t("确认清空全部本地运行日志？"), {
+      title: t("清空运行日志"),
       kind: "warning",
-      confirmLabel: "清空",
+      confirmLabel: t("清空"),
     })
   ) {
     await diagnosticsStoreActions.clearLogs();
@@ -118,8 +125,10 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
   <section class="panel diagnostics-panel" aria-labelledby="diagnostics-title">
     <header class="panel-heading">
       <div>
-        <h1 id="diagnostics-title">连接与诊断</h1>
-        <p class="panel-description">查看服务状态、请求时间线和脱敏运行日志。</p>
+        <h1 id="diagnostics-title">{{ t("连接与诊断") }}</h1>
+        <p class="panel-description">
+          {{ t("查看服务状态、请求时间线和脱敏运行日志。") }}
+        </p>
       </div>
       <ConnectionBadge :status="connection.state.status" />
     </header>
@@ -127,7 +136,7 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
     <div class="panel-body diagnostics-body">
       <section class="diagnostics-section" aria-labelledby="service-status-title">
         <div class="section-title-row">
-          <h2 id="service-status-title">服务状态</h2>
+          <h2 id="service-status-title">{{ t("服务状态") }}</h2>
           <button
             v-if="
               connection.state.status === 'disconnected' && !connection.state.lastError
@@ -136,35 +145,35 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
             type="button"
             @click="voiceRequestController.connectConfiguredService()"
           >
-            连接服务
+            {{ t("连接服务") }}
           </button>
         </div>
         <div class="connection-grid">
           <article class="detail-card">
-            <span class="detail-label">服务地址</span>
+            <span class="detail-label">{{ t("服务地址") }}</span>
             <code>{{ settings.state.serviceUrl }}</code>
           </article>
           <article class="detail-card">
-            <span class="detail-label">协议状态</span>
+            <span class="detail-label">{{ t("协议状态") }}</span>
             <strong v-if="connection.state.serverHello">
               v{{ connection.state.serverHello.protocol_version }} ·
               {{ connection.state.serverHello.pipeline }}
             </strong>
-            <strong v-else>{{ connection.connectionLabel }}</strong>
+            <strong v-else>{{ connectionLabel }}</strong>
           </article>
           <article class="detail-card">
-            <span class="detail-label">会话</span>
+            <span class="detail-label">{{ t("会话") }}</span>
             <strong>{{
-              connection.state.serverHello?.session_id ?? "尚未建立"
+              connection.state.serverHello?.session_id ?? t("尚未建立")
             }}</strong>
           </article>
           <article class="detail-card">
-            <span class="detail-label">重连次数</span>
+            <span class="detail-label">{{ t("重连次数") }}</span>
             <strong>{{ connection.state.reconnectAttempt }}</strong>
           </article>
         </div>
         <div v-if="connection.state.lastError" class="connection-error">
-          <span>{{ connection.state.lastError }}</span>
+          <span>{{ t(connection.state.lastError) }}</span>
           <button
             class="button button-secondary"
             type="button"
@@ -174,7 +183,7 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
                 : voiceRequestController.retryConnection()
             "
           >
-            立即重试
+            {{ t("立即重试") }}
           </button>
         </div>
       </section>
@@ -182,37 +191,50 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
       <section class="diagnostics-section" aria-labelledby="timeline-title">
         <div class="section-title-row">
           <div>
-            <h2 id="timeline-title">请求时间线</h2>
-            <small>最多保留最近 20 次请求，不记录正文或音频。</small>
+            <h2 id="timeline-title">{{ t("请求时间线") }}</h2>
+            <small>{{ t("最多保留最近 20 次请求，不记录正文或音频。") }}</small>
           </div>
-          <select v-model="selectedRequestId" aria-label="选择请求">
-            <option value="">当前或最近一次请求</option>
+          <select v-model="selectedRequestId" :aria-label="t('选择请求')">
+            <option value="">{{ t("当前或最近一次请求") }}</option>
             <option
               v-for="item in diagnostics.state.timelines"
               :key="item.requestId"
               :value="item.requestId"
             >
-              {{ item.requestId.slice(0, 12) }} · {{ VOICE_MODE_LABELS[item.mode] }}
+              {{ item.requestId.slice(0, 12) }} · {{ t(VOICE_MODE_LABELS[item.mode]) }}
             </option>
           </select>
         </div>
 
         <div v-if="timeline" class="timeline-summary">
-          <span><b>请求</b> {{ timeline.requestId }}</span>
-          <span><b>模式</b> {{ VOICE_MODE_LABELS[timeline.mode] }}</span>
-          <span><b>录音</b> {{ timeline.recordingDurationMs ?? "—" }} ms</span>
-          <span><b>终态</b> {{ timeline.terminalState ?? "进行中" }}</span>
           <span
-            ><b>上行</b> {{ timeline.audioFramesSent }} 帧 /
+            ><b>{{ t("请求") }}</b> {{ timeline.requestId }}</span
+          >
+          <span
+            ><b>{{ t("模式") }}</b> {{ t(VOICE_MODE_LABELS[timeline.mode]) }}</span
+          >
+          <span
+            ><b>{{ t("录音") }}</b> {{ timeline.recordingDurationMs ?? "—" }} ms</span
+          >
+          <span
+            ><b>{{ t("终态") }}</b> {{ timeline.terminalState ?? t("进行中") }}</span
+          >
+          <span
+            ><b>{{ t("上行") }}</b> {{ timeline.audioFramesSent }} {{ t("帧") }} /
             {{ timeline.audioBytesSent }} B</span
           >
-          <span><b>下行</b> {{ timeline.audioChunksReceived }} 分片</span>
+          <span
+            ><b>{{ t("下行") }}</b> {{ timeline.audioChunksReceived }}
+            {{ t("分片") }}</span
+          >
           <span><b>Underrun</b> {{ timeline.underrunCount }}</span>
-          <span><b>重连</b> {{ timeline.reconnectCount }}</span>
+          <span
+            ><b>{{ t("重连") }}</b> {{ timeline.reconnectCount }}</span
+          >
         </div>
         <div v-if="metrics.length" class="metric-strip">
           <span v-for="metric in metrics" :key="metric.label">
-            {{ metric.label }} <b>{{ metric.durationMs.toFixed(0) }} ms</b>
+            {{ t(metric.label) }} <b>{{ metric.durationMs.toFixed(0) }} ms</b>
           </span>
         </div>
         <ol v-if="timeline" class="timeline-list">
@@ -220,20 +242,22 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
             <time>{{ relativeTime(event.monotonicMs) }}</time>
             <span class="timeline-dot" :data-stage="event.stage"></span>
             <div>
-              <strong>{{ event.summary }}</strong>
+              <strong>{{ t(event.summary) }}</strong>
               <code>{{ event.type }}</code>
               <small v-if="event.details">{{ formatFields(event.details) }}</small>
             </div>
           </li>
         </ol>
-        <p v-else class="empty-state">完成一次语音请求后，这里会显示关键节点和耗时。</p>
+        <p v-else class="empty-state">
+          {{ t("完成一次语音请求后，这里会显示关键节点和耗时。") }}
+        </p>
       </section>
 
       <section class="diagnostics-section" aria-labelledby="logs-title">
         <div class="section-title-row">
           <div>
-            <h2 id="logs-title">运行日志</h2>
-            <small>日志按 5 MiB 轮转，最多保留 5 个文件。</small>
+            <h2 id="logs-title">{{ t("运行日志") }}</h2>
+            <small>{{ t("日志按 5 MiB 轮转，最多保留 5 个文件。") }}</small>
           </div>
           <button
             class="button button-secondary"
@@ -242,53 +266,63 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
             @click="confirmExport"
           >
             {{
-              diagnostics.state.exportStatus === "exporting" ? "正在导出" : "导出诊断包"
+              diagnostics.state.exportStatus === "exporting"
+                ? t("正在导出")
+                : t("导出诊断包")
             }}
           </button>
         </div>
         <div class="log-filters">
-          <select v-model="logLevel" aria-label="日志级别">
-            <option value="all">全部级别</option>
+          <select v-model="logLevel" :aria-label="t('日志级别')">
+            <option value="all">{{ t("全部级别") }}</option>
             <option value="debug">Debug</option>
             <option value="info">Info</option>
             <option value="warn">Warn</option>
             <option value="error">Error</option>
           </select>
-          <select v-model="logModule" aria-label="日志模块">
-            <option value="all">全部模块</option>
+          <select v-model="logModule" :aria-label="t('日志模块')">
+            <option value="all">{{ t("全部模块") }}</option>
             <option v-for="module in logModules" :key="module" :value="module">
               {{ module }}
             </option>
           </select>
-          <input v-model.trim="logRequestId" placeholder="筛选 request ID" />
-          <input v-model="logFrom" type="datetime-local" aria-label="日志开始时间" />
-          <input v-model="logTo" type="datetime-local" aria-label="日志结束时间" />
+          <input v-model.trim="logRequestId" :placeholder="t('筛选 request ID')" />
+          <input
+            v-model="logFrom"
+            type="datetime-local"
+            :aria-label="t('日志开始时间')"
+          />
+          <input
+            v-model="logTo"
+            type="datetime-local"
+            :aria-label="t('日志结束时间')"
+          />
           <button
             class="button button-ghost"
             type="button"
             @click="diagnosticsStoreActions.refreshLogs()"
           >
-            刷新
+            {{ t("刷新") }}
           </button>
           <button
             class="button button-ghost"
             type="button"
             @click="diagnosticsStoreActions.openLogDirectory()"
           >
-            打开目录
+            {{ t("打开目录") }}
           </button>
           <button class="button button-ghost" type="button" @click="clearLogs">
-            清空日志
+            {{ t("清空日志") }}
           </button>
         </div>
         <p v-if="diagnostics.state.storageWarning" class="inline-warning">
-          {{ diagnostics.state.storageWarning }}
+          {{ t(diagnostics.state.storageWarning) }}
         </p>
         <p v-if="diagnostics.state.exportPath" class="inline-success">
-          已导出到 {{ diagnostics.state.exportPath }}
+          {{ t("已导出到 {path}", { path: diagnostics.state.exportPath }) }}
         </p>
         <p v-if="diagnostics.state.exportError" class="inline-warning">
-          {{ diagnostics.state.exportError }}
+          {{ t(diagnostics.state.exportError) }}
         </p>
         <div class="log-list">
           <article
@@ -298,7 +332,7 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
             <time>{{ formatClock(entry.timestampMs) }}</time>
             <span class="log-level" :data-level="entry.level">{{ entry.level }}</span>
             <code>{{ entry.module }}.{{ entry.event }}</code>
-            <span>{{ entry.message }}</span>
+            <span>{{ t(entry.message) }}</span>
             <button
               v-if="entry.requestId"
               class="log-request-link"
@@ -309,7 +343,7 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
             </button>
           </article>
           <p v-if="!filteredLogs.length" class="empty-state">
-            没有符合筛选条件的日志。
+            {{ t("没有符合筛选条件的日志。") }}
           </p>
         </div>
         <button
@@ -319,7 +353,7 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
           :disabled="diagnostics.state.logsLoading"
           @click="diagnosticsStoreActions.loadOlderLogs()"
         >
-          加载更早日志
+          {{ t("加载更早日志") }}
         </button>
       </section>
     </div>

@@ -7,6 +7,7 @@ import {
   requestSystemPermission,
 } from "../services/permissions";
 import { describeRecorderError, prepareMicrophone } from "../services/recorder";
+import { useI18n } from "../services/i18n";
 import { settingsController } from "../controllers/settingsController";
 import { useSettingsStore } from "../stores/settingsStore";
 import type { AppInfo } from "../types/app";
@@ -15,6 +16,7 @@ import type { SystemPermission, SystemPermissionState } from "../types/permissio
 const props = defineProps<{
   appInfo: AppInfo | null;
 }>();
+const { t } = useI18n();
 
 const settings = useSettingsStore();
 const isMacOS = computed(
@@ -53,32 +55,35 @@ const permissionsReady = computed(
 
 const permissionInitializationLabel = computed(() => {
   if (permissionInitializationBusy.value) {
-    return "正在按顺序初始化…";
+    return t("正在按顺序初始化…");
   }
   if (permissionsReady.value) {
-    return "录音、快捷键和文本注入均已就绪";
+    return t("录音、快捷键和文本注入均已就绪");
   }
-  return "尚未完成全部权限初始化";
+  return t("尚未完成全部权限初始化");
 });
 
-const microphoneProbeLabel = computed(
-  () =>
-    ({
+const microphoneProbeLabel = computed(() =>
+  t(
+    {
       unknown: "WebView 录音能力尚未检查",
       checking: "正在检查 WebView 录音能力",
       ready: "WebView 录音能力正常",
       failed: "WebView 录音能力检查失败",
-    })[microphoneProbeState.value],
+    }[microphoneProbeState.value],
+  ),
 );
 
 function permissionStatusLabel(status: SystemPermissionState) {
-  return {
-    granted: "已授权",
-    denied: "未授权",
-    not_determined: "等待授权",
-    restricted: "受系统限制",
-    unknown: "检查中",
-  }[status];
+  return t(
+    {
+      granted: "已授权",
+      denied: "未授权",
+      not_determined: "等待授权",
+      restricted: "受系统限制",
+      unknown: "检查中",
+    }[status],
+  );
 }
 
 async function refreshPermission(permission: SystemPermission) {
@@ -167,8 +172,9 @@ async function initializePermissions() {
   if (firstError) {
     permissionError.value = firstError;
   } else if (!permissionsReady.value) {
-    permissionError.value =
-      "仍有权限未授权，请打开对应的系统设置；完成后返回应用会自动刷新状态。";
+    permissionError.value = t(
+      "仍有权限未授权，请打开对应的系统设置；完成后返回应用会自动刷新状态。",
+    );
   }
 }
 
@@ -202,26 +208,28 @@ onBeforeUnmount(() => {
   <section class="panel" aria-labelledby="permissions-title">
     <header class="panel-heading">
       <div>
-        <h1 id="permissions-title">系统权限</h1>
+        <h1 id="permissions-title">{{ t("系统权限") }}</h1>
         <p class="panel-description">
-          集中检查和配置录音、全局快捷键及文本注入所需权限。
+          {{ t("集中检查和配置录音、全局快捷键及文本注入所需权限。") }}
         </p>
       </div>
     </header>
 
     <div class="panel-body">
       <div class="settings-list">
-        <h2 class="settings-category">权限状态</h2>
+        <h2 class="settings-category">{{ t("权限状态") }}</h2>
         <article class="permission-initializer">
-          <span>统一权限初始化</span>
+          <span>{{ t("统一权限初始化") }}</span>
           <div>
             <strong :data-ready="permissionsReady">
               {{ permissionInitializationLabel }}
             </strong>
             <small v-if="isMacOS">
-              将依次检查麦克风和辅助功能，并验证实际录音与全局快捷键监听器。
+              {{ t("将依次检查麦克风和辅助功能，并验证实际录音与全局快捷键监听器。") }}
             </small>
-            <small v-else>检查并申请麦克风权限，同时验证实际录音能力。</small>
+            <small v-else>{{
+              t("检查并申请麦克风权限，同时验证实际录音能力。")
+            }}</small>
             <button
               class="button button-primary button-compact"
               type="button"
@@ -230,24 +238,26 @@ onBeforeUnmount(() => {
             >
               {{
                 permissionInitializationBusy
-                  ? "正在初始化…"
+                  ? t("正在初始化…")
                   : permissionsReady
-                    ? "重新检查全部权限"
-                    : "初始化系统权限"
+                    ? t("重新检查全部权限")
+                    : t("初始化系统权限")
               }}
             </button>
           </div>
         </article>
         <article>
-          <span>麦克风</span>
+          <span>{{ t("麦克风") }}</span>
           <div class="permission-setting">
             <strong v-if="isMacOS" :data-status="permissionStates.microphone">
               {{ permissionStatusLabel(permissionStates.microphone) }}
             </strong>
             <strong v-else :data-status="microphoneProbeState">
-              {{ microphoneProbeState === "ready" ? "已授权" : "待检查" }}
+              {{ microphoneProbeState === "ready" ? t("已授权") : t("待检查") }}
             </strong>
-            <small>用于录制语音；{{ microphoneProbeLabel }}</small>
+            <small>{{
+              t("用于录制语音；{status}", { status: microphoneProbeLabel })
+            }}</small>
             <div>
               <button
                 v-if="
@@ -264,7 +274,7 @@ onBeforeUnmount(() => {
                   isMacOS ? requestPermission('microphone') : prepareWebViewMicrophone()
                 "
               >
-                检查并授权
+                {{ t("检查并授权") }}
               </button>
               <button
                 class="button button-secondary button-compact"
@@ -272,19 +282,19 @@ onBeforeUnmount(() => {
                 :disabled="permissionInitializationBusy"
                 @click="openPermissionSettings('microphone')"
               >
-                打开系统设置
+                {{ t("打开系统设置") }}
               </button>
             </div>
           </div>
         </article>
         <template v-if="isMacOS">
           <article>
-            <span>辅助功能</span>
+            <span>{{ t("辅助功能") }}</span>
             <div class="permission-setting">
               <strong :data-status="permissionStates.accessibility">
                 {{ permissionStatusLabel(permissionStates.accessibility) }}
               </strong>
-              <small>用于向当前应用的光标位置输入识别结果</small>
+              <small>{{ t("用于向当前应用的光标位置输入识别结果") }}</small>
               <div>
                 <button
                   v-if="permissionStates.accessibility !== 'granted'"
@@ -295,7 +305,7 @@ onBeforeUnmount(() => {
                   "
                   @click="requestPermission('accessibility')"
                 >
-                  请求授权
+                  {{ t("请求授权") }}
                 </button>
                 <button
                   class="button button-secondary button-compact"
@@ -303,13 +313,13 @@ onBeforeUnmount(() => {
                   :disabled="permissionInitializationBusy"
                   @click="openPermissionSettings('accessibility')"
                 >
-                  打开系统设置
+                  {{ t("打开系统设置") }}
                 </button>
               </div>
             </div>
           </article>
           <article>
-            <span>全局快捷键</span>
+            <span>{{ t("全局快捷键") }}</span>
             <div class="permission-setting">
               <strong
                 :data-status="
@@ -322,17 +332,19 @@ onBeforeUnmount(() => {
               >
                 {{
                   !settings.state.shortcutDesiredEnabled
-                    ? "已关闭"
+                    ? t("已关闭")
                     : shortcutReady
-                      ? "监听器运行中"
+                      ? t("监听器运行中")
                       : settings.state.shortcutListenerStatus === "error"
-                        ? "监听器启动失败"
-                        : "监听器启动中"
+                        ? t("监听器启动失败")
+                        : t("监听器启动中")
                 }}
               </strong>
-              <small> 使用 macOS 系统全局热键注册，不依赖“输入监控”权限 </small>
+              <small>{{
+                t("使用 macOS 系统全局热键注册，不依赖“输入监控”权限")
+              }}</small>
               <small v-if="settings.state.shortcutError" class="inline-error">
-                {{ settings.state.shortcutError }}
+                {{ t(settings.state.shortcutError) }}
               </small>
               <div>
                 <button
@@ -342,7 +354,7 @@ onBeforeUnmount(() => {
                   :disabled="permissionInitializationBusy"
                   @click="settingsController.initializeRecordShortcut()"
                 >
-                  重新启动监听器
+                  {{ t("重新启动监听器") }}
                 </button>
               </div>
             </div>
@@ -350,7 +362,7 @@ onBeforeUnmount(() => {
         </template>
       </div>
       <p v-if="permissionError" class="inline-error" role="alert">
-        {{ permissionError }}
+        {{ t(permissionError) }}
       </p>
     </div>
   </section>

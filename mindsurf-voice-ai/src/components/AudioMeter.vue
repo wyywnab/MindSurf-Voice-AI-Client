@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "../services/i18n";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   level: number;
@@ -17,7 +20,7 @@ const meterStyle = computed(() => ({
   <div
     class="audio-meter"
     role="meter"
-    aria-label="麦克风音量"
+    :aria-label="t('麦克风音量')"
     aria-valuemin="0"
     aria-valuemax="100"
     :aria-valuenow="normalizedLevel"
