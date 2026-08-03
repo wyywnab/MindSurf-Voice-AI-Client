@@ -20,6 +20,8 @@ const selectedRequestId = ref("");
 const logLevel = ref<LogLevel | "all">("all");
 const logModule = ref("all");
 const logRequestId = ref("");
+const logFrom = ref("");
+const logTo = ref("");
 
 const timeline = computed(() => {
   if (selectedRequestId.value) {
@@ -42,7 +44,9 @@ const filteredLogs = computed(() =>
     (entry) =>
       (logLevel.value === "all" || entry.level === logLevel.value) &&
       (logModule.value === "all" || entry.module === logModule.value) &&
-      (!logRequestId.value || entry.requestId?.includes(logRequestId.value)),
+      (!logRequestId.value || entry.requestId?.includes(logRequestId.value)) &&
+      (!logFrom.value || entry.timestampMs >= new Date(logFrom.value).getTime()) &&
+      (!logTo.value || entry.timestampMs <= new Date(logTo.value).getTime()),
   ),
 );
 
@@ -59,11 +63,44 @@ function formatFields(fields: Record<string, unknown> | undefined) {
   return fields ? JSON.stringify(fields) : "";
 }
 
+function serviceOrigin(value: string) {
+  try {
+    return new globalThis.URL(value).origin;
+  } catch {
+    return "<invalid-url>";
+  }
+}
+
 async function confirmExport() {
   const confirmed = globalThis.confirm(
     "诊断包将包含应用信息、脱敏后的服务地址、请求时间线和轮转日志；不会包含 Token、完整转录、完整回复或音频。确认导出？",
   );
-  if (confirmed) await diagnosticsStoreActions.export(settings.state.serviceUrl);
+  if (confirmed) {
+    await diagnosticsStoreActions.export({
+      activeServiceProfileId: settings.state.activeServiceProfileId,
+      serviceProfiles: settings.state.serviceProfiles.map((profile) => ({
+        ...profile,
+        websocketUrl: serviceOrigin(profile.websocketUrl),
+      })),
+      audio: {
+        inputDeviceConfigured: Boolean(settings.state.inputDeviceId),
+        language: settings.state.language,
+        audioResponseEnabled: settings.state.audioResponseEnabled,
+        playbackVolume: settings.state.playbackVolume,
+      },
+    });
+  }
+}
+
+function selectLogRequest(requestId: string | undefined) {
+  if (!requestId) return;
+  selectedRequestId.value = requestId;
+}
+
+async function clearLogs() {
+  if (globalThis.confirm("确认清空全部本地运行日志？")) {
+    await diagnosticsStoreActions.clearLogs();
+  }
 }
 
 onMounted(() => void diagnosticsStoreActions.refreshLogs());
@@ -157,6 +194,13 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
           <span><b>模式</b> {{ VOICE_MODE_LABELS[timeline.mode] }}</span>
           <span><b>录音</b> {{ timeline.recordingDurationMs ?? "—" }} ms</span>
           <span><b>终态</b> {{ timeline.terminalState ?? "进行中" }}</span>
+          <span
+            ><b>上行</b> {{ timeline.audioFramesSent }} 帧 /
+            {{ timeline.audioBytesSent }} B</span
+          >
+          <span><b>下行</b> {{ timeline.audioChunksReceived }} 分片</span>
+          <span><b>Underrun</b> {{ timeline.underrunCount }}</span>
+          <span><b>重连</b> {{ timeline.reconnectCount }}</span>
         </div>
         <div v-if="metrics.length" class="metric-strip">
           <span v-for="metric in metrics" :key="metric.label">
@@ -209,12 +253,24 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
             </option>
           </select>
           <input v-model.trim="logRequestId" placeholder="筛选 request ID" />
+          <input v-model="logFrom" type="datetime-local" aria-label="日志开始时间" />
+          <input v-model="logTo" type="datetime-local" aria-label="日志结束时间" />
           <button
             class="button button-ghost"
             type="button"
             @click="diagnosticsStoreActions.refreshLogs()"
           >
             刷新
+          </button>
+          <button
+            class="button button-ghost"
+            type="button"
+            @click="diagnosticsStoreActions.openLogDirectory()"
+          >
+            打开目录
+          </button>
+          <button class="button button-ghost" type="button" @click="clearLogs">
+            清空日志
           </button>
         </div>
         <p v-if="diagnostics.state.storageWarning" class="inline-warning">
@@ -235,7 +291,14 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
             <span class="log-level" :data-level="entry.level">{{ entry.level }}</span>
             <code>{{ entry.module }}.{{ entry.event }}</code>
             <span>{{ entry.message }}</span>
-            <small v-if="entry.requestId">{{ entry.requestId }}</small>
+            <button
+              v-if="entry.requestId"
+              class="log-request-link"
+              type="button"
+              @click="selectLogRequest(entry.requestId)"
+            >
+              {{ entry.requestId }}
+            </button>
           </article>
           <p v-if="!filteredLogs.length" class="empty-state">
             没有符合筛选条件的日志。

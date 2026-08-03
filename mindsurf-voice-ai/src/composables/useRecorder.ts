@@ -24,11 +24,13 @@ export interface StartRecordingOptions {
   onFrame?: (frame: Int16Array, sequence: number) => void;
 }
 
-const usesNativeRecorder =
+const isMacOSClient =
   isTauri() && /Macintosh|Mac OS X/.test(globalThis.navigator?.userAgent ?? "");
-const recorder = usesNativeRecorder
-  ? new NativeMicrophoneRecorder()
-  : new MicrophoneRecorder();
+const nativeRecorder = new NativeMicrophoneRecorder();
+const browserRecorder = new MicrophoneRecorder();
+let recorder: NativeMicrophoneRecorder | MicrophoneRecorder = isMacOSClient
+  ? nativeRecorder
+  : browserRecorder;
 const MAX_RECORDING_MS = 60_000;
 
 export function useRecorder() {
@@ -41,6 +43,8 @@ export function useRecorder() {
   const permissionState = ref<MicrophonePermissionState>("unknown");
   const state = ref<RecorderState>("idle");
   let operationId = 0;
+  let preparedDeviceId: string | null = null;
+  let recordingUsesNative = isMacOSClient;
 
   const isBusy = computed(
     () =>
@@ -52,7 +56,7 @@ export function useRecorder() {
   const isRecording = computed(() => state.value === "recording");
 
   async function refreshPermissionState() {
-    if (usesNativeRecorder) {
+    if (recordingUsesNative) {
       const nativeStatus = await getSystemPermissionStatus("microphone");
       if (!nativeStatus.ok) {
         permissionState.value = "unknown";
@@ -159,8 +163,13 @@ export function useRecorder() {
   }
 
   async function prepareRecording(inputDeviceId: string | null = null) {
-    if (state.value === "prepared") {
+    if (state.value === "prepared" && preparedDeviceId === inputDeviceId) {
       return true;
+    }
+    if (state.value === "prepared") {
+      await recorder.cancel();
+      preparedDeviceId = null;
+      state.value = "idle";
     }
     if (isBusy.value) {
       return false;
@@ -173,15 +182,24 @@ export function useRecorder() {
     const currentOperationId = ++operationId;
 
     try {
+      const shouldUseNative =
+        isMacOSClient && (!inputDeviceId || inputDeviceId === "default");
+      const nextRecorder = shouldUseNative ? nativeRecorder : browserRecorder;
+      if (recorder !== nextRecorder) {
+        await recorder.cancel();
+        recorder = nextRecorder;
+      }
+      recordingUsesNative = shouldUseNative;
       await recorder.prepare(inputDeviceId);
-      if (usesNativeRecorder) {
+      preparedDeviceId = inputDeviceId;
+      if (recordingUsesNative) {
         await refreshPermissionState();
       }
       if (currentOperationId !== operationId) {
         await recorder.cancel();
         return false;
       }
-      if (usesNativeRecorder && permissionState.value !== "granted") {
+      if (recordingUsesNative && permissionState.value !== "granted") {
         await recorder.cancel();
         activeTrackCount.value = 0;
         errorMessage.value =
@@ -191,8 +209,8 @@ export function useRecorder() {
         state.value = "error";
         return false;
       }
-      activeTrackCount.value = usesNativeRecorder ? 0 : 1;
-      if (!usesNativeRecorder) {
+      activeTrackCount.value = recordingUsesNative ? 0 : 1;
+      if (!recordingUsesNative) {
         permissionState.value = "granted";
       }
       state.value = "prepared";
@@ -224,6 +242,7 @@ export function useRecorder() {
 
     try {
       latestRecording.value = await recorder.stop();
+      preparedDeviceId = null;
       activeTrackCount.value = latestRecording.value.liveTracksAfterCleanup;
       completedRecordingCount.value += 1;
       durationMs.value = latestRecording.value.durationMs;
@@ -241,6 +260,7 @@ export function useRecorder() {
   async function cancelRecording() {
     operationId += 1;
     await recorder.cancel();
+    preparedDeviceId = null;
     activeTrackCount.value = 0;
     durationMs.value = 0;
     errorMessage.value = "";
@@ -282,7 +302,7 @@ export function useRecorder() {
   onBeforeUnmount(() => {
     globalThis.removeEventListener("focus", handleWindowFocus);
     operationId += 1;
-    void recorder.dispose();
+    void Promise.all([nativeRecorder.dispose(), browserRecorder.dispose()]);
   });
 
   return {

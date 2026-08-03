@@ -55,6 +55,10 @@ export class VoiceRequestController {
     },
     onMetrics: (metrics) => {
       requestStoreActions.setPlaybackMetrics(metrics);
+      diagnosticsStoreActions.updateRuntimeMetrics({
+        requestId: this.request.state.activeRequestId,
+        underrunCount: metrics.underrunCount,
+      });
       if (metrics.underrunCount > this.lastLoggedUnderrunCount) {
         this.lastLoggedUnderrunCount = metrics.underrunCount;
         diagnosticsStoreActions.log(
@@ -111,6 +115,7 @@ export class VoiceRequestController {
             frame.requestId === this.request.state.activeRequestId &&
             !isTerminalRequestState(this.request.state.status)
           ) {
+            diagnosticsStoreActions.noteOutputAudioChunk(frame.requestId);
             diagnosticsStoreActions.recordTimeline(
               "output.first_chunk",
               "tts",
@@ -144,6 +149,7 @@ export class VoiceRequestController {
         },
         onReconnectAttempt: (attempt) => {
           connectionStoreActions.setReconnectAttempt(attempt);
+          diagnosticsStoreActions.updateRuntimeMetrics({ reconnectCount: attempt });
           diagnosticsStoreActions.log(
             "warn",
             "connection",
@@ -153,6 +159,26 @@ export class VoiceRequestController {
           );
         },
         onServerHello: (hello) => {
+          const preferredPipeline = this.settings.state.serviceProfiles.find(
+            (profile) => profile.id === this.settings.state.activeServiceProfileId,
+          )?.preferredPipeline;
+          if (
+            preferredPipeline &&
+            preferredPipeline !== "auto" &&
+            hello.pipeline !== preferredPipeline
+          ) {
+            const message = `服务 Pipeline 为 ${hello.pipeline}，与档案要求的 ${preferredPipeline} 不一致`;
+            diagnosticsStoreActions.log(
+              "error",
+              "connection",
+              "connection.pipeline_mismatch",
+              message,
+            );
+            this.transport?.disconnect();
+            connectionStoreActions.setServerHello(null);
+            connectionStoreActions.setError(message);
+            return;
+          }
           connectionStoreActions.setServerHello(hello);
           settingsStoreActions.hydrateInferenceSelections(hello);
           diagnosticsStoreActions.log(
@@ -186,7 +212,12 @@ export class VoiceRequestController {
         },
       },
       {
-        tokenProvider: readServiceTokenForConnection,
+        tokenProvider: () =>
+          this.settings.state.serviceProfiles.find(
+            (profile) => profile.id === this.settings.state.activeServiceProfileId,
+          )?.authMode === "bearer"
+            ? readServiceTokenForConnection(this.settings.state.activeServiceProfileId)
+            : Promise.resolve(null),
       },
     );
     this.transport.connect();

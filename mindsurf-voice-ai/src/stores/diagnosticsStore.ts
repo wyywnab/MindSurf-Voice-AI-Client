@@ -1,7 +1,9 @@
 import { computed, reactive, readonly } from "vue";
 
 import {
+  clearDiagnosticLogs,
   exportDiagnostics,
+  openDiagnosticLogDirectory,
   persistLogEntry,
   readRecentLogEntries,
 } from "../services/diagnostics/logger";
@@ -46,6 +48,11 @@ export const diagnosticsStoreActions = {
       startedAtMs: Date.now(),
       terminalState: null,
       recordingDurationMs: null,
+      audioFramesSent: 0,
+      audioBytesSent: 0,
+      audioChunksReceived: 0,
+      underrunCount: 0,
+      reconnectCount: 0,
       events: [],
     };
     state.timelines.unshift(timeline);
@@ -96,8 +103,30 @@ export const diagnosticsStoreActions = {
     });
     if (type === "recording.stopped" && typeof details?.durationMs === "number") {
       timeline.recordingDurationMs = details.durationMs;
+      timeline.audioFramesSent = Number(details.frameCount ?? 0);
+      timeline.audioBytesSent = Number(details.sampleCount ?? 0) * 2;
     }
     return true;
+  },
+  noteOutputAudioChunk(requestId: string) {
+    const timeline = state.timelines.find((item) => item.requestId === requestId);
+    if (timeline) timeline.audioChunksReceived += 1;
+  },
+  updateRuntimeMetrics(input: {
+    requestId?: string | null;
+    underrunCount?: number;
+    reconnectCount?: number;
+  }) {
+    const timeline = input.requestId
+      ? state.timelines.find((item) => item.requestId === input.requestId)
+      : currentTimeline();
+    if (!timeline) return;
+    if (typeof input.underrunCount === "number") {
+      timeline.underrunCount = Math.max(timeline.underrunCount, input.underrunCount);
+    }
+    if (typeof input.reconnectCount === "number") {
+      timeline.reconnectCount = Math.max(timeline.reconnectCount, input.reconnectCount);
+    }
   },
   finishTimeline(
     type: "request.done" | "request.cancelled" | "request.failed",
@@ -190,12 +219,12 @@ export const diagnosticsStoreActions = {
       state.logsLoading = false;
     }
   },
-  async export(serviceUrl: string) {
+  async export(settings: Record<string, unknown>) {
     state.exportStatus = "exporting";
     state.exportError = "";
     try {
       const result = await exportDiagnostics({
-        serviceUrl,
+        settings,
         timelines: state.timelines,
       });
       state.exportPath = result.path;
@@ -203,6 +232,26 @@ export const diagnosticsStoreActions = {
     } catch (error) {
       state.exportStatus = "failed";
       state.exportError = error instanceof Error ? error.message : "导出诊断包失败";
+    }
+  },
+  async clearLogs() {
+    try {
+      await clearDiagnosticLogs();
+      state.logs = [];
+      state.logsExhausted = true;
+      state.storageWarning = "";
+    } catch (error) {
+      state.storageWarning =
+        error instanceof Error ? error.message : "无法清空运行日志";
+    }
+  },
+  async openLogDirectory() {
+    try {
+      return await openDiagnosticLogDirectory();
+    } catch (error) {
+      state.storageWarning =
+        error instanceof Error ? error.message : "无法打开日志目录";
+      return "";
     }
   },
 };

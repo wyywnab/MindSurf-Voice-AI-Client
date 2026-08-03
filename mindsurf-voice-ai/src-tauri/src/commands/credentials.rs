@@ -12,7 +12,7 @@ use zeroize::Zeroize;
 use crate::error::{AppError, CommandResult};
 
 const CREDENTIAL_STORE: &str = "credentials.json";
-const TOKEN_FIELD: &str = "service_token_ciphertext";
+const TOKEN_FIELD_PREFIX: &str = "service_token_ciphertext:";
 const KEYRING_SERVICE: &str = "org.sast.mindsurf";
 const KEYRING_USER: &str = "service-token-encryption-key";
 const NONCE_LENGTH: usize = 12;
@@ -24,16 +24,23 @@ pub struct CredentialStatus {
 }
 
 #[tauri::command]
-pub fn get_credential_status(app: AppHandle) -> CommandResult<CredentialStatus> {
-    match credential_is_configured(&app) {
+pub fn get_credential_status(
+    app: AppHandle,
+    profile_id: String,
+) -> CommandResult<CredentialStatus> {
+    match credential_is_configured(&app, &profile_id) {
         Ok(configured) => CommandResult::success(CredentialStatus { configured }),
         Err(error) => CommandResult::failure(error),
     }
 }
 
 #[tauri::command]
-pub fn save_service_token(app: AppHandle, mut token: String) -> CommandResult<CredentialStatus> {
-    let result = save_token(&app, token.trim());
+pub fn save_service_token(
+    app: AppHandle,
+    profile_id: String,
+    mut token: String,
+) -> CommandResult<CredentialStatus> {
+    let result = save_token(&app, &profile_id, token.trim());
     token.zeroize();
     match result {
         Ok(()) => CommandResult::success(CredentialStatus { configured: true }),
@@ -42,22 +49,23 @@ pub fn save_service_token(app: AppHandle, mut token: String) -> CommandResult<Cr
 }
 
 #[tauri::command]
-pub fn clear_service_token(app: AppHandle) -> CommandResult<CredentialStatus> {
-    match clear_token(&app) {
+pub fn clear_service_token(app: AppHandle, profile_id: String) -> CommandResult<CredentialStatus> {
+    match clear_token(&app, &profile_id) {
         Ok(()) => CommandResult::success(CredentialStatus { configured: false }),
         Err(error) => CommandResult::failure(error),
     }
 }
 
 #[tauri::command]
-pub fn get_service_token(app: AppHandle) -> CommandResult<Option<String>> {
-    match load_token(&app) {
+pub fn get_service_token(app: AppHandle, profile_id: String) -> CommandResult<Option<String>> {
+    match load_token(&app, &profile_id) {
         Ok(token) => CommandResult::success(token),
         Err(error) => CommandResult::failure(error),
     }
 }
 
-fn save_token(app: &AppHandle, token: &str) -> Result<(), AppError> {
+fn save_token(app: &AppHandle, profile_id: &str, token: &str) -> Result<(), AppError> {
+    let field = token_field(profile_id)?;
     if token.is_empty() || token.len() > 16_384 {
         return Err(credential_error(
             "invalid_service_token",
@@ -69,14 +77,15 @@ fn save_token(app: &AppHandle, token: &str) -> Result<(), AppError> {
     key.zeroize();
     let ciphertext = encrypted?;
     let store = app.store(CREDENTIAL_STORE).map_err(store_error)?;
-    store.set(TOKEN_FIELD, ciphertext);
+    store.set(field, ciphertext);
     store.save().map_err(store_error)
 }
 
-fn load_token(app: &AppHandle) -> Result<Option<String>, AppError> {
+fn load_token(app: &AppHandle, profile_id: &str) -> Result<Option<String>, AppError> {
+    let field = token_field(profile_id)?;
     let store = app.store(CREDENTIAL_STORE).map_err(store_error)?;
     let Some(ciphertext) = store
-        .get(TOKEN_FIELD)
+        .get(field)
         .and_then(|value| value.as_str().map(str::to_owned))
     else {
         return Ok(None);
@@ -95,15 +104,32 @@ fn load_token(app: &AppHandle) -> Result<Option<String>, AppError> {
         .map_err(|_| credential_error("credential_decryption_failed", "service token is invalid"))
 }
 
-fn clear_token(app: &AppHandle) -> Result<(), AppError> {
+fn clear_token(app: &AppHandle, profile_id: &str) -> Result<(), AppError> {
+    let field = token_field(profile_id)?;
     let store = app.store(CREDENTIAL_STORE).map_err(store_error)?;
-    store.delete(TOKEN_FIELD);
+    store.delete(field);
     store.save().map_err(store_error)
 }
 
-fn credential_is_configured(app: &AppHandle) -> Result<bool, AppError> {
+fn credential_is_configured(app: &AppHandle, profile_id: &str) -> Result<bool, AppError> {
+    let field = token_field(profile_id)?;
     let store = app.store(CREDENTIAL_STORE).map_err(store_error)?;
-    Ok(store.has(TOKEN_FIELD))
+    Ok(store.has(field))
+}
+
+fn token_field(profile_id: &str) -> Result<String, AppError> {
+    if profile_id.is_empty()
+        || profile_id.len() > 128
+        || !profile_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(credential_error(
+            "invalid_service_profile",
+            "service profile id is invalid",
+        ));
+    }
+    Ok(format!("{TOKEN_FIELD_PREFIX}{profile_id}"))
 }
 
 fn load_or_create_key() -> Result<[u8; 32], AppError> {
@@ -191,7 +217,7 @@ fn store_error(error: impl std::fmt::Display) -> AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::{decrypt_token, encrypt_token};
+    use super::{decrypt_token, encrypt_token, token_field};
 
     #[test]
     fn token_ciphertext_round_trips_without_plaintext() {
@@ -210,5 +236,14 @@ mod tests {
     fn token_ciphertext_rejects_the_wrong_key() {
         let encrypted = encrypt_token(b"secret", &[1u8; 32]).expect("token should encrypt");
         assert!(decrypt_token(&encrypted, &[2u8; 32]).is_err());
+    }
+
+    #[test]
+    fn isolates_tokens_by_valid_service_profile_id() {
+        assert_ne!(
+            token_field("local-mock").expect("profile should be valid"),
+            token_field("production").expect("profile should be valid")
+        );
+        assert!(token_field("invalid/profile").is_err());
     }
 }

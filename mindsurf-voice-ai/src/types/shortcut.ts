@@ -1,8 +1,7 @@
 export type ShortcutBinding = string;
 
 export type ShortcutListenerStatus = "starting" | "running" | "error";
-export type ShortcutPlatformEnvironment =
-  "windows" | "macos" | "unsupported";
+export type ShortcutPlatformEnvironment = "windows" | "macos" | "unsupported";
 
 export interface ShortcutStatus {
   binding: ShortcutBinding;

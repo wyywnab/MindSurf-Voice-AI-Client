@@ -12,10 +12,10 @@ This is the Windows and macOS client for the MindSurf Voice AI project.
 - ASR、LLM 文本流式展示
 - TTS 音频流式播放
 - Windows/macOS 光标位置文本注入
-- 可配置的 WebSocket 服务地址、自动连接和连通性测试
+- 可新建、复制、切换和删除的 WebSocket 服务档案、自动连接和连通性测试
 - Bearer Token 加密存储与应用层鉴权
-- 麦克风、识别语言、语音回复和播放音量设置
-- 请求时间线、关键耗时和可筛选的结构化运行日志
+- Windows/macOS 多麦克风、识别语言、语音回复和播放音量设置
+- 请求时间线、完整运行摘要和可按时间筛选/清理的结构化运行日志
 - 默认排除正文、音频和凭据的脱敏诊断导出
 - 用于开发联调的本地 Mock 服务
 
@@ -93,7 +93,7 @@ MOCK_AUTH_TOKEN=dev-token npm start
 客户端可在“服务与音频”设置中保存同一 Token。Token 不写入明文配置，远程服务地址必须使用 `wss://`；`ws://` 仅允许本机回环地址。
 
 Windows 默认按住 `Ctrl + Win`，macOS 默认按住
-`Control + Command` 录音；松开后提交，按 `Escape` 取消。
+`Control + Command + Space` 录音；松开后提交，按 `Escape` 取消。
 
 macOS 首次使用时需要授予麦克风、辅助功能和输入监控权限。辅助功能用于
 文本注入，输入监控用于全局按住说话快捷键；可以在客户端权限页检查并打开

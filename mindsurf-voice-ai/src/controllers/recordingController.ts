@@ -82,6 +82,7 @@ export class RecordingController {
     diagnosticsStoreActions.recordTimeline("recording.stopped", "input", "录音已停止", {
       durationMs: Math.round(result.durationMs),
       frameCount: result.frameCount,
+      sampleCount: result.sampleCount,
     });
     try {
       await voiceRequestController.commitInput(result);

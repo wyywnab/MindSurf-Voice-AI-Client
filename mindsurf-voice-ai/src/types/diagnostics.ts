@@ -20,6 +20,11 @@ export interface RequestTimeline {
   startedAtMs: number;
   terminalState: RequestLifecycleState | null;
   recordingDurationMs: number | null;
+  audioFramesSent: number;
+  audioBytesSent: number;
+  audioChunksReceived: number;
+  underrunCount: number;
+  reconnectCount: number;
   events: RequestTimelineEvent[];
 }
 

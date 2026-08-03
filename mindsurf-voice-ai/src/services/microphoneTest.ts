@@ -9,7 +9,11 @@ export async function runMicrophoneTest(
   inputDeviceId: string | null,
   onLevel: (level: number) => void,
 ) {
-  if (isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent)) {
+  if (
+    isTauri() &&
+    /Macintosh|Mac OS X/.test(navigator.userAgent) &&
+    (!inputDeviceId || inputDeviceId === "default")
+  ) {
     const started = await invoke<CommandResult<void>>("start_native_audio_recording");
     if (!started.ok) throw new Error(started.error.message);
     try {

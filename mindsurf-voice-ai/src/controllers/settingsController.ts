@@ -1,5 +1,9 @@
 import { hideOverlayWindow, setOverlayWindowPosition } from "../services/overlay";
-import { clearServiceToken, saveServiceToken } from "../services/settings/credentials";
+import {
+  clearServiceToken,
+  getCredentialStatus,
+  saveServiceToken,
+} from "../services/settings/credentials";
 import { validateServiceUrl } from "../services/settings/serviceUrl";
 import {
   getRecordShortcutStatus,
@@ -23,6 +27,7 @@ import {
   useSettingsStore,
 } from "../stores/settingsStore";
 import type { ShortcutBinding } from "../types/shortcut";
+import type { ServiceProfile } from "../types/settings";
 import type { OverlayPosition, VoiceInteractionMode } from "../types/voice";
 import { voiceRequestController } from "./voiceRequestController";
 
@@ -40,40 +45,122 @@ export class SettingsController {
   }
 
   async saveServiceSettings(input: {
+    name: string;
     url: string;
     autoConnect: boolean;
+    authMode: ServiceProfile["authMode"];
+    preferredPipeline: ServiceProfile["preferredPipeline"];
     token?: string;
   }) {
     if (this.request.state.activeRequestId) {
       throw new Error("请求进行中不能修改服务配置");
     }
+    const name = input.name.trim();
+    if (!name) throw new Error("服务档案名称不能为空");
     const url = validateServiceUrl(input.url);
+    const currentProfile = this.settings.state.serviceProfiles.find(
+      (profile) => profile.id === this.settings.state.activeServiceProfileId,
+    );
     const connectionChanged =
       url !== this.settings.state.serviceUrl ||
-      input.autoConnect !== this.settings.state.autoConnect;
+      input.autoConnect !== this.settings.state.autoConnect ||
+      input.authMode !== currentProfile?.authMode ||
+      input.preferredPipeline !== currentProfile?.preferredPipeline;
     let tokenChanged = false;
     if (input.token?.trim()) {
       settingsStoreActions.setTokenConfigured(
-        await saveServiceToken(input.token.trim()),
+        await saveServiceToken(
+          this.settings.state.activeServiceProfileId,
+          input.token.trim(),
+        ),
       );
       tokenChanged = true;
     }
-    settingsStoreActions.setService(url, input.autoConnect);
+    settingsStoreActions.setService({ ...input, name, url });
     if (connectionChanged || tokenChanged) {
       voiceRequestController.reconnectWithCurrentSettings();
     }
   }
 
   async clearToken() {
-    settingsStoreActions.setTokenConfigured(await clearServiceToken());
+    settingsStoreActions.setTokenConfigured(
+      await clearServiceToken(this.settings.state.activeServiceProfileId),
+    );
     voiceRequestController.reconnectWithCurrentSettings();
   }
 
-  async testConnection(url: string, identity: VoiceClientIdentity) {
+  async createServiceProfile(copyCurrent = false) {
+    if (this.request.state.activeRequestId) {
+      throw new Error("请求进行中不能切换服务配置");
+    }
+    const now = Date.now();
+    const id = globalThis.crypto.randomUUID();
+    const profile: ServiceProfile = {
+      id,
+      name: copyCurrent ? "当前配置副本" : "新服务",
+      websocketUrl: copyCurrent
+        ? this.settings.state.serviceUrl
+        : "wss://example.com/v1/voice/ws",
+      autoConnect: false,
+      authMode: copyCurrent ? "bearer" : "none",
+      preferredPipeline: "auto",
+      createdAt: now,
+      updatedAt: now,
+    };
+    if (copyCurrent) {
+      settingsStoreActions.duplicateServiceProfile(
+        this.settings.state.activeServiceProfileId,
+        profile,
+      );
+    } else {
+      settingsStoreActions.addServiceProfile(profile);
+    }
+    settingsStoreActions.setTokenConfigured(false);
+    voiceRequestController.reconnectWithCurrentSettings();
+    return id;
+  }
+
+  async selectServiceProfile(profileId: string) {
+    if (this.request.state.activeRequestId) {
+      throw new Error("请求进行中不能切换服务配置");
+    }
+    if (!settingsStoreActions.selectServiceProfile(profileId)) return false;
+    settingsStoreActions.setTokenConfigured(await getCredentialStatus(profileId));
+    voiceRequestController.reconnectWithCurrentSettings();
+    return true;
+  }
+
+  async deleteServiceProfile() {
+    if (this.request.state.activeRequestId) {
+      throw new Error("请求进行中不能删除服务配置");
+    }
+    const profileId = this.settings.state.activeServiceProfileId;
+    if (!settingsStoreActions.removeServiceProfile(profileId)) {
+      throw new Error("至少保留一个服务配置");
+    }
+    await clearServiceToken(profileId);
+    settingsStoreActions.setTokenConfigured(
+      await getCredentialStatus(this.settings.state.activeServiceProfileId),
+    );
+    voiceRequestController.reconnectWithCurrentSettings();
+  }
+
+  async testConnection(
+    url: string,
+    identity: VoiceClientIdentity,
+    authMode: ServiceProfile["authMode"],
+    preferredPipeline: ServiceProfile["preferredPipeline"],
+  ) {
     const validatedUrl = validateServiceUrl(url);
     settingsStoreActions.setConnectionTest("testing");
     try {
-      const result = await testVoiceServiceConnection(validatedUrl, identity);
+      const result = await testVoiceServiceConnection(
+        validatedUrl,
+        identity,
+        this.settings.state.activeServiceProfileId,
+        authMode === "bearer",
+        preferredPipeline,
+      );
       settingsStoreActions.setConnectionTest("succeeded", result);
       return result;
     } catch (error) {

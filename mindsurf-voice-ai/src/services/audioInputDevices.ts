@@ -2,21 +2,11 @@ import { isTauri } from "@tauri-apps/api/core";
 
 import type { AudioInputDevice } from "../types/settings";
 
-function usesNativeRecorder() {
+function isMacOSClient() {
   return isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
 }
 
 export async function listAudioInputDevices(): Promise<AudioInputDevice[]> {
-  if (usesNativeRecorder()) {
-    return [
-      {
-        id: "default",
-        label: "系统默认麦克风",
-        isDefault: true,
-        backend: "native",
-      },
-    ];
-  }
   if (!navigator.mediaDevices?.enumerateDevices) return [];
   const devices = await navigator.mediaDevices.enumerateDevices();
   let unnamed = 0;
@@ -26,7 +16,10 @@ export async function listAudioInputDevices(): Promise<AudioInputDevice[]> {
       id: device.deviceId,
       label: device.label || `麦克风 ${++unnamed}`,
       isDefault: device.deviceId === "default",
-      backend: "web_audio" as const,
+      backend:
+        isMacOSClient() && device.deviceId === "default"
+          ? ("native" as const)
+          : ("web_audio" as const),
     }));
 }
 

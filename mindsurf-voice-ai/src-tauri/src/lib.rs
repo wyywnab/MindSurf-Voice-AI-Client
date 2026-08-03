@@ -34,6 +34,8 @@ pub fn run() {
             commands::credentials::get_service_token,
             commands::credentials::save_service_token,
             commands::diagnostics::export_diagnostics,
+            commands::diagnostics::clear_diagnostic_logs,
+            commands::diagnostics::open_diagnostic_log_directory,
             commands::diagnostics::read_recent_log_entries,
             commands::diagnostics::write_log_entry,
             commands::permissions::get_system_permission_status,

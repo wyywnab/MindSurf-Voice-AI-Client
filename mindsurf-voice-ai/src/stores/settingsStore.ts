@@ -13,6 +13,7 @@ import {
   DEFAULT_APP_SETTINGS,
   type AppSettings,
   type AudioInputDevice,
+  type ServiceProfile,
   type ServiceConnectionTestResult,
 } from "../types/settings";
 import type { OverlayPosition, VoiceInteractionMode } from "../types/voice";
@@ -20,13 +21,16 @@ import type { OverlayPosition, VoiceInteractionMode } from "../types/voice";
 export type InferenceOptionKind = "asr" | "llm" | "tts" | "output_audio";
 
 const defaults = structuredClone(DEFAULT_APP_SETTINGS);
+const defaultProfile = defaults.serviceProfiles[0]!;
 const initialShortcut = platformDefaultShortcut(defaults.shortcut.binding);
 const state = reactive({
   initialized: false,
   saveError: "",
-  serviceUrl: defaults.service.url,
+  serviceProfiles: defaults.serviceProfiles as ServiceProfile[],
+  activeServiceProfileId: defaults.activeServiceProfileId,
+  serviceUrl: defaultProfile.websocketUrl,
   tokenConfigured: false,
-  autoConnect: defaults.service.autoConnect,
+  autoConnect: defaultProfile.autoConnect,
   connectionTestStatus: "idle" as "idle" | "testing" | "succeeded" | "failed",
   connectionTestError: "",
   connectionTestResult: null as ServiceConnectionTestResult | null,
@@ -76,8 +80,9 @@ function shortcutPlatform() {
 }
 
 function applySettings(settings: AppSettings) {
-  state.serviceUrl = settings.service.url;
-  state.autoConnect = settings.service.autoConnect;
+  state.serviceProfiles = settings.serviceProfiles.map((profile) => ({ ...profile }));
+  state.activeServiceProfileId = settings.activeServiceProfileId;
+  syncActiveServiceProfile();
   state.inputDeviceId = settings.audio.inputDeviceId;
   state.language = settings.audio.language;
   state.audioResponseEnabled = settings.audio.audioResponseEnabled;
@@ -100,11 +105,8 @@ function applySettings(settings: AppSettings) {
 function snapshot(): AppSettings {
   return {
     schemaVersion: 1,
-    service: {
-      url: state.serviceUrl,
-      tokenConfigured: state.tokenConfigured,
-      autoConnect: state.autoConnect,
-    },
+    activeServiceProfileId: state.activeServiceProfileId,
+    serviceProfiles: state.serviceProfiles.map((profile) => ({ ...profile })),
     audio: {
       inputDeviceId: state.inputDeviceId,
       language: state.language,
@@ -132,6 +134,21 @@ function snapshot(): AppSettings {
       outputAudioId: state.selectedOutputAudioId,
     },
   };
+}
+
+function activeServiceProfile() {
+  return (
+    state.serviceProfiles.find(
+      (profile) => profile.id === state.activeServiceProfileId,
+    ) ?? state.serviceProfiles[0]!
+  );
+}
+
+function syncActiveServiceProfile() {
+  const profile = activeServiceProfile();
+  state.activeServiceProfileId = profile.id;
+  state.serviceUrl = profile.websocketUrl;
+  state.autoConnect = profile.autoConnect;
 }
 
 async function persist() {
@@ -164,7 +181,7 @@ export const settingsStoreActions = {
   async initialize() {
     try {
       applySettings(await settingsRepository.load());
-      state.tokenConfigured = await getCredentialStatus();
+      state.tokenConfigured = await getCredentialStatus(state.activeServiceProfileId);
       state.saveError = "";
       diagnosticsStoreActions.log(
         "info",
@@ -311,17 +328,70 @@ export const settingsStoreActions = {
     state.playbackVolume = Math.min(1, Math.max(0, volume));
     persistSoon();
   },
-  setService(url: string, autoConnect: boolean) {
-    state.serviceUrl = url;
-    state.autoConnect = autoConnect;
+  setService(input: {
+    name: string;
+    url: string;
+    autoConnect: boolean;
+    authMode: ServiceProfile["authMode"];
+    preferredPipeline: ServiceProfile["preferredPipeline"];
+  }) {
+    const profile = activeServiceProfile();
+    profile.name = input.name;
+    profile.websocketUrl = input.url;
+    profile.autoConnect = input.autoConnect;
+    profile.authMode = input.authMode;
+    profile.preferredPipeline = input.preferredPipeline;
+    profile.updatedAt = Date.now();
+    syncActiveServiceProfile();
     diagnosticsStoreActions.log(
       "info",
       "settings",
       "service_settings.changed",
       "服务连接设置已更新",
-      { fields: { autoConnect } },
+      { fields: { autoConnect: input.autoConnect, profileId: profile.id } },
     );
     persistSoon();
+  },
+  addServiceProfile(profile: ServiceProfile) {
+    state.serviceProfiles.push({ ...profile });
+    state.activeServiceProfileId = profile.id;
+    syncActiveServiceProfile();
+    state.tokenConfigured = false;
+    persistSoon();
+  },
+  duplicateServiceProfile(sourceId: string, profile: ServiceProfile) {
+    const source = state.serviceProfiles.find((item) => item.id === sourceId);
+    if (!source) return false;
+    state.serviceProfiles.push({ ...source, ...profile });
+    state.activeServiceProfileId = profile.id;
+    syncActiveServiceProfile();
+    state.tokenConfigured = false;
+    persistSoon();
+    return true;
+  },
+  removeServiceProfile(profileId: string) {
+    if (state.serviceProfiles.length <= 1) return false;
+    const index = state.serviceProfiles.findIndex((item) => item.id === profileId);
+    if (index < 0) return false;
+    state.serviceProfiles.splice(index, 1);
+    if (state.activeServiceProfileId === profileId) {
+      state.activeServiceProfileId = state.serviceProfiles[0]!.id;
+      syncActiveServiceProfile();
+    }
+    persistSoon();
+    return true;
+  },
+  selectServiceProfile(profileId: string) {
+    if (!state.serviceProfiles.some((profile) => profile.id === profileId)) {
+      return false;
+    }
+    state.activeServiceProfileId = profileId;
+    syncActiveServiceProfile();
+    state.connectionTestStatus = "idle";
+    state.connectionTestResult = null;
+    state.connectionTestError = "";
+    persistSoon();
+    return true;
   },
   setShortcutBinding(binding: ShortcutBinding) {
     state.shortcutBinding = binding;

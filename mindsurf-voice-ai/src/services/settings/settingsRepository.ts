@@ -39,7 +39,17 @@ export function parseSettings(value: unknown): AppSettings {
     return structuredClone(DEFAULT_APP_SETTINGS);
   }
   const defaults = DEFAULT_APP_SETTINGS;
-  const service = isRecord(value.service) ? value.service : {};
+  const serviceProfiles = Array.isArray(value.serviceProfiles)
+    ? value.serviceProfiles.flatMap(parseServiceProfile)
+    : [];
+  const profiles = serviceProfiles.length
+    ? serviceProfiles
+    : structuredClone(defaults.serviceProfiles);
+  const activeServiceProfileId =
+    typeof value.activeServiceProfileId === "string" &&
+    profiles.some((profile) => profile.id === value.activeServiceProfileId)
+      ? value.activeServiceProfileId
+      : profiles[0]!.id;
   const audio = isRecord(value.audio) ? value.audio : {};
   const interaction = isRecord(value.interaction) ? value.interaction : {};
   const shortcut = isRecord(value.shortcut) ? value.shortcut : {};
@@ -50,11 +60,8 @@ export function parseSettings(value: unknown): AppSettings {
     : {};
   return {
     schemaVersion: 1,
-    service: {
-      url: stringValue(service.url, defaults.service.url),
-      tokenConfigured: false,
-      autoConnect: booleanValue(service.autoConnect, defaults.service.autoConnect),
-    },
+    activeServiceProfileId,
+    serviceProfiles: profiles,
     audio: {
       inputDeviceId:
         typeof audio.inputDeviceId === "string" ? audio.inputDeviceId : null,
@@ -101,6 +108,31 @@ export function parseSettings(value: unknown): AppSettings {
       outputAudioId: stringValue(inference.outputAudioId, ""),
     },
   };
+}
+
+function parseServiceProfile(value: unknown) {
+  if (!isRecord(value)) return [];
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const websocketUrl =
+    typeof value.websocketUrl === "string" ? value.websocketUrl.trim() : "";
+  if (!id || !name || !websocketUrl) return [];
+  return [
+    {
+      id,
+      name,
+      websocketUrl,
+      autoConnect: booleanValue(value.autoConnect, false),
+      authMode: value.authMode === "bearer" ? ("bearer" as const) : ("none" as const),
+      preferredPipeline:
+        value.preferredPipeline === "cascade" ||
+        value.preferredPipeline === "native_audio"
+          ? (value.preferredPipeline as "cascade" | "native_audio")
+          : ("auto" as const),
+      createdAt: numberValue(value.createdAt, 0, Number.MAX_SAFE_INTEGER, Date.now()),
+      updatedAt: numberValue(value.updatedAt, 0, Number.MAX_SAFE_INTEGER, Date.now()),
+    },
+  ];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

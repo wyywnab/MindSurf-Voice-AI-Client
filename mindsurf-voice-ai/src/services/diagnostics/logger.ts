@@ -24,24 +24,34 @@ export async function readRecentLogEntries(limit = 200, beforeTimestampMs?: numb
 }
 
 export async function exportDiagnostics(input: {
-  serviceUrl: string;
+  settings: Record<string, unknown>;
   timelines: RequestTimeline[];
 }) {
   if (!isTauri()) throw new Error("浏览器预览不支持导出诊断包");
-  const url = new URL(input.serviceUrl);
-  url.search = "";
-  url.hash = "";
   const result = await invoke<CommandResult<DiagnosticsExportResult>>(
     "export_diagnostics",
     {
       summary: {
         exportedAtMs: Date.now(),
-        serviceUrl: url.toString(),
+        settings: input.settings,
         timelineCount: input.timelines.length,
       },
       timelines: input.timelines,
     },
   );
+  if (!result.ok) throw new Error(result.error.message);
+  return result.data;
+}
+
+export async function clearDiagnosticLogs() {
+  if (!isTauri()) return;
+  const result = await invoke<CommandResult<null>>("clear_diagnostic_logs");
+  if (!result.ok) throw new Error(result.error.message);
+}
+
+export async function openDiagnosticLogDirectory() {
+  if (!isTauri()) throw new Error("浏览器预览不支持打开日志目录");
+  const result = await invoke<CommandResult<string>>("open_diagnostic_log_directory");
   if (!result.ok) throw new Error(result.error.message);
   return result.data;
 }

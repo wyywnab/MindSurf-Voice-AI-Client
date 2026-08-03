@@ -10,6 +10,7 @@ import { useConnectionStore } from "../stores/connectionStore";
 import { useRequestStore } from "../stores/requestStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import type { AppInfo } from "../types/app";
+import type { ServiceProfile } from "../types/settings";
 import {
   VOICE_MODE_LABELS,
   type OverlayPosition,
@@ -24,9 +25,21 @@ const props = defineProps<{
 const connectionState = useConnectionStore().state;
 const requestState = useRequestStore().state;
 const settingsState = useSettingsStore().state;
+const activeServiceProfile = computed(() =>
+  settingsState.serviceProfiles.find(
+    (profile) => profile.id === settingsState.activeServiceProfileId,
+  ),
+);
+const serviceNameInput = ref(activeServiceProfile.value?.name ?? "");
 const serviceUrlInput = ref(settingsState.serviceUrl);
 const tokenInput = ref("");
 const autoConnectInput = ref(settingsState.autoConnect);
+const authModeInput = ref<ServiceProfile["authMode"]>(
+  activeServiceProfile.value?.authMode ?? "none",
+);
+const preferredPipelineInput = ref<ServiceProfile["preferredPipeline"]>(
+  activeServiceProfile.value?.preferredPipeline ?? "auto",
+);
 const serviceSaveError = ref("");
 const serviceSaveStatus = ref("");
 const microphoneTestStatus = ref<"idle" | "testing" | "succeeded" | "failed">("idle");
@@ -143,14 +156,49 @@ async function saveService() {
   serviceSaveStatus.value = "";
   try {
     await settingsController.saveServiceSettings({
+      name: serviceNameInput.value.trim(),
       url: serviceUrlInput.value,
       autoConnect: autoConnectInput.value,
+      authMode: authModeInput.value,
+      preferredPipeline: preferredPipelineInput.value,
       token: tokenInput.value,
     });
     tokenInput.value = "";
     serviceSaveStatus.value = "服务配置已保存";
   } catch (error) {
     serviceSaveError.value = error instanceof Error ? error.message : "保存失败";
+  }
+}
+
+async function selectServiceProfile(event: Event) {
+  serviceSaveError.value = "";
+  try {
+    await settingsController.selectServiceProfile(
+      (event.target as HTMLSelectElement).value,
+    );
+  } catch (error) {
+    serviceSaveError.value = error instanceof Error ? error.message : "切换失败";
+  }
+}
+
+async function createServiceProfile(copyCurrent: boolean) {
+  serviceSaveError.value = "";
+  try {
+    await settingsController.createServiceProfile(copyCurrent);
+    serviceSaveStatus.value = copyCurrent ? "配置已复制" : "已创建新配置";
+  } catch (error) {
+    serviceSaveError.value = error instanceof Error ? error.message : "创建失败";
+  }
+}
+
+async function deleteServiceProfile() {
+  if (!globalThis.confirm(`确认删除“${activeServiceProfile.value?.name}”？`)) return;
+  serviceSaveError.value = "";
+  try {
+    await settingsController.deleteServiceProfile();
+    serviceSaveStatus.value = "配置已删除";
+  } catch (error) {
+    serviceSaveError.value = error instanceof Error ? error.message : "删除失败";
   }
 }
 
@@ -169,11 +217,16 @@ async function testConnection() {
   serviceSaveError.value = "";
   const info = props.appInfo;
   try {
-    await settingsController.testConnection(serviceUrlInput.value, {
-      version: info?.version ?? "0.1.0",
-      platform: info?.platform ?? "unknown",
-      arch: info?.arch ?? "unknown",
-    });
+    await settingsController.testConnection(
+      serviceUrlInput.value,
+      {
+        version: info?.version ?? "0.1.0",
+        platform: info?.platform ?? "unknown",
+        arch: info?.arch ?? "unknown",
+      },
+      authModeInput.value,
+      preferredPipelineInput.value,
+    );
   } catch {
     // Store: 连接测试错误由 settingsStore 展示。
   }
@@ -220,10 +273,20 @@ async function testMicrophone() {
 }
 
 watch(
-  () => [settingsState.serviceUrl, settingsState.autoConnect] as const,
-  ([url, autoConnect]) => {
+  () =>
+    [
+      settingsState.activeServiceProfileId,
+      settingsState.serviceUrl,
+      settingsState.autoConnect,
+    ] as const,
+  ([, url, autoConnect]) => {
+    const profile = activeServiceProfile.value;
+    serviceNameInput.value = profile?.name ?? "";
     serviceUrlInput.value = url;
     autoConnectInput.value = autoConnect;
+    authModeInput.value = profile?.authMode ?? "none";
+    preferredPipelineInput.value = profile?.preferredPipeline ?? "auto";
+    tokenInput.value = "";
   },
   { immediate: true },
 );
@@ -258,6 +321,50 @@ onBeforeUnmount(() => {
       <div class="settings-list">
         <h2 class="settings-category">服务连接</h2>
         <article>
+          <span>服务档案</span>
+          <div class="shortcut-setting">
+            <select
+              :value="settingsState.activeServiceProfileId"
+              :disabled="Boolean(requestState.activeRequestId)"
+              @change="selectServiceProfile"
+            >
+              <option
+                v-for="profile in settingsState.serviceProfiles"
+                :key="profile.id"
+                :value="profile.id"
+              >
+                {{ profile.name }}
+              </option>
+            </select>
+            <button
+              class="button button-secondary"
+              type="button"
+              @click="createServiceProfile(false)"
+            >
+              新建
+            </button>
+            <button
+              class="button button-secondary"
+              type="button"
+              @click="createServiceProfile(true)"
+            >
+              复制
+            </button>
+            <button
+              class="button button-ghost"
+              type="button"
+              :disabled="settingsState.serviceProfiles.length <= 1"
+              @click="deleteServiceProfile"
+            >
+              删除
+            </button>
+          </div>
+        </article>
+        <article>
+          <span>档案名称</span>
+          <input v-model="serviceNameInput" maxlength="80" />
+        </article>
+        <article>
           <span>WebSocket 地址</span>
           <input
             v-model="serviceUrlInput"
@@ -266,6 +373,21 @@ onBeforeUnmount(() => {
             :disabled="Boolean(requestState.activeRequestId)"
             placeholder="wss://example.com/v1/voice/ws"
           />
+        </article>
+        <article>
+          <span>鉴权方式</span>
+          <select v-model="authModeInput">
+            <option value="none">无鉴权</option>
+            <option value="bearer">Bearer Token</option>
+          </select>
+        </article>
+        <article>
+          <span>首选 Pipeline</span>
+          <select v-model="preferredPipelineInput">
+            <option value="auto">自动协商</option>
+            <option value="cascade">Cascade</option>
+            <option value="native_audio">Native Audio</option>
+          </select>
         </article>
         <article>
           <span>服务 Token</span>

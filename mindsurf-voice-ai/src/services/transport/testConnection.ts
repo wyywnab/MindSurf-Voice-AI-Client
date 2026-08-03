@@ -5,6 +5,9 @@ import { VoiceTransport, type VoiceClientIdentity } from "./voiceTransport";
 export function testVoiceServiceConnection(
   url: string,
   identity: VoiceClientIdentity,
+  profileId: string,
+  useToken: boolean,
+  preferredPipeline: "auto" | "cascade" | "native_audio",
 ): Promise<ServiceConnectionTestResult> {
   return new Promise((resolve, reject) => {
     const startedAt = performance.now();
@@ -36,6 +39,19 @@ export function testVoiceServiceConnection(
         },
         onReconnectAttempt: () => undefined,
         onServerHello: (hello) => {
+          if (preferredPipeline !== "auto" && hello.pipeline !== preferredPipeline) {
+            finish(
+              () =>
+                reject(
+                  new Error(
+                    `服务 Pipeline 为 ${hello.pipeline}，与档案要求的 ${preferredPipeline} 不一致`,
+                  ),
+                ),
+              transport,
+              timer,
+            );
+            return;
+          }
           const modelCount =
             hello.inference_options.asr.length +
             hello.inference_options.llm.length +
@@ -61,7 +77,8 @@ export function testVoiceServiceConnection(
       },
       {
         autoReconnect: false,
-        tokenProvider: readServiceTokenForConnection,
+        tokenProvider: () =>
+          useToken ? readServiceTokenForConnection(profileId) : Promise.resolve(null),
       },
     );
     const timer = setTimeout(() => {

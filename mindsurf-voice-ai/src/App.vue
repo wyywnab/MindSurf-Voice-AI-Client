@@ -158,7 +158,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="app-footer">
-      <span>Phase 2 · M3 时间线与运行日志</span>
+      <span>Phase 2 · 服务档案与诊断增强</span>
       <span v-if="appInfo">v{{ appInfo.version }} · {{ appInfo.buildProfile }}</span>
     </footer>
   </div>

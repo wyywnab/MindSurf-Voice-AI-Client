@@ -1323,6 +1323,17 @@ h1 {
   grid-column: 3 / -1;
 }
 
+.log-request-link {
+  grid-column: 3 / -1;
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
 .empty-state {
   margin: 8px 0;
   color: var(--text-muted);

@@ -77,6 +77,22 @@ pub fn export_diagnostics(
     }
 }
 
+#[tauri::command]
+pub fn clear_diagnostic_logs(app: AppHandle) -> CommandResult<()> {
+    match clear_logs(&app) {
+        Ok(()) => CommandResult::success(()),
+        Err(error) => CommandResult::failure(error),
+    }
+}
+
+#[tauri::command]
+pub fn open_diagnostic_log_directory(app: AppHandle) -> CommandResult<String> {
+    match open_log_directory(&app) {
+        Ok(path) => CommandResult::success(path),
+        Err(error) => CommandResult::failure(error),
+    }
+}
+
 fn append_log(app: &AppHandle, entry: &LogEntry) -> Result<(), AppError> {
     let _guard = log_lock();
     let directory = log_directory(app).map_err(diagnostics_error)?;
@@ -126,36 +142,154 @@ fn create_export(
         .duration_since(UNIX_EPOCH)
         .map_err(diagnostics_error)?
         .as_millis();
-    let export = root.join(format!("diagnostics-{timestamp}"));
-    let export_logs = export.join("logs");
-    fs::create_dir_all(&export_logs).map_err(diagnostics_error)?;
-    write_json(export.join("summary.json"), summary)?;
-    write_json(export.join("timelines.json"), timelines)?;
-    write_json(
-        export.join("app-info.json"),
-        &serde_json::json!({
-            "version": env!("CARGO_PKG_VERSION"),
-            "platform": std::env::consts::OS,
-            "arch": std::env::consts::ARCH,
-            "buildProfile": if cfg!(debug_assertions) { "debug" } else { "release" }
-        }),
-    )?;
+    fs::create_dir_all(&root).map_err(diagnostics_error)?;
+    let export = root.join(format!("diagnostic-{timestamp}.zip"));
+    let app_info = serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "platform": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "buildProfile": if cfg!(debug_assertions) { "debug" } else { "release" }
+    });
+    let environment = serde_json::json!({
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "family": std::env::consts::FAMILY,
+    });
     let source = log_directory(app).map_err(diagnostics_error)?;
     let paths = log_paths_newest_first(&source);
+    let mut combined_logs = Vec::new();
     for path in &paths {
-        if let Some(name) = path.file_name() {
-            fs::copy(path, export_logs.join(name)).map_err(diagnostics_error)?;
-        }
+        combined_logs.extend(fs::read(path).map_err(diagnostics_error)?);
     }
+    let entries = vec![
+        ("app-info.json", json_bytes(&app_info)?),
+        ("environment.json", json_bytes(&environment)?),
+        ("settings-sanitized.json", json_bytes(summary)?),
+        ("recent-requests.json", json_bytes(timelines)?),
+        ("timelines.json", json_bytes(timelines)?),
+        ("client.log", combined_logs),
+        (
+            "README.txt",
+            "MindSurf Voice AI diagnostic bundle\nSensitive credentials, full transcripts, replies, and audio are excluded.\n"
+                .as_bytes()
+                .to_vec(),
+        ),
+    ];
+    write_zip(&export, &entries)?;
     Ok(DiagnosticsExport {
         path: export.to_string_lossy().into_owned(),
         log_files: paths.len(),
     })
 }
 
-fn write_json(path: PathBuf, value: &Value) -> Result<(), AppError> {
-    let file = File::create(path).map_err(diagnostics_error)?;
-    serde_json::to_writer_pretty(file, value).map_err(diagnostics_error)
+fn json_bytes(value: &Value) -> Result<Vec<u8>, AppError> {
+    serde_json::to_vec_pretty(value).map_err(diagnostics_error)
+}
+
+fn clear_logs(app: &AppHandle) -> Result<(), AppError> {
+    let _guard = log_lock();
+    let directory = log_directory(app).map_err(diagnostics_error)?;
+    for path in log_paths_newest_first(&directory) {
+        fs::remove_file(path).map_err(diagnostics_error)?;
+    }
+    Ok(())
+}
+
+fn open_log_directory(app: &AppHandle) -> Result<String, AppError> {
+    let directory = log_directory(app).map_err(diagnostics_error)?;
+    fs::create_dir_all(&directory).map_err(diagnostics_error)?;
+    let status = if cfg!(target_os = "windows") {
+        std::process::Command::new("explorer")
+            .arg(&directory)
+            .status()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(&directory).status()
+    } else {
+        return Err(diagnostics_error(
+            "opening the log directory is unsupported",
+        ));
+    }
+    .map_err(diagnostics_error)?;
+    if !status.success() {
+        return Err(diagnostics_error("unable to open the log directory"));
+    }
+    Ok(directory.to_string_lossy().into_owned())
+}
+
+fn write_zip(path: &Path, entries: &[(&str, Vec<u8>)]) -> Result<(), AppError> {
+    let mut file = File::create(path).map_err(diagnostics_error)?;
+    let mut central = Vec::new();
+    let mut offset = 0u32;
+    for (name, data) in entries {
+        let name = name.as_bytes();
+        let crc = crc32(data);
+        write_u32(&mut file, 0x0403_4b50)?;
+        write_u16(&mut file, 20)?;
+        write_u16(&mut file, 0x0800)?;
+        write_u16(&mut file, 0)?;
+        write_u16(&mut file, 0)?;
+        write_u16(&mut file, 0)?;
+        write_u32(&mut file, crc)?;
+        write_u32(&mut file, data.len() as u32)?;
+        write_u32(&mut file, data.len() as u32)?;
+        write_u16(&mut file, name.len() as u16)?;
+        write_u16(&mut file, 0)?;
+        file.write_all(name).map_err(diagnostics_error)?;
+        file.write_all(data).map_err(diagnostics_error)?;
+
+        central.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+        central.extend_from_slice(&20u16.to_le_bytes());
+        central.extend_from_slice(&20u16.to_le_bytes());
+        central.extend_from_slice(&0x0800u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&crc.to_le_bytes());
+        central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        central.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u32.to_le_bytes());
+        central.extend_from_slice(&offset.to_le_bytes());
+        central.extend_from_slice(name);
+        offset += 30 + name.len() as u32 + data.len() as u32;
+    }
+    let central_offset = offset;
+    file.write_all(&central).map_err(diagnostics_error)?;
+    write_u32(&mut file, 0x0605_4b50)?;
+    write_u16(&mut file, 0)?;
+    write_u16(&mut file, 0)?;
+    write_u16(&mut file, entries.len() as u16)?;
+    write_u16(&mut file, entries.len() as u16)?;
+    write_u32(&mut file, central.len() as u32)?;
+    write_u32(&mut file, central_offset)?;
+    write_u16(&mut file, 0)
+}
+
+fn write_u16(writer: &mut File, value: u16) -> Result<(), AppError> {
+    writer
+        .write_all(&value.to_le_bytes())
+        .map_err(diagnostics_error)
+}
+
+fn write_u32(writer: &mut File, value: u32) -> Result<(), AppError> {
+    writer
+        .write_all(&value.to_le_bytes())
+        .map_err(diagnostics_error)
+}
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for byte in data {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(crc & 1));
+        }
+    }
+    !crc
 }
 
 fn rotate_if_needed(directory: &Path) -> std::io::Result<()> {
@@ -279,7 +413,7 @@ fn diagnostics_error(error: impl std::fmt::Display) -> AppError {
 mod tests {
     use serde_json::json;
 
-    use super::{redact_text, redact_value, rotate_if_needed, MAX_LOG_BYTES};
+    use super::{redact_text, redact_value, rotate_if_needed, write_zip, MAX_LOG_BYTES};
 
     #[test]
     fn redacts_credentials() {
@@ -304,5 +438,20 @@ mod tests {
         rotate_if_needed(&directory).expect("log should rotate");
         assert!(directory.join("rotated-1.log").exists());
         std::fs::remove_dir_all(directory).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn writes_a_standard_zip_container() {
+        let path = std::env::temp_dir().join(format!(
+            "mindsurf-diagnostics-test-{}.zip",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        write_zip(&path, &[("README.txt", b"diagnostics".to_vec())])
+            .expect("zip should be created");
+        let bytes = std::fs::read(&path).expect("zip should be readable");
+        assert!(bytes.starts_with(&0x0403_4b50u32.to_le_bytes()));
+        assert!(bytes.windows(4).any(|window| window == b"PK\x05\x06"));
+        std::fs::remove_file(path).expect("zip should be removed");
     }
 }

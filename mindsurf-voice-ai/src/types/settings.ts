@@ -3,11 +3,8 @@ import type { OverlayPosition, VoiceInteractionMode } from "./voice";
 
 export interface AppSettings {
   schemaVersion: 1;
-  service: {
-    url: string;
-    tokenConfigured: boolean;
-    autoConnect: boolean;
-  };
+  activeServiceProfileId: string;
+  serviceProfiles: ServiceProfile[];
   audio: {
     inputDeviceId: string | null;
     language: string;
@@ -36,6 +33,17 @@ export interface AppSettings {
   };
 }
 
+export interface ServiceProfile {
+  id: string;
+  name: string;
+  websocketUrl: string;
+  autoConnect: boolean;
+  authMode: "none" | "bearer";
+  preferredPipeline: "auto" | "cascade" | "native_audio";
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface AudioInputDevice {
   id: string;
   label: string;
@@ -53,11 +61,19 @@ export interface ServiceConnectionTestResult {
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   schemaVersion: 1,
-  service: {
-    url: "ws://127.0.0.1:8000/v1/voice/ws",
-    tokenConfigured: false,
-    autoConnect: true,
-  },
+  activeServiceProfileId: "local-mock",
+  serviceProfiles: [
+    {
+      id: "local-mock",
+      name: "本地 Mock",
+      websocketUrl: "ws://127.0.0.1:8000/v1/voice/ws",
+      autoConnect: true,
+      authMode: "none",
+      preferredPipeline: "auto",
+      createdAt: 0,
+      updatedAt: 0,
+    },
+  ],
   audio: {
     inputDeviceId: null,
     language: "auto",
