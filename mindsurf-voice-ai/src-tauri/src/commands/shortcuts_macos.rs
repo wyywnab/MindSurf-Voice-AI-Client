@@ -333,7 +333,7 @@ mod tests {
     fn configurable_system_hotkeys_are_distinct() {
         assert_ne!(
             shortcut_for_binding(&ShortcutBinding::new("control+alt+Space")).unwrap(),
-            shortcut_for_binding(&ShortcutBinding::new("control+shift+Space")).unwrap()
+            shortcut_for_binding(&ShortcutBinding::new("shift+control+Space")).unwrap()
         );
     }
 }
