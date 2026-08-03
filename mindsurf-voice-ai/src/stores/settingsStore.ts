@@ -60,6 +60,7 @@ const state = reactive({
   selectedLlmId: defaults.inference.llmId,
   selectedOutputAudioId: defaults.inference.outputAudioId,
   selectedTtsId: defaults.inference.ttsId,
+  developerMode: defaults.developer.enabled,
 });
 
 function platformDefaultShortcut(binding: ShortcutBinding): ShortcutBinding {
@@ -100,6 +101,7 @@ function applySettings(settings: AppSettings) {
   state.selectedLlmId = settings.inference.llmId;
   state.selectedTtsId = settings.inference.ttsId;
   state.selectedOutputAudioId = settings.inference.outputAudioId;
+  state.developerMode = settings.developer.enabled;
 }
 
 function snapshot(): AppSettings {
@@ -132,6 +134,9 @@ function snapshot(): AppSettings {
       llmId: state.selectedLlmId,
       ttsId: state.selectedTtsId,
       outputAudioId: state.selectedOutputAudioId,
+    },
+    developer: {
+      enabled: state.developerMode,
     },
   };
 }
@@ -295,6 +300,10 @@ export const settingsStoreActions = {
     state.connectionTestStatus = status;
     state.connectionTestResult = result;
     state.connectionTestError = error;
+  },
+  setDeveloperMode(enabled: boolean) {
+    state.developerMode = enabled;
+    persistSoon();
   },
   setInferenceOption(kind: InferenceOptionKind, id: string) {
     setSelectedOption(kind, id);

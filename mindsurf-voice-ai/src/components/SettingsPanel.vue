@@ -7,6 +7,7 @@ import { runMicrophoneTest } from "../services/microphoneTest";
 import { formatShortcutBinding } from "../services/shortcutBinding";
 import { recordShortcutBinding } from "../services/shortcutRecorder";
 import { clearLocalApplicationData } from "../services/settings/privacy";
+import { showConfirm } from "../services/systemDialog";
 import { useConnectionStore } from "../stores/connectionStore";
 import { useRequestStore } from "../stores/requestStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -43,7 +44,6 @@ const preferredPipelineInput = ref<ServiceProfile["preferredPipeline"]>(
 );
 const serviceSaveError = ref("");
 const serviceSaveStatus = ref("");
-const pendingDeleteProfileId = ref<string | null>(null);
 const microphoneTestStatus = ref<"idle" | "testing" | "succeeded" | "failed">("idle");
 const microphoneTestLevel = ref(0);
 const microphoneTestError = ref("");
@@ -176,7 +176,6 @@ async function saveService() {
 
 async function selectServiceProfile(event: Event) {
   serviceSaveError.value = "";
-  pendingDeleteProfileId.value = null;
   try {
     await settingsController.selectServiceProfile(
       (event.target as HTMLSelectElement).value,
@@ -196,23 +195,20 @@ async function createServiceProfile(copyCurrent: boolean) {
   }
 }
 
-function requestServiceProfileDeletion() {
-  pendingDeleteProfileId.value = activeServiceProfile.value?.id ?? null;
+async function deleteServiceProfile() {
+  const profile = activeServiceProfile.value;
+  const profileId = profile?.id;
+  if (!profileId) return;
+  const confirmed = await showConfirm(`确认删除“${profile.name}”？`, {
+    title: "删除服务档案",
+    kind: "warning",
+    confirmLabel: "删除",
+  });
+  if (!confirmed) return;
   serviceSaveError.value = "";
   serviceSaveStatus.value = "";
-}
-
-function cancelServiceProfileDeletion() {
-  pendingDeleteProfileId.value = null;
-}
-
-async function confirmServiceProfileDeletion() {
-  const profileId = pendingDeleteProfileId.value;
-  if (!profileId) return;
-  serviceSaveError.value = "";
   try {
     await settingsController.deleteServiceProfile(profileId);
-    pendingDeleteProfileId.value = null;
     serviceSaveStatus.value = "配置已删除";
   } catch (error) {
     serviceSaveError.value = error instanceof Error ? error.message : "删除失败";
@@ -274,6 +270,12 @@ function updatePlaybackVolume(event: Event) {
   );
 }
 
+function updateDeveloperMode(event: Event) {
+  settingsController.setDeveloperMode(
+    (event.target as unknown as { checked: boolean }).checked,
+  );
+}
+
 async function testMicrophone() {
   microphoneTestStatus.value = "testing";
   microphoneTestError.value = "";
@@ -290,12 +292,11 @@ async function testMicrophone() {
 }
 
 async function clearLocalData() {
-  if (
-    !globalThis.confirm(
-      "确认清除全部本地数据？这会重置所有设置和服务档案，删除已保存的 Token 与诊断日志，且无法撤销。",
-    )
-  )
-    return;
+  const confirmed = await showConfirm(
+    "确认清除全部本地数据？这会重置所有设置和服务档案，删除已保存的 Token 与诊断日志，且无法撤销。",
+    { title: "清除本地数据", kind: "warning", confirmLabel: "清除" },
+  );
+  if (!confirmed) return;
   localDataClearStatus.value = "clearing";
   localDataClearError.value = "";
   try {
@@ -387,30 +388,13 @@ onBeforeUnmount(() => {
               复制
             </button>
             <button
-              v-if="pendingDeleteProfileId !== settingsState.activeServiceProfileId"
               class="button button-ghost"
               type="button"
               :disabled="settingsState.serviceProfiles.length <= 1"
-              @click="requestServiceProfileDeletion"
+              @click="deleteServiceProfile"
             >
               删除
             </button>
-            <template v-else>
-              <button
-                class="button button-stop"
-                type="button"
-                @click="confirmServiceProfileDeletion"
-              >
-                确认删除
-              </button>
-              <button
-                class="button button-secondary"
-                type="button"
-                @click="cancelServiceProfileDeletion"
-              >
-                取消
-              </button>
-            </template>
           </div>
         </article>
         <article>
@@ -812,6 +796,21 @@ onBeforeUnmount(() => {
               {{ localDataClearStatus === "clearing" ? "清除中…" : "清除本地数据" }}
             </button>
             <small>设置、全部服务 Token 与诊断日志</small>
+          </div>
+        </article>
+        <h2 class="settings-category">开发</h2>
+        <article>
+          <span>开发模式</span>
+          <div class="shortcut-setting">
+            <label class="setting-toggle">
+              <input
+                :checked="settingsState.developerMode"
+                type="checkbox"
+                @change="updateDeveloperMode"
+              />
+              使用 WebView 默认右键菜单
+            </label>
+            <small>关闭时使用应用原生编辑菜单</small>
           </div>
         </article>
       </div>

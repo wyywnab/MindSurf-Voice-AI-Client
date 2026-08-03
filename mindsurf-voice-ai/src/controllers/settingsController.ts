@@ -187,6 +187,10 @@ export class SettingsController {
     return true;
   }
 
+  setDeveloperMode(enabled: boolean) {
+    settingsStoreActions.setDeveloperMode(enabled);
+  }
+
   setLanguage(language: string) {
     settingsStoreActions.setLanguage(language);
   }

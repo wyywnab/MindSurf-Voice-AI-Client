@@ -31,6 +31,9 @@ export interface AppSettings {
     ttsId: string;
     outputAudioId: string;
   };
+  developer: {
+    enabled: boolean;
+  };
 }
 
 export interface ServiceProfile {
@@ -103,5 +106,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
     llmId: "",
     ttsId: "",
     outputAudioId: "",
+  },
+  developer: {
+    enabled: false,
   },
 };

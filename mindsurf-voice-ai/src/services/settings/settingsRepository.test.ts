@@ -24,6 +24,19 @@ describe("parseSettings", () => {
     expect(parsed.interaction.injectionMaxCodePoints).toBe(8_000);
   });
 
+  it("loads developer mode only when explicitly enabled", () => {
+    const settings = structuredClone(DEFAULT_APP_SETTINGS);
+    settings.developer.enabled = true;
+    expect(parseSettings(settings).developer.enabled).toBe(true);
+
+    const legacy = structuredClone(DEFAULT_APP_SETTINGS) as unknown as Record<
+      string,
+      unknown
+    >;
+    delete legacy.developer;
+    expect(parseSettings(legacy).developer.enabled).toBe(false);
+  });
+
   it("keeps valid service profiles and rejects malformed entries", () => {
     const settings = structuredClone(DEFAULT_APP_SETTINGS) as unknown as Record<
       string,

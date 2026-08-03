@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 
 import { voiceRequestController } from "../controllers/voiceRequestController";
 import { calculateTimelineMetrics } from "../services/diagnostics/timeline";
+import { showConfirm } from "../services/systemDialog";
 import { useConnectionStore } from "../stores/connectionStore";
 import {
   diagnosticsStoreActions,
@@ -72,8 +73,9 @@ function serviceOrigin(value: string) {
 }
 
 async function confirmExport() {
-  const confirmed = globalThis.confirm(
+  const confirmed = await showConfirm(
     "诊断包将包含应用信息、脱敏后的服务地址、请求时间线和轮转日志；不会包含 Token、完整转录、完整回复或音频。确认导出？",
+    { title: "导出诊断包", kind: "warning", confirmLabel: "导出" },
   );
   if (confirmed) {
     await diagnosticsStoreActions.export({
@@ -98,7 +100,13 @@ function selectLogRequest(requestId: string | undefined) {
 }
 
 async function clearLogs() {
-  if (globalThis.confirm("确认清空全部本地运行日志？")) {
+  if (
+    await showConfirm("确认清空全部本地运行日志？", {
+      title: "清空运行日志",
+      kind: "warning",
+      confirmLabel: "清空",
+    })
+  ) {
     await diagnosticsStoreActions.clearLogs();
   }
 }

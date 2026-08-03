@@ -6,6 +6,7 @@ import ConnectionPanel from "./components/ConnectionPanel.vue";
 import PermissionsPanel from "./components/PermissionsPanel.vue";
 import RecorderPanel from "./components/RecorderPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
+import SystemDialogHost from "./components/SystemDialogHost.vue";
 import TopTabs from "./components/TopTabs.vue";
 import { settingsController } from "./controllers/settingsController";
 import { voiceRequestController } from "./controllers/voiceRequestController";
@@ -135,6 +136,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-shell">
+    <SystemDialogHost />
     <header class="app-header">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">M</span>

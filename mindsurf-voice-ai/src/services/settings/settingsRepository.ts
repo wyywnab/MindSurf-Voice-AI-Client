@@ -55,6 +55,7 @@ export function parseSettings(value: unknown): AppSettings {
   const shortcut = isRecord(value.shortcut) ? value.shortcut : {};
   const overlay = isRecord(value.overlay) ? value.overlay : {};
   const inference = isRecord(value.inference) ? value.inference : {};
+  const developer = isRecord(value.developer) ? value.developer : {};
   const autoInjection = isRecord(interaction.autoInjection)
     ? interaction.autoInjection
     : {};
@@ -106,6 +107,9 @@ export function parseSettings(value: unknown): AppSettings {
       llmId: stringValue(inference.llmId, ""),
       ttsId: stringValue(inference.ttsId, ""),
       outputAudioId: stringValue(inference.outputAudioId, ""),
+    },
+    developer: {
+      enabled: booleanValue(developer.enabled, false),
     },
   };
 }

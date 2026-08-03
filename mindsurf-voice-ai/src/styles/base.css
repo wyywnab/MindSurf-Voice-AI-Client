@@ -573,6 +573,52 @@ h1 {
   font-size: 0.72rem;
 }
 
+.system-dialog-backdrop {
+  position: fixed;
+  z-index: 10000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 38%);
+}
+
+.system-dialog {
+  width: min(420px, 100%);
+  padding: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 24%);
+}
+
+.system-dialog h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.system-dialog p {
+  margin: 12px 0 18px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.system-dialog[data-kind="warning"] {
+  border-color: var(--warning);
+}
+
+.system-dialog[data-kind="error"] {
+  border-color: var(--danger-border);
+}
+
+.system-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .inline-action {
   margin-left: 10px;
   padding: 0;
