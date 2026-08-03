@@ -11,6 +11,10 @@ if (isOverlay) {
 }
 
 const settings = useSettingsStore();
-installNativeContextMenu(() => settings.state.developerMode);
+installNativeContextMenu(
+  () =>
+    settings.state.developerModeEnabled &&
+    settings.state.developerUseWebViewContextMenu,
+);
 
 createApp(isOverlay ? OverlayApp : App).mount("#app");

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import ConnectionBadge from "./components/ConnectionBadge.vue";
 import ConnectionPanel from "./components/ConnectionPanel.vue";
@@ -21,13 +21,6 @@ import type { AppInfo } from "./types/app";
 import type { MainTab, MainTabId } from "./types/navigation";
 import type { SystemPermission } from "./types/permissions";
 
-const tabs: readonly MainTab[] = [
-  { id: "record", label: "录音" },
-  { id: "connection", label: "诊断" },
-  { id: "permissions", label: "权限" },
-  { id: "settings", label: "设置" },
-];
-
 const macPermissions: readonly SystemPermission[] = ["microphone", "accessibility"];
 
 const activeTab = ref<MainTabId>("record");
@@ -35,8 +28,31 @@ const appInfo = ref<AppInfo | null>(null);
 const appInfoError = ref("");
 const connection = useConnectionStore();
 const settings = useSettingsStore();
+const diagnosticsPageVisible = computed(
+  () =>
+    settings.state.developerModeEnabled && settings.state.developerShowDiagnosticsPage,
+);
+const tabs = computed<readonly MainTab[]>(() => [
+  { id: "record", label: "录音" },
+  ...(diagnosticsPageVisible.value
+    ? ([{ id: "connection", label: "诊断" }] satisfies MainTab[])
+    : []),
+  { id: "permissions", label: "权限" },
+  { id: "settings", label: "设置" },
+]);
 let trayDisposed = false;
 let unlistenTray: (() => void) | null = null;
+
+watch(diagnosticsPageVisible, (visible) => {
+  if (!visible && activeTab.value === "connection") {
+    activeTab.value = "record";
+  }
+});
+
+function navigateTo(page: MainTabId) {
+  if (page === "connection" && !diagnosticsPageVisible.value) return;
+  activeTab.value = page;
+}
 
 async function configureStartupPermissions(platform: string) {
   if (platform !== "macos") {
@@ -79,7 +95,7 @@ onMounted(async () => {
       }
     },
     onNavigate: (page) => {
-      activeTab.value = page;
+      navigateTo(page);
     },
   })
     .then((unlisten) => {
@@ -150,7 +166,7 @@ onBeforeUnmount(() => {
 
     <main class="app-content">
       <RecorderPanel v-show="activeTab === 'record'" />
-      <ConnectionPanel v-show="activeTab === 'connection'" />
+      <ConnectionPanel v-if="diagnosticsPageVisible && activeTab === 'connection'" />
       <PermissionsPanel v-show="activeTab === 'permissions'" :app-info="appInfo" />
       <SettingsPanel
         v-show="activeTab === 'settings'"

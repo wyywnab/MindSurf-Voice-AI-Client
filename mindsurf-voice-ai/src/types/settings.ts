@@ -33,6 +33,8 @@ export interface AppSettings {
   };
   developer: {
     enabled: boolean;
+    useWebViewContextMenu: boolean;
+    showDiagnosticsPage: boolean;
   };
 }
 
@@ -109,5 +111,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   },
   developer: {
     enabled: false,
+    useWebViewContextMenu: false,
+    showDiagnosticsPage: false,
   },
 };

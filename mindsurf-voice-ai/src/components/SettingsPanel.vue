@@ -276,6 +276,18 @@ function updateDeveloperMode(event: Event) {
   );
 }
 
+function updateDeveloperUseWebViewContextMenu(event: Event) {
+  settingsController.setDeveloperUseWebViewContextMenu(
+    (event.target as unknown as { checked: boolean }).checked,
+  );
+}
+
+function updateDeveloperShowDiagnosticsPage(event: Event) {
+  settingsController.setDeveloperShowDiagnosticsPage(
+    (event.target as unknown as { checked: boolean }).checked,
+  );
+}
+
 async function testMicrophone() {
   microphoneTestStatus.value = "testing";
   microphoneTestError.value = "";
@@ -795,23 +807,45 @@ onBeforeUnmount(() => {
             >
               {{ localDataClearStatus === "clearing" ? "清除中…" : "清除本地数据" }}
             </button>
-            <small>设置、全部服务 Token 与诊断日志</small>
           </div>
+          <small>设置、全部服务 Token 与诊断日志</small>
         </article>
         <h2 class="settings-category">开发</h2>
         <article>
           <span>开发模式</span>
-          <div class="shortcut-setting">
-            <label class="setting-toggle">
-              <input
-                :checked="settingsState.developerMode"
-                type="checkbox"
-                @change="updateDeveloperMode"
-              />
-              使用 WebView 默认右键菜单
-            </label>
-            <small>关闭时使用应用原生编辑菜单</small>
-          </div>
+          <label class="setting-toggle">
+            <input
+              :checked="settingsState.developerModeEnabled"
+              type="checkbox"
+              @change="updateDeveloperMode"
+            />
+            启用开发功能
+          </label>
+          <small>开启后可配置调试右键菜单和诊断页面</small>
+        </article>
+        <article v-if="settingsState.developerModeEnabled">
+          <span>右键菜单</span>
+          <label class="setting-toggle">
+            <input
+              :checked="settingsState.developerUseWebViewContextMenu"
+              type="checkbox"
+              @change="updateDeveloperUseWebViewContextMenu"
+            />
+            使用 WebView 默认右键菜单
+          </label>
+          <small>关闭时使用应用原生编辑菜单</small>
+        </article>
+        <article v-if="settingsState.developerModeEnabled">
+          <span>诊断页面</span>
+          <label class="setting-toggle">
+            <input
+              :checked="settingsState.developerShowDiagnosticsPage"
+              type="checkbox"
+              @change="updateDeveloperShowDiagnosticsPage"
+            />
+            显示诊断页面
+          </label>
+          <small>在主导航中显示连接与诊断工具</small>
         </article>
       </div>
       <p v-if="serviceSaveError" class="inline-error" role="alert">

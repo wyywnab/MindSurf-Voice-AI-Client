@@ -4,6 +4,17 @@ import type { ServerHelloPayload } from "../types/protocol";
 import { settingsStoreActions, useSettingsStore } from "./settingsStore";
 
 describe("settingsStore runtime fallbacks", () => {
+  it("stores the developer master switch and its feature toggles separately", () => {
+    settingsStoreActions.setDeveloperMode(true);
+    settingsStoreActions.setDeveloperUseWebViewContextMenu(true);
+    settingsStoreActions.setDeveloperShowDiagnosticsPage(true);
+
+    const settings = useSettingsStore().state;
+    expect(settings.developerModeEnabled).toBe(true);
+    expect(settings.developerUseWebViewContextMenu).toBe(true);
+    expect(settings.developerShowDiagnosticsPage).toBe(true);
+  });
+
   it("falls back when the selected microphone disappears", () => {
     settingsStoreActions.setInputDeviceId("removed-device");
     settingsStoreActions.setAudioDevices([

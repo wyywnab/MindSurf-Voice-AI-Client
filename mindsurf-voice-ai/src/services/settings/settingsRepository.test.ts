@@ -27,14 +27,20 @@ describe("parseSettings", () => {
   it("loads developer mode only when explicitly enabled", () => {
     const settings = structuredClone(DEFAULT_APP_SETTINGS);
     settings.developer.enabled = true;
-    expect(parseSettings(settings).developer.enabled).toBe(true);
+    settings.developer.useWebViewContextMenu = true;
+    settings.developer.showDiagnosticsPage = true;
+    expect(parseSettings(settings).developer).toEqual({
+      enabled: true,
+      useWebViewContextMenu: true,
+      showDiagnosticsPage: true,
+    });
 
     const legacy = structuredClone(DEFAULT_APP_SETTINGS) as unknown as Record<
       string,
       unknown
     >;
     delete legacy.developer;
-    expect(parseSettings(legacy).developer.enabled).toBe(false);
+    expect(parseSettings(legacy).developer).toEqual(DEFAULT_APP_SETTINGS.developer);
   });
 
   it("keeps valid service profiles and rejects malformed entries", () => {

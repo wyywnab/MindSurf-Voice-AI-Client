@@ -60,7 +60,9 @@ const state = reactive({
   selectedLlmId: defaults.inference.llmId,
   selectedOutputAudioId: defaults.inference.outputAudioId,
   selectedTtsId: defaults.inference.ttsId,
-  developerMode: defaults.developer.enabled,
+  developerModeEnabled: defaults.developer.enabled,
+  developerUseWebViewContextMenu: defaults.developer.useWebViewContextMenu,
+  developerShowDiagnosticsPage: defaults.developer.showDiagnosticsPage,
 });
 
 function platformDefaultShortcut(binding: ShortcutBinding): ShortcutBinding {
@@ -101,7 +103,9 @@ function applySettings(settings: AppSettings) {
   state.selectedLlmId = settings.inference.llmId;
   state.selectedTtsId = settings.inference.ttsId;
   state.selectedOutputAudioId = settings.inference.outputAudioId;
-  state.developerMode = settings.developer.enabled;
+  state.developerModeEnabled = settings.developer.enabled;
+  state.developerUseWebViewContextMenu = settings.developer.useWebViewContextMenu;
+  state.developerShowDiagnosticsPage = settings.developer.showDiagnosticsPage;
 }
 
 function snapshot(): AppSettings {
@@ -136,7 +140,9 @@ function snapshot(): AppSettings {
       outputAudioId: state.selectedOutputAudioId,
     },
     developer: {
-      enabled: state.developerMode,
+      enabled: state.developerModeEnabled,
+      useWebViewContextMenu: state.developerUseWebViewContextMenu,
+      showDiagnosticsPage: state.developerShowDiagnosticsPage,
     },
   };
 }
@@ -302,7 +308,15 @@ export const settingsStoreActions = {
     state.connectionTestError = error;
   },
   setDeveloperMode(enabled: boolean) {
-    state.developerMode = enabled;
+    state.developerModeEnabled = enabled;
+    persistSoon();
+  },
+  setDeveloperUseWebViewContextMenu(enabled: boolean) {
+    state.developerUseWebViewContextMenu = enabled;
+    persistSoon();
+  },
+  setDeveloperShowDiagnosticsPage(enabled: boolean) {
+    state.developerShowDiagnosticsPage = enabled;
     persistSoon();
   },
   setInferenceOption(kind: InferenceOptionKind, id: string) {

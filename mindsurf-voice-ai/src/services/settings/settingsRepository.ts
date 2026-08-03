@@ -110,6 +110,8 @@ export function parseSettings(value: unknown): AppSettings {
     },
     developer: {
       enabled: booleanValue(developer.enabled, false),
+      useWebViewContextMenu: booleanValue(developer.useWebViewContextMenu, false),
+      showDiagnosticsPage: booleanValue(developer.showDiagnosticsPage, false),
     },
   };
 }

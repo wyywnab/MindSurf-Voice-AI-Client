@@ -191,6 +191,14 @@ export class SettingsController {
     settingsStoreActions.setDeveloperMode(enabled);
   }
 
+  setDeveloperUseWebViewContextMenu(enabled: boolean) {
+    settingsStoreActions.setDeveloperUseWebViewContextMenu(enabled);
+  }
+
+  setDeveloperShowDiagnosticsPage(enabled: boolean) {
+    settingsStoreActions.setDeveloperShowDiagnosticsPage(enabled);
+  }
+
   setLanguage(language: string) {
     settingsStoreActions.setLanguage(language);
   }

@@ -25,11 +25,11 @@ function nativeEditMenu() {
 }
 
 export function installNativeContextMenu(
-  developerMode: () => boolean,
+  useWebViewDefaultMenu: () => boolean,
   eventTarget: ContextMenuEventTarget = globalThis,
 ) {
   const handleContextMenu = (event: MouseEvent) => {
-    if (developerMode() || !isTauri()) return;
+    if (useWebViewDefaultMenu() || !isTauri()) return;
     event.preventDefault();
     void nativeEditMenu()
       .then((menu) => menu.popup())
