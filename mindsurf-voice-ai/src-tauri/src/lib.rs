@@ -41,6 +41,7 @@ pub fn run() {
             commands::permissions::get_system_permission_status,
             commands::permissions::open_permission_settings,
             commands::permissions::request_system_permission,
+            commands::privacy::clear_local_application_data,
             commands::native_recorder::cancel_native_audio_recording,
             commands::native_recorder::native_audio_recording_level,
             commands::native_recorder::native_audio_recording_meter,

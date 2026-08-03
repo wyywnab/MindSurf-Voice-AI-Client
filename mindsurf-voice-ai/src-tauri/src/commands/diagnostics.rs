@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::error::{AppError, CommandResult};
 
@@ -43,7 +43,14 @@ pub fn initialize(app: &AppHandle) -> tauri::Result<()> {
 }
 
 #[tauri::command]
-pub fn write_log_entry(app: AppHandle, mut entry: LogEntry) -> CommandResult<()> {
+pub fn write_log_entry(
+    window: WebviewWindow,
+    app: AppHandle,
+    mut entry: LogEntry,
+) -> CommandResult<()> {
+    if let Err(error) = super::access::require_main_window(&window) {
+        return CommandResult::failure(error);
+    }
     redact_log_entry(&mut entry);
     match append_log(&app, &entry) {
         Ok(()) => CommandResult::success(()),
@@ -53,10 +60,14 @@ pub fn write_log_entry(app: AppHandle, mut entry: LogEntry) -> CommandResult<()>
 
 #[tauri::command]
 pub fn read_recent_log_entries(
+    window: WebviewWindow,
     app: AppHandle,
     limit: usize,
     before_timestamp_ms: Option<u64>,
 ) -> CommandResult<Vec<LogEntry>> {
+    if let Err(error) = super::access::require_main_window(&window) {
+        return CommandResult::failure(error);
+    }
     match read_logs(&app, limit.clamp(1, MAX_READ_ENTRIES), before_timestamp_ms) {
         Ok(entries) => CommandResult::success(entries),
         Err(error) => CommandResult::failure(error),
@@ -65,10 +76,14 @@ pub fn read_recent_log_entries(
 
 #[tauri::command]
 pub fn export_diagnostics(
+    window: WebviewWindow,
     app: AppHandle,
     mut summary: Value,
     mut timelines: Value,
 ) -> CommandResult<DiagnosticsExport> {
+    if let Err(error) = super::access::require_main_window(&window) {
+        return CommandResult::failure(error);
+    }
     redact_value(&mut summary);
     redact_value(&mut timelines);
     match create_export(&app, &summary, &timelines) {
@@ -78,7 +93,10 @@ pub fn export_diagnostics(
 }
 
 #[tauri::command]
-pub fn clear_diagnostic_logs(app: AppHandle) -> CommandResult<()> {
+pub fn clear_diagnostic_logs(window: WebviewWindow, app: AppHandle) -> CommandResult<()> {
+    if let Err(error) = super::access::require_main_window(&window) {
+        return CommandResult::failure(error);
+    }
     match clear_logs(&app) {
         Ok(()) => CommandResult::success(()),
         Err(error) => CommandResult::failure(error),
@@ -86,7 +104,13 @@ pub fn clear_diagnostic_logs(app: AppHandle) -> CommandResult<()> {
 }
 
 #[tauri::command]
-pub fn open_diagnostic_log_directory(app: AppHandle) -> CommandResult<String> {
+pub fn open_diagnostic_log_directory(
+    window: WebviewWindow,
+    app: AppHandle,
+) -> CommandResult<String> {
+    if let Err(error) = super::access::require_main_window(&window) {
+        return CommandResult::failure(error);
+    }
     match open_log_directory(&app) {
         Ok(path) => CommandResult::success(path),
         Err(error) => CommandResult::failure(error),
@@ -186,7 +210,7 @@ fn json_bytes(value: &Value) -> Result<Vec<u8>, AppError> {
     serde_json::to_vec_pretty(value).map_err(diagnostics_error)
 }
 
-fn clear_logs(app: &AppHandle) -> Result<(), AppError> {
+pub(crate) fn clear_logs(app: &AppHandle) -> Result<(), AppError> {
     let _guard = log_lock();
     let directory = log_directory(app).map_err(diagnostics_error)?;
     for path in log_paths_newest_first(&directory) {

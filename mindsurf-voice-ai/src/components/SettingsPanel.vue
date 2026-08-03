@@ -6,6 +6,7 @@ import { subscribeAudioDeviceChanges } from "../services/audioInputDevices";
 import { runMicrophoneTest } from "../services/microphoneTest";
 import { formatShortcutBinding } from "../services/shortcutBinding";
 import { recordShortcutBinding } from "../services/shortcutRecorder";
+import { clearLocalApplicationData } from "../services/settings/privacy";
 import { useConnectionStore } from "../stores/connectionStore";
 import { useRequestStore } from "../stores/requestStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -48,6 +49,8 @@ const microphoneTestError = ref("");
 const shortcutCaptureStatus = ref<"idle" | "recording" | "saving">("idle");
 const shortcutCapturePreview = ref("");
 const shortcutCaptureMessage = ref("");
+const localDataClearStatus = ref<"idle" | "clearing" | "failed">("idle");
+const localDataClearError = ref("");
 let unsubscribeDeviceChanges: (() => void) | null = null;
 let shortcutCaptureAbort: InstanceType<typeof globalThis.AbortController> | null = null;
 const languageOptions = computed(
@@ -269,6 +272,25 @@ async function testMicrophone() {
     microphoneTestStatus.value = "failed";
     microphoneTestError.value =
       error instanceof Error ? error.message : "麦克风测试失败";
+  }
+}
+
+async function clearLocalData() {
+  if (
+    !globalThis.confirm(
+      "确认清除全部本地数据？这会重置所有设置和服务档案，删除已保存的 Token 与诊断日志，且无法撤销。",
+    )
+  )
+    return;
+  localDataClearStatus.value = "clearing";
+  localDataClearError.value = "";
+  try {
+    await clearLocalApplicationData();
+    globalThis.location.reload();
+  } catch (error) {
+    localDataClearStatus.value = "failed";
+    localDataClearError.value =
+      error instanceof Error ? error.message : "本地数据清除失败";
   }
 }
 
@@ -743,6 +765,24 @@ onBeforeUnmount(() => {
           </strong>
           <strong v-else>{{ appInfoError || "读取中…" }}</strong>
         </article>
+        <h2 class="settings-category">隐私与本地数据</h2>
+        <article>
+          <span>本地数据</span>
+          <div class="shortcut-setting">
+            <button
+              class="button button-secondary"
+              type="button"
+              :disabled="
+                localDataClearStatus === 'clearing' ||
+                Boolean(requestState.activeRequestId)
+              "
+              @click="clearLocalData"
+            >
+              {{ localDataClearStatus === "clearing" ? "清除中…" : "清除本地数据" }}
+            </button>
+            <small>设置、全部服务 Token 与诊断日志</small>
+          </div>
+        </article>
       </div>
       <p v-if="serviceSaveError" class="inline-error" role="alert">
         {{ serviceSaveError }}
@@ -761,6 +801,9 @@ onBeforeUnmount(() => {
       </p>
       <p v-if="settingsState.saveError" class="inline-error" role="alert">
         {{ settingsState.saveError }}
+      </p>
+      <p v-if="localDataClearError" class="inline-error" role="alert">
+        {{ localDataClearError }}
       </p>
     </div>
   </section>

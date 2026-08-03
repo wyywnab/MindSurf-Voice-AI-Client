@@ -5,7 +5,7 @@ use base64::Engine;
 use keyring::Entry;
 use rand::RngCore;
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_store::StoreExt;
 use zeroize::Zeroize;
 
@@ -25,10 +25,13 @@ pub struct CredentialStatus {
 
 #[tauri::command]
 pub fn get_credential_status(
-    app: AppHandle,
+    window: WebviewWindow,
     profile_id: String,
 ) -> CommandResult<CredentialStatus> {
-    match credential_is_configured(&app, &profile_id) {
+    if let Err(error) = super::access::require_main_window(&window) {
+        return CommandResult::failure(error);
+    }
+    match credential_is_configured(window.app_handle(), &profile_id) {
         Ok(configured) => CommandResult::success(CredentialStatus { configured }),
         Err(error) => CommandResult::failure(error),
     }
@@ -36,11 +39,15 @@ pub fn get_credential_status(
 
 #[tauri::command]
 pub fn save_service_token(
-    app: AppHandle,
+    window: WebviewWindow,
     profile_id: String,
     mut token: String,
 ) -> CommandResult<CredentialStatus> {
-    let result = save_token(&app, &profile_id, token.trim());
+    if let Err(error) = super::access::require_main_window(&window) {
+        token.zeroize();
+        return CommandResult::failure(error);
+    }
+    let result = save_token(window.app_handle(), &profile_id, token.trim());
     token.zeroize();
     match result {
         Ok(()) => CommandResult::success(CredentialStatus { configured: true }),
@@ -49,16 +56,28 @@ pub fn save_service_token(
 }
 
 #[tauri::command]
-pub fn clear_service_token(app: AppHandle, profile_id: String) -> CommandResult<CredentialStatus> {
-    match clear_token(&app, &profile_id) {
+pub fn clear_service_token(
+    window: WebviewWindow,
+    profile_id: String,
+) -> CommandResult<CredentialStatus> {
+    if let Err(error) = super::access::require_main_window(&window) {
+        return CommandResult::failure(error);
+    }
+    match clear_token(window.app_handle(), &profile_id) {
         Ok(()) => CommandResult::success(CredentialStatus { configured: false }),
         Err(error) => CommandResult::failure(error),
     }
 }
 
 #[tauri::command]
-pub fn get_service_token(app: AppHandle, profile_id: String) -> CommandResult<Option<String>> {
-    match load_token(&app, &profile_id) {
+pub fn get_service_token(
+    window: WebviewWindow,
+    profile_id: String,
+) -> CommandResult<Option<String>> {
+    if let Err(error) = super::access::require_main_window(&window) {
+        return CommandResult::failure(error);
+    }
+    match load_token(window.app_handle(), &profile_id) {
         Ok(token) => CommandResult::success(token),
         Err(error) => CommandResult::failure(error),
     }
@@ -109,6 +128,16 @@ fn clear_token(app: &AppHandle, profile_id: &str) -> Result<(), AppError> {
     let store = app.store(CREDENTIAL_STORE).map_err(store_error)?;
     store.delete(field);
     store.save().map_err(store_error)
+}
+
+pub(crate) fn clear_all_credentials(app: &AppHandle) -> Result<(), AppError> {
+    let store = app.store(CREDENTIAL_STORE).map_err(store_error)?;
+    store.clear();
+    store.save().map_err(store_error)?;
+    match keyring_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(keyring_error(error)),
+    }
 }
 
 fn credential_is_configured(app: &AppHandle, profile_id: &str) -> Result<bool, AppError> {
