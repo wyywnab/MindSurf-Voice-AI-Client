@@ -130,11 +130,10 @@ export class SettingsController {
     return true;
   }
 
-  async deleteServiceProfile() {
+  async deleteServiceProfile(profileId: string) {
     if (this.request.state.activeRequestId) {
       throw new Error("请求进行中不能删除服务配置");
     }
-    const profileId = this.settings.state.activeServiceProfileId;
     if (!settingsStoreActions.removeServiceProfile(profileId)) {
       throw new Error("至少保留一个服务配置");
     }

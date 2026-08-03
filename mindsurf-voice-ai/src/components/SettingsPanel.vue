@@ -43,6 +43,7 @@ const preferredPipelineInput = ref<ServiceProfile["preferredPipeline"]>(
 );
 const serviceSaveError = ref("");
 const serviceSaveStatus = ref("");
+const pendingDeleteProfileId = ref<string | null>(null);
 const microphoneTestStatus = ref<"idle" | "testing" | "succeeded" | "failed">("idle");
 const microphoneTestLevel = ref(0);
 const microphoneTestError = ref("");
@@ -175,6 +176,7 @@ async function saveService() {
 
 async function selectServiceProfile(event: Event) {
   serviceSaveError.value = "";
+  pendingDeleteProfileId.value = null;
   try {
     await settingsController.selectServiceProfile(
       (event.target as HTMLSelectElement).value,
@@ -194,11 +196,23 @@ async function createServiceProfile(copyCurrent: boolean) {
   }
 }
 
-async function deleteServiceProfile() {
-  if (!globalThis.confirm(`确认删除“${activeServiceProfile.value?.name}”？`)) return;
+function requestServiceProfileDeletion() {
+  pendingDeleteProfileId.value = activeServiceProfile.value?.id ?? null;
+  serviceSaveError.value = "";
+  serviceSaveStatus.value = "";
+}
+
+function cancelServiceProfileDeletion() {
+  pendingDeleteProfileId.value = null;
+}
+
+async function confirmServiceProfileDeletion() {
+  const profileId = pendingDeleteProfileId.value;
+  if (!profileId) return;
   serviceSaveError.value = "";
   try {
-    await settingsController.deleteServiceProfile();
+    await settingsController.deleteServiceProfile(profileId);
+    pendingDeleteProfileId.value = null;
     serviceSaveStatus.value = "配置已删除";
   } catch (error) {
     serviceSaveError.value = error instanceof Error ? error.message : "删除失败";
@@ -373,13 +387,30 @@ onBeforeUnmount(() => {
               复制
             </button>
             <button
+              v-if="pendingDeleteProfileId !== settingsState.activeServiceProfileId"
               class="button button-ghost"
               type="button"
               :disabled="settingsState.serviceProfiles.length <= 1"
-              @click="deleteServiceProfile"
+              @click="requestServiceProfileDeletion"
             >
               删除
             </button>
+            <template v-else>
+              <button
+                class="button button-stop"
+                type="button"
+                @click="confirmServiceProfileDeletion"
+              >
+                确认删除
+              </button>
+              <button
+                class="button button-secondary"
+                type="button"
+                @click="cancelServiceProfileDeletion"
+              >
+                取消
+              </button>
+            </template>
           </div>
         </article>
         <article>
