@@ -11,10 +11,15 @@ import TopTabs from "./components/TopTabs.vue";
 import { settingsController } from "./controllers/settingsController";
 import { voiceRequestController } from "./controllers/voiceRequestController";
 import { getAppInfo } from "./services/appInfo";
+import { syncMacOSAppMenu } from "./services/appMenu";
 import { useI18n } from "./services/i18n";
 import { hideOverlayWindow, setOverlayWindowPosition } from "./services/overlay";
 import { getSystemPermissionStatus } from "./services/permissions";
-import { subscribeTrayActions, syncTrayMode } from "./services/tray";
+import {
+  subscribeTrayActions,
+  syncTrayConfiguration,
+  syncTrayMode,
+} from "./services/tray";
 import { useConnectionStore } from "./stores/connectionStore";
 import { diagnosticsStoreActions } from "./stores/diagnosticsStore";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -50,6 +55,34 @@ watch(diagnosticsPageVisible, (visible) => {
     activeTab.value = "record";
   }
 });
+
+watch(
+  [
+    () => settings.state.initialized,
+    () => settings.state.interfaceLocale,
+    diagnosticsPageVisible,
+  ],
+  ([initialized]) => {
+    if (!initialized) return;
+    const menuOptions = {
+      diagnosticsEnabled: diagnosticsPageVisible.value,
+      locale: settings.state.interfaceLocale,
+    };
+    void syncTrayConfiguration(menuOptions);
+    void syncMacOSAppMenu({
+      diagnosticsEnabled: menuOptions.diagnosticsEnabled,
+      onNavigate: navigateTo,
+    }).catch((error) => {
+      diagnosticsStoreActions.log(
+        "warn",
+        "menu",
+        "app_menu.update_failed",
+        error instanceof Error ? error.message : "应用菜单更新失败",
+      );
+    });
+  },
+  { immediate: true },
+);
 
 function navigateTo(page: MainTabId) {
   if (page === "connection" && !diagnosticsPageVisible.value) return;

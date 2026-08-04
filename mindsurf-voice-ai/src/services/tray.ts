@@ -2,11 +2,23 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type { CommandResult } from "../types/app";
-import type { MainTabId } from "../types/navigation";
+import { isMainTabId, type MainTabId } from "../types/navigation";
+import type { AppLocale } from "./i18n";
 import type { VoiceInteractionMode } from "../types/voice";
 
-const MAIN_TABS = new Set<MainTabId>(["record", "connection", "settings"]);
 const VOICE_MODES = new Set<VoiceInteractionMode>(["dictation", "assistant", "mixed"]);
+
+export async function syncTrayConfiguration(options: {
+  locale: AppLocale;
+  diagnosticsEnabled: boolean;
+}) {
+  try {
+    const result = await invoke<CommandResult<void>>("configure_tray_menu", options);
+    return result.ok;
+  } catch {
+    return false;
+  }
+}
 
 export async function syncTrayMode(mode: VoiceInteractionMode) {
   try {
@@ -25,8 +37,8 @@ export async function subscribeTrayActions(callbacks: {
   try {
     unlisteners.push(
       await listen<string>("tray://navigate", (event) => {
-        if (MAIN_TABS.has(event.payload as MainTabId)) {
-          callbacks.onNavigate(event.payload as MainTabId);
+        if (isMainTabId(event.payload)) {
+          callbacks.onNavigate(event.payload);
         }
       }),
     );

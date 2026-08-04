@@ -368,6 +368,23 @@ const enUS: Record<string, string> = {
   首音频到达: "First Audio Chunk",
   首次播放: "First Playback",
   总请求: "Total Request",
+  窗口: "Window",
+  最小化: "Minimize",
+  进入全屏幕: "Enter Full Screen",
+  关闭窗口: "Close Window",
+  前置全部窗口: "Bring All to Front",
+  帮助: "Help",
+  "关于 MindSurf Voice AI": "About MindSurf Voice AI",
+  服务: "Services",
+  "设置…": "Settings…",
+  "隐藏 MindSurf Voice AI": "Hide MindSurf Voice AI",
+  隐藏其他: "Hide Others",
+  全部显示: "Show All",
+  "退出 MindSurf Voice AI": "Quit MindSurf Voice AI",
+  编辑: "Edit",
+  页面: "Pages",
+  打开主窗口: "Open Main Window",
+  打开页面: "Open Page",
 };
 
 const dictionaries: Record<AppLocale, Record<string, string>> = {

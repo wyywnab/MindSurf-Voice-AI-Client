@@ -57,6 +57,7 @@ pub fn run() {
             commands::overlay::hide_overlay,
             commands::overlay::set_overlay_position,
             commands::overlay::show_overlay,
+            commands::tray::configure_tray_menu,
             commands::tray::set_tray_mode
         ])
         .run(tauri::generate_context!())
