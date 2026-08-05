@@ -144,6 +144,7 @@ function createOverlaySnapshot(): OverlaySnapshot {
     duration: formattedDuration.value,
     durationMs: recorder.durationMs.value,
     level: recorder.level.value,
+    locale: settingsState.interfaceLocale,
     mode: settingsState.selectedMode,
     recording: recorder.isRecording.value,
     status:
@@ -299,6 +300,7 @@ watch(
     transcript,
     assistantText,
     () => settingsState.selectedMode,
+    () => settingsState.interfaceLocale,
     () => requestState.playbackStatus,
   ],
   () => overlaySync.publish(),

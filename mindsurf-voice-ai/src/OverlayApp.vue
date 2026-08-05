@@ -3,7 +3,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 
 import { getNativeAudioRecordingMeter } from "./services/nativeRecorder";
-import { useI18n } from "./services/i18n";
+import { setLocale, useI18n } from "./services/i18n";
 import {
   notifyOverlayReady,
   requestOverlayCancel,
@@ -11,7 +11,6 @@ import {
 } from "./services/overlay";
 import type { OverlaySnapshot } from "./types/overlay";
 import { VOICE_MODE_LABELS } from "./types/voice";
-import { settingsStoreActions } from "./stores/settingsStore";
 
 const { t } = useI18n();
 
@@ -21,6 +20,7 @@ const snapshot = reactive<OverlaySnapshot>({
   duration: "00:00.0",
   durationMs: 0,
   level: 0,
+  locale: "zh-CN",
   mode: "dictation",
   recording: false,
   status: "准备录音",
@@ -58,6 +58,7 @@ function formatDuration(durationMs: number) {
 }
 
 function updateLocalSnapshot(next: OverlaySnapshot) {
+  setLocale(next.locale);
   Object.assign(snapshot, next);
   if (!usesNativeMeter || !nativeRecordingActive.value) {
     const deliveryDelayMs = next.recording
@@ -121,7 +122,6 @@ async function pollNativeMeter() {
 }
 
 onMounted(() => {
-  void settingsStoreActions.initialize();
   lastAnimationAt = globalThis.performance.now();
   animationFrame = globalThis.requestAnimationFrame(animate);
   if (usesNativeMeter) {

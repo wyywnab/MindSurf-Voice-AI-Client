@@ -1,4 +1,5 @@
 import type { VoiceInteractionMode } from "./voice";
+import type { AppSettings } from "./settings";
 
 export interface OverlaySnapshot {
   assistantText: string;
@@ -6,6 +7,7 @@ export interface OverlaySnapshot {
   duration: string;
   durationMs: number;
   level: number;
+  locale: AppSettings["interface"]["locale"];
   mode: VoiceInteractionMode;
   recording: boolean;
   status: string;

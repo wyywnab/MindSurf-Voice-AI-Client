@@ -17,6 +17,7 @@ export async function getCredentialStatus(profileId: string) {
 }
 
 export async function saveServiceToken(profileId: string, token: string) {
+  if (!isTauri()) return false;
   const result = await invoke<CommandResult<CredentialStatus>>("save_service_token", {
     profileId,
     token,
@@ -26,6 +27,7 @@ export async function saveServiceToken(profileId: string, token: string) {
 }
 
 export async function clearServiceToken(profileId: string) {
+  if (!isTauri()) return false;
   const result = await invoke<CommandResult<CredentialStatus>>("clear_service_token", {
     profileId,
   });
