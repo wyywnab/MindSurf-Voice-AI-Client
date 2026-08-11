@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindsurf.dev/schemas/voice/v2/common/errors.schema.json",
+  "title": "MindSurf Voice v2 protocol errors",
+  "$defs": {
+    "errorCode": {
+      "enum": [
+        "authentication_required",
+        "authentication_failed",
+        "authentication_expired",
+        "permission_denied",
+        "quota_exceeded",
+        "rate_limited",
+        "protocol_version_mismatch",
+        "transport_negotiation_failed",
+        "pipeline_unavailable",
+        "capabilities_stale",
+        "unsupported_pipeline",
+        "unsupported_model",
+        "unsupported_feature",
+        "unsupported_inference_option",
+        "unsupported_output_audio",
+        "unsupported_language",
+        "request_already_active",
+        "request_not_found",
+        "invalid_message",
+        "unsupported_message_type",
+        "invalid_audio_frame",
+        "audio_sequence_error",
+        "input_too_long",
+        "input_empty",
+        "input_idle_timeout",
+        "input_statistics_mismatch",
+        "request_accept_timeout",
+        "input_commit_timeout",
+        "transcription_timeout",
+        "generation_timeout",
+        "output_audio_timeout",
+        "request_timeout",
+        "transcription_failed",
+        "generation_failed",
+        "output_audio_failed",
+        "voice_not_found",
+        "voice_not_ready",
+        "voice_not_selectable",
+        "emotion_reference_not_found",
+        "conversation_not_found",
+        "conversation_active",
+        "conversation_configuration_mismatch",
+        "upstream_unavailable",
+        "server_error"
+      ]
+    },
+    "errorPayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "code",
+        "message",
+        "stage",
+        "stream",
+        "terminal",
+        "retryable",
+        "fatal",
+        "retry_after_ms",
+        "details"
+      ],
+      "properties": {
+        "code": { "$ref": "#/$defs/errorCode" },
+        "message": { "type": "string", "minLength": 1 },
+        "stage": {
+          "enum": [
+            "session",
+            "authentication",
+            "authorization",
+            "quota",
+            "routing",
+            "input",
+            "transcription",
+            "generation",
+            "output",
+            "protocol"
+          ]
+        },
+        "stream": {
+          "type": ["string", "null"],
+          "enum": ["input_transcription", "text", "audio", null]
+        },
+        "terminal": { "type": "boolean" },
+        "retryable": { "type": "boolean" },
+        "fatal": { "type": "boolean" },
+        "retry_after_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "details": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": { "enum": ["authentication_required", "authentication_failed", "authentication_expired"] }
+            },
+            "required": ["code"]
+          },
+          "then": { "properties": { "stage": { "const": "authentication" } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": { "enum": ["permission_denied", "voice_not_found", "emotion_reference_not_found", "conversation_not_found"] }
+            },
+            "required": ["code"]
+          },
+          "then": { "properties": { "stage": { "const": "authorization" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "enum": ["quota_exceeded", "rate_limited"] } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "stage": { "const": "quota" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "enum": ["protocol_version_mismatch", "transport_negotiation_failed", "server_error"] } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "stage": { "const": "session" } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "pipeline_unavailable", "capabilities_stale", "unsupported_pipeline", "unsupported_model", "unsupported_feature",
+                  "unsupported_inference_option", "unsupported_output_audio", "request_accept_timeout",
+                  "request_timeout", "voice_not_ready", "voice_not_selectable", "conversation_active",
+                  "conversation_configuration_mismatch", "upstream_unavailable"
+                ]
+              }
+            },
+            "required": ["code"]
+          },
+          "then": { "properties": { "stage": { "const": "routing" } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "unsupported_language", "audio_sequence_error", "input_too_long", "input_empty",
+                  "input_idle_timeout", "input_statistics_mismatch", "input_commit_timeout"
+                ]
+              }
+            },
+            "required": ["code"]
+          },
+          "then": { "properties": { "stage": { "const": "input" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "enum": ["transcription_timeout", "transcription_failed"] } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "stage": { "const": "transcription" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "enum": ["generation_timeout", "generation_failed"] } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "stage": { "const": "generation" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "enum": ["output_audio_timeout", "output_audio_failed"] } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "stage": { "const": "output" } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": { "enum": ["request_already_active", "request_not_found", "invalid_message", "unsupported_message_type", "invalid_audio_frame"] }
+            },
+            "required": ["code"]
+          },
+          "then": { "properties": { "stage": { "const": "protocol" } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "rate_limited",
+                  "pipeline_unavailable",
+                  "capabilities_stale",
+                  "input_empty",
+                  "input_idle_timeout",
+                  "request_accept_timeout",
+                  "input_commit_timeout",
+                  "voice_not_ready",
+                  "conversation_active",
+                  "upstream_unavailable"
+                ]
+              }
+            },
+            "required": ["code"]
+          },
+          "then": {
+            "properties": { "retryable": { "const": true } }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "authentication_required",
+                  "authentication_failed",
+                  "authentication_expired",
+                  "permission_denied",
+                  "quota_exceeded",
+                  "protocol_version_mismatch",
+                  "transport_negotiation_failed",
+                  "unsupported_pipeline",
+                  "unsupported_model",
+                  "unsupported_feature",
+                  "unsupported_inference_option",
+                  "unsupported_output_audio",
+                  "unsupported_language",
+                  "request_already_active",
+                  "request_not_found",
+                  "invalid_message",
+                  "unsupported_message_type",
+                  "audio_sequence_error",
+                  "input_too_long",
+                  "input_statistics_mismatch",
+                  "voice_not_found",
+                  "voice_not_selectable",
+                  "emotion_reference_not_found",
+                  "conversation_not_found",
+                  "conversation_configuration_mismatch"
+                ]
+              }
+            },
+            "required": ["code"]
+          },
+          "then": {
+            "properties": { "retryable": { "const": false } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "code": { "const": "rate_limited" } },
+            "required": ["code"]
+          },
+          "else": {
+            "if": {
+              "properties": { "retry_after_ms": { "type": "integer" } },
+              "required": ["retry_after_ms"]
+            },
+            "then": {
+              "properties": { "retryable": { "const": true } }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

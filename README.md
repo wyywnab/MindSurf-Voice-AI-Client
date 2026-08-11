@@ -27,7 +27,8 @@ This is the Windows and macOS client for the MindSurf Voice AI project.
 mindsurf-voice-ai/       Tauri 桌面客户端
 mindsurf-voice-mock/     本地 WebSocket Mock 服务
 docs/DELIVERY.md         客户端交付说明
-docs/WS_PROTOCOL.md      WebSocket 接口说明
+docs/WS_PROTOCOL.md      WebSocket v1 级联协议
+docs/v2/                 v2 协议文档、OpenAPI 与 JSON Schema
 docs/MACOS.md            macOS 适配说明
 docs/PHASE1_IMPLEMENTATION.md
 docs/PHASE2_IMPLEMENTATION.md

@@ -102,4 +102,7 @@ src-tauri/src/
 ```
 
 Phase 2 架构详情见仓库根目录的 [`PHASE2_IMPLEMENTATION.md`](../docs/PHASE2_IMPLEMENTATION.md)，
-协议见 [`WS_PROTOCOL.md`](../docs/WS_PROTOCOL.md)。
+级联协议见 [`WS_PROTOCOL.md`](../docs/WS_PROTOCOL.md)，原生音频与级联统一接入协议见
+[`WS_PROTOCOL_V2.md`](../docs/v2/docs/WS_PROTOCOL_V2.md)，非实时资源管理见
+[`HTTP_API_V2.md`](../docs/v2/docs/HTTP_API_V2.md)。v2 规范入口见
+[`docs/v2/README.md`](../docs/v2/README.md)。

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindsurf.dev/schemas/voice/v2/envelope.schema.json",
+  "title": "MindSurf Voice v2 control envelope",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "baseEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "type", "event_id", "request_id", "sent_at_ms", "payload"],
+      "properties": {
+        "v": { "const": 2 },
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:\\.[a-z][a-z0-9]*)*$"
+        },
+        "event_id": { "$ref": "#/$defs/uuid" },
+        "request_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/uuid" },
+            { "type": "null" }
+          ]
+        },
+        "sent_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": { "type": "object" }
+      }
+    },
+    "sessionEnvelope": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEnvelope" },
+        {
+          "properties": {
+            "request_id": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "requestEnvelope": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEnvelope" },
+        {
+          "properties": {
+            "request_id": { "$ref": "#/$defs/uuid" }
+          }
+        }
+      ]
+    }
+  }
+}

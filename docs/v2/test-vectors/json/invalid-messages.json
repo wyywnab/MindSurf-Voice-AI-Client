@@ -1,0 +1,431 @@
+{
+  "format_version": 1,
+  "cases": [
+    {
+      "name": "request message cannot use null request_id",
+      "expected_rule": "request_id_must_be_uuid",
+      "message": {
+        "v": 2,
+        "type": "request.cancel",
+        "event_id": "10000000-0000-4000-8000-000000000001",
+        "request_id": null,
+        "sent_at_ms": 1,
+        "payload": { "reason": "user_cancelled" }
+      }
+    },
+    {
+      "name": "session message cannot use request UUID",
+      "expected_rule": "session_request_id_must_be_null",
+      "message": {
+        "v": 2,
+        "type": "session.pong",
+        "event_id": "10000000-0000-4000-8000-000000000002",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 2,
+        "payload": { "nonce": "ping-1" }
+      }
+    },
+    {
+      "name": "unknown control type is not silently accepted",
+      "expected_rule": "message_type_must_be_declared",
+      "message": {
+        "v": 2,
+        "type": "request.pause",
+        "event_id": "10000000-0000-4000-8000-000000000003",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 3,
+        "payload": { "reason": "user_cancelled" }
+      }
+    },
+    {
+      "name": "control envelope requires payload",
+      "expected_rule": "payload_is_required",
+      "message": {
+        "v": 2,
+        "type": "input.commit",
+        "event_id": "10000000-0000-4000-8000-000000000004",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 4
+      }
+    },
+    {
+      "name": "dictation cannot attach a conversation",
+      "expected_rule": "dictation_conversation_id_must_be_null",
+      "message": {
+        "v": 2,
+        "type": "request.start",
+        "event_id": "10000000-0000-4000-8000-000000000005",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 5,
+        "payload": {
+          "mode": "dictation",
+          "pipeline": "cascade",
+          "capabilities_revision": "cap_test_1",
+          "selection": { "model": null, "asr": "asr-1", "llm": null, "tts": null },
+          "conversation_id": "11112222-3333-4444-aaaa-bbbbbbbbbbbb",
+          "language": "zh-CN",
+          "response": {
+            "input_transcription": true,
+            "text": false,
+            "audio": false,
+            "output_audio": null,
+            "voice": null,
+            "emotion": null
+          }
+        }
+      }
+    },
+    {
+      "name": "generation controls must be channel scoped",
+      "expected_rule": "generation_must_be_channel_scoped",
+      "message": {
+        "v": 2,
+        "type": "request.start",
+        "event_id": "10000000-0000-4000-8000-000000000006",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 6,
+        "payload": {
+          "mode": "assistant",
+          "pipeline": "native_audio",
+          "capabilities_revision": "cap_test_1",
+          "selection": { "model": "model-1", "asr": null, "llm": null, "tts": null },
+          "conversation_id": null,
+          "language": "auto",
+          "response": {
+            "input_transcription": false,
+            "text": true,
+            "audio": false,
+            "output_audio": null,
+            "voice": null,
+            "emotion": null
+          },
+          "generation": { "text": {}, "temperature": 0.7 }
+        }
+      }
+    },
+    {
+      "name": "conversation_active is always retryable",
+      "direction": "server",
+      "expected_rule": "conversation_active_must_be_retryable",
+      "message": {
+        "v": 2,
+        "type": "error",
+        "event_id": "10000000-0000-4000-8000-000000000007",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 7,
+        "payload": {
+          "code": "conversation_active",
+          "message": "conversation is active",
+          "stage": "routing",
+          "stream": null,
+          "terminal": true,
+          "retryable": false,
+          "fatal": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      }
+    },
+    {
+      "name": "input idle timeout uses input stage",
+      "direction": "server",
+      "expected_rule": "input_idle_timeout_stage_must_be_input",
+      "message": {
+        "v": 2,
+        "type": "error",
+        "event_id": "10000000-0000-4000-8000-000000000008",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 8,
+        "payload": {
+          "code": "input_idle_timeout",
+          "message": "input idle timeout",
+          "stage": "protocol",
+          "stream": null,
+          "terminal": true,
+          "retryable": true,
+          "fatal": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      }
+    },
+    {
+      "name": "request-scoped invalid audio frame is not fatal",
+      "direction": "server",
+      "expected_rule": "request_invalid_audio_frame_must_not_be_fatal",
+      "message": {
+        "v": 2,
+        "type": "error",
+        "event_id": "10000000-0000-4000-8000-000000000009",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 9,
+        "payload": {
+          "code": "invalid_audio_frame",
+          "message": "invalid audio frame",
+          "stage": "protocol",
+          "stream": null,
+          "terminal": true,
+          "retryable": false,
+          "fatal": true,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      }
+    },
+    {
+      "name": "unattributable invalid audio frame is session fatal",
+      "direction": "server",
+      "expected_rule": "session_invalid_audio_frame_must_be_fatal",
+      "message": {
+        "v": 2,
+        "type": "error",
+        "event_id": "10000000-0000-4000-8000-00000000000a",
+        "request_id": null,
+        "sent_at_ms": 10,
+        "payload": {
+          "code": "invalid_audio_frame",
+          "message": "invalid audio frame",
+          "stage": "protocol",
+          "stream": null,
+          "terminal": false,
+          "retryable": false,
+          "fatal": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      }
+    },
+    {
+      "name": "terminal request error cannot target one stream",
+      "direction": "server",
+      "expected_rule": "terminal_request_error_stream_must_be_null",
+      "message": {
+        "v": 2,
+        "type": "error",
+        "event_id": "10000000-0000-4000-8000-00000000000b",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 11,
+        "payload": {
+          "code": "generation_failed",
+          "message": "generation failed",
+          "stage": "generation",
+          "stream": "text",
+          "terminal": true,
+          "retryable": true,
+          "fatal": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      }
+    },
+    {
+      "name": "text generation controls require text response",
+      "expected_rule": "text_generation_requires_text_response",
+      "message": {
+        "v": 2,
+        "type": "request.start",
+        "event_id": "10000000-0000-4000-8000-00000000000c",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 12,
+        "payload": {
+          "mode": "assistant",
+          "pipeline": "native_audio",
+          "capabilities_revision": "cap_test_1",
+          "selection": { "model": "model-1", "asr": null, "llm": null, "tts": null },
+          "conversation_id": null,
+          "language": "auto",
+          "response": {
+            "input_transcription": false,
+            "text": false,
+            "audio": true,
+            "output_audio": "pcm24_mono",
+            "voice": "serena",
+            "emotion": "neutral"
+          },
+          "generation": { "text": { "temperature": 0.7 } }
+        }
+      }
+    },
+    {
+      "name": "authentication error is session fatal",
+      "direction": "server",
+      "expected_rule": "authentication_error_must_be_session_fatal",
+      "message": {
+        "v": 2,
+        "type": "error",
+        "event_id": "10000000-0000-4000-8000-00000000000d",
+        "request_id": null,
+        "sent_at_ms": 13,
+        "payload": {
+          "code": "authentication_failed",
+          "message": "authentication failed",
+          "stage": "authentication",
+          "stream": null,
+          "terminal": false,
+          "retryable": false,
+          "fatal": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      }
+    },
+    {
+      "name": "audio stream cannot use text generation failure",
+      "direction": "server",
+      "expected_rule": "audio_stream_error_code_must_match_stream",
+      "message": {
+        "v": 2,
+        "type": "error",
+        "event_id": "10000000-0000-4000-8000-00000000000e",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 14,
+        "payload": {
+          "code": "generation_failed",
+          "message": "generation failed",
+          "stage": "generation",
+          "stream": "audio",
+          "terminal": false,
+          "retryable": false,
+          "fatal": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      }
+    },
+    {
+      "name": "client hello requires bearer auth",
+      "expected_rule": "client_hello_requires_auth",
+      "message": {
+        "v": 2,
+        "type": "client.hello",
+        "event_id": "10000000-0000-4000-8000-00000000000f",
+        "request_id": null,
+        "sent_at_ms": 15,
+        "payload": {
+          "client": { "name": "mindsurf-voice-ai", "version": "0.2.0", "platform": "macos", "arch": "aarch64" },
+          "protocol_versions": [2],
+          "input_audio": [{ "id": "pcm16_mono", "encoding": "pcm_s16le", "sample_rate": 16000, "channels": 1 }],
+          "output_audio": []
+        }
+      }
+    },
+    {
+      "name": "request-scoped unknown type error is terminal",
+      "direction": "server",
+      "expected_rule": "request_protocol_error_must_be_terminal",
+      "message": {
+        "v": 2,
+        "type": "error",
+        "event_id": "10000000-0000-4000-8000-000000000010",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 16,
+        "payload": {
+          "code": "unsupported_message_type",
+          "message": "unsupported message type",
+          "stage": "protocol",
+          "stream": null,
+          "terminal": false,
+          "retryable": false,
+          "fatal": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      }
+    },
+    {
+      "name": "unattributable invalid message is session fatal",
+      "direction": "server",
+      "expected_rule": "session_protocol_error_must_be_fatal",
+      "message": {
+        "v": 2,
+        "type": "error",
+        "event_id": "10000000-0000-4000-8000-000000000011",
+        "request_id": null,
+        "sent_at_ms": 17,
+        "payload": {
+          "code": "invalid_message",
+          "message": "invalid message",
+          "stage": "protocol",
+          "stream": null,
+          "terminal": false,
+          "retryable": false,
+          "fatal": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      }
+    },
+    {
+      "name": "stream error cannot authorize request replay",
+      "direction": "server",
+      "expected_rule": "stream_error_must_not_be_retryable",
+      "message": {
+        "v": 2,
+        "type": "error",
+        "event_id": "10000000-0000-4000-8000-000000000012",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 18,
+        "payload": {
+          "code": "output_audio_failed",
+          "message": "output audio failed",
+          "stage": "output",
+          "stream": "audio",
+          "terminal": false,
+          "retryable": true,
+          "fatal": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      }
+    },
+    {
+      "name": "request start requires capabilities revision",
+      "expected_rule": "request_start_requires_capabilities_revision",
+      "message": {
+        "v": 2,
+        "type": "request.start",
+        "event_id": "10000000-0000-4000-8000-000000000013",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 19,
+        "payload": {
+          "mode": "assistant",
+          "pipeline": "native_audio",
+          "selection": { "model": "model-1", "asr": null, "llm": null, "tts": null },
+          "conversation_id": null,
+          "language": "auto",
+          "response": {
+            "input_transcription": false,
+            "text": true,
+            "audio": false,
+            "output_audio": null,
+            "voice": null,
+            "emotion": null
+          }
+        }
+      }
+    },
+    {
+      "name": "stale capabilities error is retryable",
+      "direction": "server",
+      "expected_rule": "capabilities_stale_must_be_retryable",
+      "message": {
+        "v": 2,
+        "type": "error",
+        "event_id": "10000000-0000-4000-8000-000000000014",
+        "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+        "sent_at_ms": 20,
+        "payload": {
+          "code": "capabilities_stale",
+          "message": "capabilities revision is stale",
+          "stage": "routing",
+          "stream": null,
+          "terminal": true,
+          "retryable": false,
+          "fatal": false,
+          "retry_after_ms": null,
+          "details": {}
+        }
+      }
+    }
+  ]
+}

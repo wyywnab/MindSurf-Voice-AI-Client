@@ -1,0 +1,106 @@
+{
+  "format_version": 1,
+  "capabilities": {
+    "revision": "cap_kind_test_1",
+    "pipelines": [
+      {
+        "id": "omni-production",
+        "kind": "native_audio",
+        "modes": ["assistant"]
+      },
+      {
+        "id": "cascade-primary",
+        "kind": "cascade",
+        "modes": ["dictation", "assistant"]
+      },
+      {
+        "id": "cascade-backup",
+        "kind": "cascade",
+        "modes": ["dictation", "assistant"]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "opaque native ID uses native selection",
+      "valid": true,
+      "request": {
+        "capabilities_revision": "cap_kind_test_1",
+        "pipeline": "omni-production",
+        "mode": "assistant",
+        "selection": {"model": "omni-model", "asr": null, "llm": null, "tts": null},
+        "response": {"audio": true}
+      }
+    },
+    {
+      "name": "first cascade ID supports dictation",
+      "valid": true,
+      "request": {
+        "capabilities_revision": "cap_kind_test_1",
+        "pipeline": "cascade-primary",
+        "mode": "dictation",
+        "selection": {"model": null, "asr": "asr-default", "llm": null, "tts": null},
+        "response": {"audio": false}
+      }
+    },
+    {
+      "name": "second ID with same cascade kind uses identical rules",
+      "valid": true,
+      "request": {
+        "capabilities_revision": "cap_kind_test_1",
+        "pipeline": "cascade-backup",
+        "mode": "assistant",
+        "selection": {"model": null, "asr": "asr-default", "llm": "llm-default", "tts": null},
+        "response": {"audio": false}
+      }
+    },
+    {
+      "name": "native kind cannot carry cascade components",
+      "valid": false,
+      "expected_rule": "native_selection_shape",
+      "request": {
+        "capabilities_revision": "cap_kind_test_1",
+        "pipeline": "omni-production",
+        "mode": "assistant",
+        "selection": {"model": "omni-model", "asr": "asr-default", "llm": null, "tts": null},
+        "response": {"audio": true}
+      }
+    },
+    {
+      "name": "cascade dictation cannot carry generation components",
+      "valid": false,
+      "expected_rule": "cascade_dictation_selection_shape",
+      "request": {
+        "capabilities_revision": "cap_kind_test_1",
+        "pipeline": "cascade-primary",
+        "mode": "dictation",
+        "selection": {"model": null, "asr": "asr-default", "llm": "llm-default", "tts": null},
+        "response": {"audio": false}
+      }
+    },
+    {
+      "name": "cascade audio assistant requires TTS",
+      "valid": false,
+      "expected_rule": "cascade_assistant_audio_requires_tts",
+      "request": {
+        "capabilities_revision": "cap_kind_test_1",
+        "pipeline": "cascade-primary",
+        "mode": "assistant",
+        "selection": {"model": null, "asr": "asr-default", "llm": "llm-default", "tts": null},
+        "response": {"audio": true}
+      }
+    },
+    {
+      "name": "selection cannot use ID mapping from another revision",
+      "valid": false,
+      "expected_rule": "capabilities_revision_must_match_before_pipeline_lookup",
+      "request": {
+        "capabilities_revision": "cap_kind_test_0",
+        "pipeline": "omni-production",
+        "mode": "assistant",
+        "selection": {"model": "omni-model", "asr": null, "llm": null, "tts": null},
+        "response": {"audio": true}
+      }
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "format_version": 1,
+  "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+  "cases": [
+    {
+      "name": "input stream first frame",
+      "stream": "input-a",
+      "direction": "client_to_server",
+      "valid": true,
+      "frame_hex": "4d5356410201000000300000000000000000000000000000000000040000000000112233445566778899aabbccddeeff0000ff7f",
+      "expected": { "kind": 1, "sequence": 0, "timestamp_us": 0, "payload_length": 4, "samples": [0, 32767] }
+    },
+    {
+      "name": "input stream second frame",
+      "stream": "input-a",
+      "direction": "client_to_server",
+      "valid": true,
+      "frame_hex": "4d535641020100000030000000000001000000000000007d000000040000000000112233445566778899aabbccddeeffffff0001",
+      "expected": { "kind": 1, "sequence": 1, "timestamp_us": 125, "payload_length": 4, "samples": [-1, 256] }
+    },
+    {
+      "name": "output stream first frame",
+      "stream": "output-a",
+      "direction": "server_to_client",
+      "valid": true,
+      "frame_hex": "4d5356410202000000300000000000000000000000000000000000040000000000112233445566778899aabbccddeeff00800100",
+      "expected": { "kind": 2, "sequence": 0, "timestamp_us": 0, "payload_length": 4, "samples": [-32768, 1] }
+    },
+    {
+      "name": "version 3 is not a v2 frame",
+      "direction": "client_to_server",
+      "valid": false,
+      "expected_error": "unsupported_version",
+      "frame_hex": "4d5356410301000000300000000000000000000000000000000000040000000000112233445566778899aabbccddeeff0000ff7f"
+    },
+    {
+      "name": "declared payload length exceeds message",
+      "direction": "server_to_client",
+      "valid": false,
+      "expected_error": "message_length_mismatch",
+      "frame_hex": "4d5356410202000000300000000000000000000000000000000000060000000000112233445566778899aabbccddeeff00800100"
+    }
+  ]
+}

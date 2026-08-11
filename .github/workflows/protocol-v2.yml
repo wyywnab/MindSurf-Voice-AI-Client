@@ -1,0 +1,41 @@
+name: Protocol v2
+
+on:
+  push:
+    paths:
+      - "docs/v2/**"
+      - "scripts/validate-protocol-v2.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/protocol-v2.yml"
+  pull_request:
+    paths:
+      - "docs/v2/**"
+      - "scripts/validate-protocol-v2.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/protocol-v2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate protocol assets
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install protocol validation dependencies
+        run: npm ci
+
+      - name: Validate v2 contract, examples, and vectors
+        run: npm run validate:protocol-v2
