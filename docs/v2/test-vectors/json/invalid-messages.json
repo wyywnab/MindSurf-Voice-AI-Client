@@ -42,9 +42,9 @@
       "message": {"v": 2, "type": "request.start", "event_id": "10000000-0000-4000-8000-000000000008", "request_id": "00112233-4455-6677-8899-aabbccddeeff", "sent_at_ms": 8, "payload": {"mode": "asr_llm", "pipeline": "opaque-b", "capabilities_revision": "cap-mode-test-1", "selection": {"asr": "asr-default", "llm": null}, "language": "zh-CN"}}
     },
     {
-      "name": "LLM snapshot must be final",
+      "name": "LLM transition snapshot must be empty",
       "direction": "server",
-      "message": {"v": 2, "type": "output.text.snapshot", "event_id": "10000000-0000-4000-8000-000000000009", "request_id": "00112233-4455-6677-8899-aabbccddeeff", "sent_at_ms": 9, "payload": {"stage": "llm", "text": "final", "final": false}}
+      "message": {"v": 2, "type": "output.text.snapshot", "event_id": "10000000-0000-4000-8000-000000000009", "request_id": "00112233-4455-6677-8899-aabbccddeeff", "sent_at_ms": 9, "payload": {"stage": "llm", "text": "partial", "final": false}}
     },
     {
       "name": "request done cannot be partial",

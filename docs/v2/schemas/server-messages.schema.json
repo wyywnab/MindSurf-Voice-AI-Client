@@ -117,7 +117,7 @@
               "additionalProperties": true,
               "required": ["stage", "sequence", "delta"],
               "properties": {
-                "stage": { "const": "asr" },
+                "stage": { "enum": ["asr", "llm"] },
                 "sequence": { "type": "integer", "minimum": 0 },
                 "delta": { "type": "string" }
               }
@@ -143,8 +143,14 @@
               },
               "allOf": [
                 {
-                  "if": { "properties": { "stage": { "const": "llm" } }, "required": ["stage"] },
-                  "then": { "properties": { "final": { "const": true } } }
+                  "if": {
+                    "properties": {
+                      "stage": { "const": "llm" },
+                      "final": { "const": false }
+                    },
+                    "required": ["stage", "final"]
+                  },
+                  "then": { "properties": { "text": { "const": "" } } }
                 }
               ]
             }

@@ -177,10 +177,17 @@ Idempotency-Key: <random-uuid>
 
 refresh 使用当前 refresh token，成功时必须同时返回新的 access token 和新的 refresh token，
 旧 refresh token 原子失效。客户端为每次逻辑刷新生成新的 `Idempotency-Key`，响应不确定时
-只允许使用相同 key 和相同请求重试。服务端至少保留幂等结果 2 分钟；幂等命中返回第一次的
-同一 token pair，并重新计算两个 `*_expires_in`，不视为 refresh token 重放。同一 key 携带不同请求返回
-`409 idempotency_conflict`；使用不同 key 提交已轮换的 refresh token 才返回
-`409 refresh_token_reused`，撤销该登录 session 并关闭其现有 WebSocket。
+只允许使用相同 key 和相同请求重试。服务端必须保证首次请求后至少 2 分钟内可重放第一次的
+同一 token pair，并按重放时刻重新计算两个 `*_expires_in`；这不视为 refresh token 重放。
+
+服务端还必须在替代 refresh token 过期前保留足以区分“相同操作恢复”和“不同操作重放”的
+幂等元数据，包括 session、key、请求指纹和旧 token 指纹。原 token pair 已不能安全重放时，
+相同 key 和相同请求返回 `409 idempotency_result_expired`，不得撤销 session；客户端收到该错误，
+或从首次 refresh 尝试起 2 分钟仍无法确认结果时，停止 refresh 重试、丢弃本地 token，并重新
+打开系统浏览器授权。不得换一个 key 再提交旧 refresh token。
+
+同一 key 携带不同请求返回 `409 idempotency_conflict`；只有使用不同 key 提交已轮换的 refresh
+token 才返回 `409 refresh_token_reused`，撤销该登录 session 并关闭其现有 WebSocket。
 
 access token 过期不影响已经认证的 WS；它只影响后续 HTTP 请求。WS 非正常断线后需要新
 ticket，此时必须先确保 access token 有效。
@@ -302,10 +309,6 @@ GET /v2/capabilities
       "persistent": true
     },
     "modes": ["asr_only", "asr_llm"],
-    "default_pipeline": {
-      "asr_only": "general-asr",
-      "asr_llm": "general-asr-llm"
-    },
     "pipelines": [
       {
         "id": "general-asr",
@@ -353,8 +356,18 @@ GET /v2/capabilities
 ```
 
 Pipeline ID 是不透明引用。客户端必须使用同一 revision 中的 Pipeline 校验 mode 和
-selection，不得从 ID 名称推断能力。能力变化后后端在 accepted 前返回
-`capabilities_stale`，客户端重新获取目录并让用户确认任何可观察选择变化。
+selection，不得从 ID 名称推断能力。`defaults[mode]` 是默认 Pipeline 和 selection 的唯一
+权威来源，不再维护第二份 `default_pipeline`。
+
+每个能力 revision 必须满足以下引用完整性：Pipeline ID、顶层 ASR option ID 和顶层 LLM
+option ID 在各自集合内唯一；Pipeline 引用的 option 必须存在于顶层集合；每个默认 Pipeline
+必须存在并支持对应 mode；默认 selection 必须属于该 Pipeline；asr_only 默认 LLM 必须为
+null，asr_llm 默认 LLM 必须非空；每个 generation control 必须满足
+`minimum <= default <= maximum`，integer control 的三者都必须是整数。客户端收到不满足这些
+不变量的目录时不得猜测或 fallback，应把整个 revision 视为无效并停止发起请求。
+
+能力变化后后端在 accepted 前返回 `capabilities_stale`，客户端重新获取目录并让用户确认任何
+可观察选择变化。
 
 ## 7. WebSocket ticket
 
@@ -380,6 +393,12 @@ Authorization: Bearer <access-token>
 ticket 默认有效期 30 秒、只消费一次。它只认证 Upgrade，不限制 WS 的存活时间。长期连接
 空闲时保持在线；断线重连必须申请新 ticket。
 
+`RealtimeTicket.websocket_path` 是本次 ticket 建连的唯一权威路径。客户端必须使用 ticket
+响应中的值，不得硬编码路径；capabilities 中的 `realtime.websocket_path` 只用于建连前预览和
+诊断。路径在签发 ticket 的 HTTP API origin 上解析，生产把 https 映射为 wss，本地开发把
+http 映射为 ws；响应不能改变 authority。签发 ticket 时两个路径应一致，但若能力 revision
+在两次请求间变化，仍以 ticket 响应为准。
+
 限制：
 
 - 账户非 active：`403 account_suspended`；
@@ -394,6 +413,7 @@ ticket 默认有效期 30 秒、只消费一次。它只认证 Upgrade，不限�
 | 400 | `invalid_request` | 字段或查询参数非法 |
 | 400 | `authorization_grant_invalid` | code 无效、过期、已消费、绑定不匹配或 PKCE 失败 |
 | 409 | `idempotency_conflict` | 同一 Idempotency-Key 被用于不同请求 |
+| 409 | `idempotency_result_expired` | refresh 原结果已不能安全重放；重新浏览器授权，不撤销 session |
 | 401 | `authentication_required` | 缺少 access token |
 | 401 | `authentication_failed` | refresh token 或 access token 无效 |
 | 401 | `authentication_expired` | access token 过期 |
@@ -413,6 +433,7 @@ ticket 默认有效期 30 秒、只消费一次。它只认证 Upgrade，不限�
 - 使用系统浏览器，不在客户端内嵌认证页面或采集密码；
 - 每次授权生成新的 state、verifier 和 S256 challenge，并严格校验回跳 state；
 - 每次 token 交换和 refresh 生成新的 Idempotency-Key，网络重试必须复用原 key；
+- refresh 结果不确定时最多恢复 2 分钟；超时或结果过期后重新浏览器授权，不换 key 重放旧 token；
 - code 只通过后端 token 接口交换，不放入日志或持久化；
 - 授权后并行加载 me、quota、capabilities；
 - 立即申请 ticket 并建立长期 WS；
@@ -431,10 +452,13 @@ ticket 默认有效期 30 秒、只消费一次。它只认证 Upgrade，不限�
 - token/refresh 幂等结果与凭据轮换原子化，并加密保存、按期清理；
 - 浏览器页面负责注册、验证、账户恢复和 MFA，且不泄露账户是否存在；
 - refresh token 轮换和重放检测原子化；
+- refresh 幂等元数据保留到替代 refresh token 过期，原结果过期不会误撤销 session；
 - ticket 一次消费和过期判断原子化；
 - ticket、Token、Authorization Code、PKCE verifier 和浏览器凭据全链路日志脱敏；
 - logout/禁用能够跨节点撤销长连接；
 - ASR/LLM 分项 reservation 和 request accepted 使用同一事务边界；
 - usage 分项结算幂等，request ID 不会重复扣费，分项之和始终等于总扣费；
 - capabilities revision 与 WS request 校验一致；
+- capabilities 的 ID、引用、defaults 和 generation control 不变量在发布前验证；
+- ticket 响应路径是单次建连权威值；
 - HTTP 和 WS 使用同一用户、额度和权限来源。

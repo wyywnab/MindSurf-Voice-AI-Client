@@ -150,7 +150,7 @@ paths:
         '403':
           $ref: '#/components/responses/AccountSuspended'
         '409':
-          description: 幂等 key 冲突，或检测到已轮换 refresh token 被不同 key 重放
+          description: 幂等 key 冲突、原结果已过期，或检测到已轮换 refresh token 被不同 key 重放
           content:
             application/json:
               schema:
@@ -160,7 +160,7 @@ paths:
                       error:
                         properties:
                           code:
-                            enum: [idempotency_conflict, refresh_token_reused]
+                            enum: [idempotency_conflict, idempotency_result_expired, refresh_token_reused]
         '429':
           $ref: '#/components/responses/RateLimited'
         '500':
@@ -810,6 +810,7 @@ components:
     NumberControl:
       type: object
       additionalProperties: false
+      description: minimum、default、maximum 必须依次非递减。
       required: [type, minimum, maximum, default]
       properties:
         type:
@@ -824,6 +825,7 @@ components:
     IntegerControl:
       type: object
       additionalProperties: false
+      description: minimum、default、maximum 必须依次非递减且全部为整数。
       required: [type, minimum, maximum, default]
       properties:
         type:
@@ -910,21 +912,10 @@ components:
         asr_llm:
           $ref: '#/components/schemas/DefaultModeSelection'
 
-    DefaultPipelines:
-      type: object
-      additionalProperties: false
-      required: [asr_only, asr_llm]
-      properties:
-        asr_only:
-          type: string
-          minLength: 1
-        asr_llm:
-          type: string
-          minLength: 1
-
     RealtimeCapability:
       type: object
       additionalProperties: false
+      description: websocket_path 仅用于建连前预览；实际建连以 ticket 响应中的路径为准。
       required: [websocket_path, ticket_path, subprotocol, persistent]
       properties:
         websocket_path:
@@ -940,12 +931,15 @@ components:
     Capabilities:
       type: object
       additionalProperties: false
+      description: >-
+        defaults 是各 mode 默认 Pipeline 和 selection 的唯一权威来源。各类 ID 必须在各自集合内
+        唯一；Pipeline option 引用和 defaults 引用必须存在并满足 mode、selection 与 generation
+        control 的跨资源不变量。违反这些不变量时客户端必须拒绝整个 revision。
       required:
         - protocol_version
         - revision
         - realtime
         - modes
-        - default_pipeline
         - pipelines
         - asr_options
         - llm_options
@@ -966,8 +960,6 @@ components:
           uniqueItems: true
           items:
             $ref: '#/components/schemas/Mode'
-        default_pipeline:
-          $ref: '#/components/schemas/DefaultPipelines'
         pipelines:
           type: array
           minItems: 1
@@ -1006,6 +998,7 @@ components:
     RealtimeTicket:
       type: object
       additionalProperties: false
+      description: websocket_path 是本次 ticket 建连的唯一权威路径。
       required: [ticket, expires_at_ms, websocket_path, subprotocol]
       properties:
         ticket:
@@ -1018,6 +1011,7 @@ components:
         websocket_path:
           type: string
           pattern: '^/[^/].*'
+          description: 客户端必须使用本字段建连，不得由 capabilities 路径或硬编码路径覆盖。
         subprotocol:
           const: mindsurf.voice.v2
 

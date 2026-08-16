@@ -39,7 +39,8 @@ browser auth/token exchange or refresh -> realtime ticket -> Upgrade -> hello
 - 请求结束后连接回到 idle 并继续复用；
 - 同一连接最多一个活跃请求；
 - 心跳在 idle 和请求期间都运行；
-- 异常断线自动申请新 ticket 重连，但不得恢复或重放活跃请求；
+- 网络中断及 1001、1011、4002、4003 等可恢复关闭自动申请新 ticket 重连，但不得恢复或重放活跃请求；
+  1002 和 4001 不自动重连；
 - logout、账户禁用或 session 撤销后清除登录态，不自动重连。
 
 ## 3. Upgrade 鉴权
@@ -49,6 +50,12 @@ browser auth/token exchange or refresh -> realtime ticket -> Upgrade -> hello
 ```text
 wss://api.example.com/v2/voice/ws?ticket=<one-time-ticket>
 ```
+
+上式路径只是示例。客户端必须使用本次 `POST /v2/realtime/tickets` 响应中的
+`websocket_path`，它是该 ticket 的唯一权威建连路径；不得硬编码示例路径，也不得以较早获取的
+capabilities 路径覆盖 ticket 响应。客户端以签发 ticket 的 HTTP API origin 为 authority，
+将 `https` 映射为 `wss`（显式本地开发的 `http` 映射为 `ws`），再解析该绝对路径并追加
+percent-encoded ticket query；不得接受 ticket 响应指定其他 authority。
 
 ticket 是一次性凭据，默认 30 秒过期、只消费一次、绑定用户，只能用于 Upgrade。应用、代理和后端访问
 日志必须脱敏 ticket query。后端先校验 Origin、请求路径和子协议，再校验 ticket、用户状态与
@@ -78,7 +85,7 @@ Upgrade 成功即表示 WS session 已认证，client.hello 不再携带 Bearer 
 自然过期不关闭健康的长连接；logout、账户禁用和安全撤销必须发送 session_revoked fatal
 error 并关闭现有连接。
 
-异常断线后，如果 access token 已过期则先 refresh，再申请新 ticket。建议重连退避为
+允许自动重连的异常断线后，如果 access token 已过期则先 refresh，再申请新 ticket。建议重连退避为
 250 ms、500 ms、1 s、2 s，之后上限 5 s 并加入随机抖动。
 
 ## 4. 控制信封
@@ -171,8 +178,16 @@ error 并关闭现有连接。
 }
 ```
 
-客户端必须在 heartbeat_timeout_ms 内返回相同 nonce 的 session.pong。业务消息不能替代
-pong。超时方关闭连接并按异常断线恢复。
+服务端在任一时刻最多允许一个尚未收到 pong 的 ping，并且必须保证
+`heartbeat_timeout_ms < heartbeat_interval_ms`。服务端从发送 ping 时开始计算 pong deadline；
+客户端收到 ping 后应立即返回相同 nonce 的 session.pong，业务消息不能替代 pong。服务端收到
+匹配 pong 后清除 outstanding 状态；重复、过期或 nonce 不匹配的 pong 只记录诊断，不能满足
+当前 heartbeat。下一次 ping 的发送时间不得早于上一次 ping 发送时间加
+`heartbeat_interval_ms`。
+
+服务端在 deadline 前没有收到匹配 pong 时关闭 `4002`。客户端从 `server.hello` 或最近一次
+合法 ping 起，超过 `heartbeat_interval_ms + heartbeat_timeout_ms` 仍未收到下一次 ping 时，
+也必须主动关闭连接并按异常断线恢复。这样两端都能发现半开连接，且实现不需要维护多个 nonce。
 
 ## 7. 输入音频
 
@@ -312,9 +327,13 @@ duration_ms = ceil(sample_count * 1000 / negotiated_sample_rate)
 `input_idle_timeout_ms` 从 `request.accepted` 发出时开始计时，每收到一个合法 INPUT_PCM 后
 重置，收到 `input.commit` 后停止；超时以请求级 terminal `input_idle_timeout` 结束请求。
 
+录音期间允许服务端穿插发送 ASR `output.text.delta` 和 `final=false` 修订 snapshot。
+`input.committed` 是输入完整性边界：它发出前不得发送最终 ASR snapshot、启动 LLM 或发送
+任何 LLM 输出。
+
 ## 10. 临时文本更新
 
-ASR 流式输出追加到临时区域：
+ASR 可以从 recording 阶段开始流式输出。delta 追加到临时区域：
 
 ```json
 {
@@ -322,18 +341,41 @@ ASR 流式输出追加到临时区域：
   "type": "output.text.delta",
   "event_id": "019d643e-1550-761a-b7a0-471791bcaf15",
   "request_id": "019d643e-1550-761a-b7a0-471791bcaf11",
-  "sent_at_ms": 1786723228500,
+  "sent_at_ms": 1786723224000,
   "payload": {"stage": "asr", "sequence": 0, "delta": "帮我整理"}
 }
 ```
 
-阶段完成后发送全量覆盖：
+流式 ASR 可以随时用 `final=false` snapshot 全量修订此前假设：
 
 ```json
 {
   "v": 2,
   "type": "output.text.snapshot",
   "event_id": "019d643e-1550-761a-b7a0-471791bcaf16",
+  "request_id": "019d643e-1550-761a-b7a0-471791bcaf11",
+  "sent_at_ms": 1786723225000,
+  "payload": {
+    "stage": "asr",
+    "text": "帮我整理",
+    "final": false
+  }
+}
+```
+
+ASR 和 LLM 的 delta sequence 分别从 0 连续递增，snapshot 不重置 sequence。非流式 ASR
+可以在录音期间不发送任何文本事件；客户端不得根据输出频率推断模型类型。
+
+`input.committed` 后，后端必须用完整 ASR snapshot 收口：asr_only 使用 `final=true`；
+asr_llm 使用 `final=false`。LLM stage 切换前的最后一条 ASR 事件必须是 snapshot，并以其全文
+作为唯一 LLM 输入。asr_llm 随后必须先发送空 snapshot，原子清空 ASR 临时文本并切换到
+LLM stage：
+
+```json
+{
+  "v": 2,
+  "type": "output.text.snapshot",
+  "event_id": "019d643e-1550-761a-b7a0-471791bcbf16",
   "request_id": "019d643e-1550-761a-b7a0-471791bcaf11",
   "sent_at_ms": 1786723229000,
   "payload": {
@@ -344,8 +386,36 @@ ASR 流式输出追加到临时区域：
 }
 ```
 
-在 asr_only 中，这条 ASR snapshot 必须 final=true。在 asr_llm 中必须 final=false；后端
-完成 LLM 后再发送：
+```json
+{
+  "v": 2,
+  "type": "output.text.snapshot",
+  "event_id": "019d643e-1550-761a-b7a0-471791bcbf17",
+  "request_id": "019d643e-1550-761a-b7a0-471791bcaf11",
+  "sent_at_ms": 1786723229100,
+  "payload": {
+    "stage": "llm",
+    "text": "",
+    "final": false
+  }
+}
+```
+
+这条 stage 切换 snapshot 是 asr_llm 的第一条 LLM 事件。此后不得再发送 ASR 事件；LLM
+token 使用独立的 sequence 从 0 开始追加：
+
+```json
+{
+  "v": 2,
+  "type": "output.text.delta",
+  "event_id": "019d643e-1550-761a-b7a0-471791bcbf18",
+  "request_id": "019d643e-1550-761a-b7a0-471791bcaf11",
+  "sent_at_ms": 1786723229200,
+  "payload": {"stage": "llm", "sequence": 0, "delta": "请帮我"}
+}
+```
+
+LLM 完成后发送全量 final snapshot，覆盖流式拼接的临时文本：
 
 ```json
 {
@@ -362,7 +432,9 @@ ASR 流式输出追加到临时区域：
 }
 ```
 
-snapshot 必须原子替换临时区域全文，不能追加。final=false 永远不能触发真实目标写入。
+snapshot 必须原子替换临时区域全文，不能追加。LLM 的 `final=false` snapshot 只能是上述
+text 为空的 stage 切换边界。final=false 永远不能触发真实目标写入。即使上游 ASR 或 LLM
+只能整段返回，也沿用同一消息时序，只是对应阶段可以不发送 delta。
 
 ## 11. 请求完成和目标提交
 
@@ -551,7 +623,7 @@ ASR 与 LLM 润色独立计费：取消或失败时只扣已经实际执行阶�
 |---:|---|---|
 | 1000 | 正常关闭 | 按用户动作决定是否重连 |
 | 1001 | 服务端重启/迁移 | 新 ticket 自动重连 |
-| 1002 | 协议错误 | 记录诊断后重连 |
+| 1002 | 协议错误 | 记录诊断，不自动重连；配置修正或客户端升级后才能重新连接 |
 | 1009 | 消息过大 | 不重放请求，修正后重连 |
 | 1011 | 会话级内部错误 | 退避后自动重连 |
 | 4001 | session revoked | 清登录态，不自动重连 |
@@ -567,10 +639,15 @@ Upgrade 5 秒；hello 各 3 秒；accepted 3 秒。客户端等待 accepted 超�
 - 生产只允许 HTTPS/WSS；
 - Token、Authorization Code、PKCE verifier 和 ticket 不写日志；
 - ticket query 全链路脱敏；
+- 使用 ticket 响应中的 websocket_path，不硬编码 capabilities 或示例路径；
 - 取得 Token 后预连接，WS ready 前不开始录音；
 - 临时区域与真实目标严格分离；
+- 录音期间 ASR delta/snapshot 可以与 INPUT_PCM 交错，最终 ASR snapshot 只能在 input.committed 后发送；
+- LLM 使用空 final=false snapshot 切换 stage，delta sequence 独立从 0 开始；
 - snapshot 是全量原子覆盖；
 - asr_llm 的 ASR snapshot 不提交；
 - final snapshot 与 request.done 文本不一致时按协议错误关闭，不写真实目标；
 - 断线不重放，普通请求终态后保持连接；
+- 心跳最多一个 outstanding ping，两端按 interval + timeout 检测半开连接；
+- 1002 是不可自动重试的协议错误；
 - logout/禁用能跨节点关闭现有长连接。

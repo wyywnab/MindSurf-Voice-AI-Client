@@ -1,0 +1,25 @@
+{
+  "format_version": 2,
+  "cases": [
+    {
+      "name": "heartbeat timeout is shorter than interval",
+      "heartbeat_interval_ms": 15000,
+      "heartbeat_timeout_ms": 5000,
+      "valid": true
+    },
+    {
+      "name": "heartbeat timeout cannot equal interval",
+      "heartbeat_interval_ms": 5000,
+      "heartbeat_timeout_ms": 5000,
+      "valid": false,
+      "expected_rule": "heartbeat_timeout_not_less_than_interval"
+    },
+    {
+      "name": "heartbeat timeout cannot exceed interval",
+      "heartbeat_interval_ms": 5000,
+      "heartbeat_timeout_ms": 6000,
+      "valid": false,
+      "expected_rule": "heartbeat_timeout_not_less_than_interval"
+    }
+  ]
+}

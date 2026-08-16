@@ -217,6 +217,14 @@ async function validateOpenApi() {
   if (!capabilities?.required?.includes("realtime") || !capabilities?.required?.includes("modes")) {
     fail("Capabilities must require realtime and modes");
   }
+  if (!capabilities?.required?.includes("defaults") || capabilities?.properties?.default_pipeline !== undefined ||
+      api.components?.schemas?.DefaultPipelines !== undefined) {
+    fail("Capabilities.defaults must be the only default Pipeline authority");
+  }
+  const refreshConflictCodes = api.paths?.["/v2/auth/refresh"]?.post?.responses?.["409"]?.content?.["application/json"]?.schema?.allOf?.[1]?.properties?.error?.properties?.code?.enum ?? [];
+  for (const code of ["idempotency_conflict", "idempotency_result_expired", "refresh_token_reused"]) {
+    if (!refreshConflictCodes.includes(code)) fail(`refresh 409 response must include ${code}`);
+  }
   const authorizeParameters = api.paths?.["/v2/auth/authorize"]?.get?.parameters ?? [];
   const authorizeParameter = (name) => authorizeParameters.find((parameter) => parameter.name === name)?.schema;
   if (authorizeParameter("client_id")?.const !== "mindsurf-desktop" ||
@@ -362,8 +370,11 @@ function validateBrowserAuthorization(manifest) {
 
 function authIdempotencyOutcome(testCase) {
   if (testCase.retry.key === testCase.first.key) {
-    return testCase.retry.fingerprint === testCase.first.fingerprint ?
-      "replay_original_result" : "idempotency_conflict";
+    if (testCase.retry.fingerprint !== testCase.first.fingerprint) return "idempotency_conflict";
+    if (testCase.operation === "refresh" && testCase.result_available === false) {
+      return "idempotency_result_expired";
+    }
+    return "replay_original_result";
   }
   if (testCase.operation === "refresh" && testCase.credential_status === "rotated") return "refresh_token_reused";
   if (testCase.operation === "token" && testCase.credential_status === "consumed") return "authorization_grant_invalid";
@@ -380,6 +391,20 @@ function validateAuthIdempotency(manifest) {
     }
   }
   pass(`${vectors?.cases?.length ?? 0} token and refresh idempotency vectors checked`);
+}
+
+function validateSessionParameters(manifest) {
+  const file = path.resolve(path.dirname(manifestPath), manifest.vectors.session_parameters);
+  const vectors = readJson(file);
+  for (const testCase of vectors?.cases ?? []) {
+    const violation = testCase.heartbeat_timeout_ms < testCase.heartbeat_interval_ms ? null :
+      "heartbeat_timeout_not_less_than_interval";
+    if (testCase.valid && violation) fail(`valid session parameter vector rejected (${testCase.name}): ${violation}`);
+    if (!testCase.valid && violation !== testCase.expected_rule) {
+      fail(`invalid session parameter vector ${testCase.name} produced ${violation ?? "no violation"}, expected ${testCase.expected_rule}`);
+    }
+  }
+  pass(`${vectors?.cases?.length ?? 0} heartbeat parameter vectors checked`);
 }
 
 function modePipelineViolation(capabilities, request) {
@@ -403,17 +428,78 @@ function modePipelineViolation(capabilities, request) {
   return null;
 }
 
+function capabilityCatalogViolations(capabilities) {
+  const violations = [];
+  const uniqueIds = (items, label) => {
+    const ids = items.map((item) => item.id);
+    if (new Set(ids).size !== ids.length) violations.push(`duplicate_${label}_id`);
+    return new Set(ids);
+  };
+  const pipelineIds = uniqueIds(capabilities.pipelines ?? [], "pipeline");
+  const asrIds = uniqueIds(capabilities.asr_options ?? [], "asr_option");
+  const llmIds = uniqueIds(capabilities.llm_options ?? [], "llm_option");
+
+  for (const pipeline of capabilities.pipelines ?? []) {
+    if ((pipeline.asr_options ?? []).some((id) => !asrIds.has(id))) violations.push("dangling_pipeline_asr_option");
+    if ((pipeline.llm_options ?? []).some((id) => !llmIds.has(id))) violations.push("dangling_pipeline_llm_option");
+    for (const control of Object.values(pipeline.generation_controls ?? {})) {
+      if (control.minimum > control.default || control.default > control.maximum) {
+        violations.push("generation_default_out_of_range");
+      }
+      if (control.type === "integer" && ![control.minimum, control.default, control.maximum].every(Number.isInteger)) {
+        violations.push("generation_integer_metadata_fractional");
+      }
+    }
+  }
+
+  for (const mode of ["asr_only", "asr_llm"]) {
+    const value = capabilities.defaults?.[mode];
+    const pipeline = capabilities.pipelines?.find((item) => item.id === value?.pipeline);
+    if (!value || !pipelineIds.has(value.pipeline) || !pipeline) {
+      violations.push(`invalid_${mode}_default_pipeline`);
+      continue;
+    }
+    if (!pipeline.modes.includes(mode)) violations.push(`invalid_${mode}_default_mode`);
+    if (!pipeline.asr_options.includes(value.selection?.asr)) violations.push(`invalid_${mode}_default_asr`);
+    if (mode === "asr_only" && value.selection?.llm !== null) violations.push("invalid_asr_only_default_llm");
+    if (mode === "asr_llm" && (!value.selection?.llm || !pipeline.llm_options.includes(value.selection.llm))) {
+      violations.push("invalid_asr_llm_default_llm");
+    }
+  }
+  return [...new Set(violations)];
+}
+
 function validateModePipelines(manifest) {
   const file = path.resolve(path.dirname(manifestPath), manifest.vectors.mode_pipeline_requests);
   const vectors = readJson(file);
-  for (const pipeline of vectors.capabilities.pipelines) {
-    for (const [key, control] of Object.entries(pipeline.generation_controls)) {
-      if (control.minimum > control.default || control.default > control.maximum) {
-        fail(`generation control ${pipeline.id}.${key} must satisfy minimum <= default <= maximum`);
-      }
-      if (control.type === "integer" && ![control.minimum, control.default, control.maximum].every(Number.isInteger)) {
-        fail(`integer generation control ${pipeline.id}.${key} must use integer bounds and default`);
-      }
+  for (const violation of capabilityCatalogViolations(vectors.capabilities)) {
+    fail(`capability catalog fixture violates ${violation}`);
+  }
+  for (const testCase of vectors.catalog_cases ?? []) {
+    const capabilities = structuredClone(vectors.capabilities);
+    switch (testCase.mutation) {
+      case "duplicate_pipeline_id":
+        capabilities.pipelines.push({ ...structuredClone(capabilities.pipelines[0]) });
+        break;
+      case "dangling_pipeline_asr_option":
+        capabilities.pipelines[0].asr_options = ["missing-asr"];
+        break;
+      case "default_pipeline_wrong_mode":
+        capabilities.defaults.asr_only.pipeline = "opaque-b";
+        break;
+      case "default_llm_not_in_pipeline":
+        capabilities.defaults.asr_llm.selection.llm = "missing-llm";
+        break;
+      case "generation_default_out_of_range":
+        capabilities.pipelines[1].generation_controls.temperature.default = 2;
+        break;
+      default:
+        fail(`unknown capability catalog mutation: ${testCase.mutation}`);
+        continue;
+    }
+    const violations = capabilityCatalogViolations(capabilities);
+    if (!violations.includes(testCase.expected_rule)) {
+      fail(`invalid capability catalog ${testCase.name} produced ${violations.join(", ") || "no violation"}, expected ${testCase.expected_rule}`);
     }
   }
   for (const testCase of vectors?.cases ?? []) {
@@ -423,7 +509,7 @@ function validateModePipelines(manifest) {
       fail(`invalid mode/Pipeline vector ${testCase.name} produced ${violation ?? "no violation"}, expected ${testCase.expected_rule}`);
     }
   }
-  pass(`${vectors?.cases?.length ?? 0} cross-resource mode/Pipeline vectors checked`);
+  pass(`${vectors?.catalog_cases?.length ?? 0} invalid capability catalogs and ${vectors?.cases?.length ?? 0} cross-resource mode/Pipeline vectors checked`);
 }
 
 function billingViolation(testCase) {
@@ -463,8 +549,9 @@ function validateBillingUsage(manifest) {
 function lifecycleViolation(events) {
   let mode;
   let inputCommitted = false;
-  let nextDeltaSequence = 0;
-  let sawAsrSnapshot = false;
+  const nextDeltaSequence = { asr: 0, llm: 0 };
+  let asrReadyForLlm = false;
+  let llmStarted = false;
   let finalText;
   let terminal = false;
 
@@ -484,28 +571,49 @@ function lifecycleViolation(events) {
         inputCommitted = true;
         break;
       case "output.text.delta":
-        if (!inputCommitted) return "output_before_input_committed";
-        if (event.payload?.stage !== "asr" || event.payload?.sequence !== nextDeltaSequence) return "invalid_delta_sequence";
-        nextDeltaSequence += 1;
+        if (!mode) return "output_before_accepted";
+        if (event.payload?.stage === "asr") {
+          if (llmStarted) return "asr_output_after_llm_started";
+          if (inputCommitted && mode === "asr_llm") asrReadyForLlm = false;
+        } else if (event.payload?.stage === "llm") {
+          if (!llmStarted) return "llm_output_before_stage_transition";
+        } else {
+          return "invalid_delta_stage";
+        }
+        if (event.payload?.sequence !== nextDeltaSequence[event.payload.stage]) return "invalid_delta_sequence";
+        nextDeltaSequence[event.payload.stage] += 1;
         break;
       case "output.text.snapshot": {
-        if (!inputCommitted) return "output_before_input_committed";
         const { stage, text, final } = event.payload ?? {};
-        if (mode === "asr_only") {
-          if (stage !== "asr" || final !== true) return "snapshot_mode_mismatch";
-        } else if (mode === "asr_llm") {
-          if (stage === "asr") {
-            if (final !== false || sawAsrSnapshot) return "snapshot_mode_mismatch";
-            sawAsrSnapshot = true;
-          } else if (stage === "llm") {
-            if (final !== true || !sawAsrSnapshot) return "snapshot_mode_mismatch";
+        if (!mode) return "output_before_accepted";
+        if (stage === "asr") {
+          if (llmStarted) return "asr_output_after_llm_started";
+          if (final === true) {
+            if (!inputCommitted) return "final_before_input_committed";
+            if (mode !== "asr_only") return "snapshot_mode_mismatch";
+            finalText = text;
+          } else if (final === false) {
+            if (inputCommitted && mode === "asr_llm") asrReadyForLlm = true;
+          } else {
+            return "snapshot_mode_mismatch";
+          }
+        } else if (stage === "llm") {
+          if (mode !== "asr_llm" || !inputCommitted || !asrReadyForLlm) {
+            return "llm_output_before_asr_complete";
+          }
+          if (!llmStarted) {
+            if (final !== false || text !== "") return "invalid_llm_stage_transition";
+            llmStarted = true;
+          } else if (final === false) {
+            return "duplicate_llm_stage_transition";
+          } else if (final === true) {
+            finalText = text;
           } else {
             return "snapshot_mode_mismatch";
           }
         } else {
-          return "snapshot_before_accepted";
+          return "snapshot_mode_mismatch";
         }
-        if (final === true) finalText = text;
         break;
       }
       case "request.done":
@@ -660,13 +768,13 @@ function validateSemanticText() {
   const ws = readText(path.join(v2Root, "docs", "WS_PROTOCOL_V2.md"));
   const http = readText(path.join(v2Root, "docs", "HTTP_API_V2.md"));
   const lifecycle = readText(path.join(v2Root, "docs", "request-lifecycle.md"));
-  for (const required of ["长期连接", "空闲状态不得仅因没有请求而关闭连接", "一次性", "session_revoked", "不得恢复或重放活跃请求", "request_id_reused", "realtime_ticket_consumed", "原子锁定 success 终态"]) {
+  for (const required of ["长期连接", "空闲状态不得仅因没有请求而关闭连接", "一次性", "session_revoked", "不得恢复或重放活跃请求", "request_id_reused", "realtime_ticket_consumed", "原子锁定 success 终态", "唯一权威建连路径", "heartbeat_timeout_ms < heartbeat_interval_ms", "1002", "不自动重连"]) {
     if (!ws.includes(required)) fail(`WS semantics missing: ${required}`);
   }
-  for (const required of ["/v2/auth/authorize", "/v2/auth/token", "code_challenge", "code_verifier", "系统默认浏览器", "注册", "/v2/quota", "/v2/realtime/tickets", "refresh token", "Keychain", "Idempotency-Key", "[from_ms, to_ms)"]) {
+  for (const required of ["/v2/auth/authorize", "/v2/auth/token", "code_challenge", "code_verifier", "系统默认浏览器", "注册", "/v2/quota", "/v2/realtime/tickets", "refresh token", "Keychain", "Idempotency-Key", "idempotency_result_expired", "defaults[mode]", "[from_ms, to_ms)"]) {
     if (!http.includes(required)) fail(`HTTP semantics missing: ${required}`);
   }
-  for (const required of ["asr_only", "asr_llm", "临时文本区域", "final=true", "不得写入真实目标"]) {
+  for (const required of ["asr_only", "asr_llm", "临时文本区域", "final=true", "不得写入真实目标", "录音期间", "LLM delta", "stage 切换 snapshot"]) {
     if (!lifecycle.includes(required)) fail(`request lifecycle semantics missing: ${required}`);
   }
   for (const required of ["asr_credits_charged", "llm_credits_charged", "credits_charged = asr_credits_charged + llm_credits_charged"]) {
@@ -683,6 +791,7 @@ validateMarkdownExamples(manifest, validators);
 validateInvalidMessages(manifest, validators);
 validateBrowserAuthorization(manifest);
 validateAuthIdempotency(manifest);
+validateSessionParameters(manifest);
 validateModePipelines(manifest);
 validateBillingUsage(manifest);
 validateRequestLifecycles(manifest);

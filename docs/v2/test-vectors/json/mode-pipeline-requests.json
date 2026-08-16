@@ -3,12 +3,25 @@
   "capabilities": {
     "revision": "cap-mode-test-1",
     "recognition_languages": ["auto", "zh-CN", "en-US"],
+    "asr_options": [{"id": "asr-default", "name": "Default ASR"}],
+    "llm_options": [{"id": "llm-default", "name": "Default LLM"}, {"id": "llm-fast", "name": "Fast LLM"}],
     "pipelines": [
       {"id": "opaque-a", "modes": ["asr_only"], "asr_options": ["asr-default"], "llm_options": [], "generation_controls": {}},
       {"id": "opaque-b", "modes": ["asr_llm"], "asr_options": ["asr-default"], "llm_options": ["llm-default", "llm-fast"], "generation_controls": {"temperature": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.2}, "max_tokens": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 256}}},
       {"id": "opaque-c", "modes": ["asr_only", "asr_llm"], "asr_options": ["asr-default"], "llm_options": ["llm-default"], "generation_controls": {"temperature": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.2}}}
-    ]
+    ],
+    "defaults": {
+      "asr_only": {"pipeline": "opaque-a", "selection": {"asr": "asr-default", "llm": null}},
+      "asr_llm": {"pipeline": "opaque-b", "selection": {"asr": "asr-default", "llm": "llm-default"}}
+    }
   },
+  "catalog_cases": [
+    {"name": "Pipeline IDs must be unique", "mutation": "duplicate_pipeline_id", "expected_rule": "duplicate_pipeline_id"},
+    {"name": "Pipeline ASR option must exist globally", "mutation": "dangling_pipeline_asr_option", "expected_rule": "dangling_pipeline_asr_option"},
+    {"name": "default Pipeline must support its mode", "mutation": "default_pipeline_wrong_mode", "expected_rule": "invalid_asr_only_default_mode"},
+    {"name": "default LLM must belong to its Pipeline", "mutation": "default_llm_not_in_pipeline", "expected_rule": "invalid_asr_llm_default_llm"},
+    {"name": "generation default must be in range", "mutation": "generation_default_out_of_range", "expected_rule": "generation_default_out_of_range"}
+  ],
   "cases": [
     {
       "name": "asr_only uses ASR and null LLM",

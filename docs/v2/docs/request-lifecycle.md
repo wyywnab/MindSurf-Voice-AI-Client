@@ -7,14 +7,14 @@
 ```text
 idle
   -> starting
-      -> recording                 # request.accepted
+      -> recording                 # request.accepted；ASR 可并行流式处理
           -> committing
-              -> processing_asr
+              -> processing_asr_final
                   -> processing_llm   # 仅 asr_llm
                       -> ready_to_commit
       -> cancelling
 
-starting/recording/committing/processing_asr/processing_llm/ready_to_commit/cancelling
+starting/recording/committing/processing_asr_final/processing_llm/ready_to_commit/cancelling
   -> completed | cancelled | failed
 ```
 
@@ -38,7 +38,9 @@ revision、Pipeline mode、ASR/LLM 选择、language、generation、request ID �
 `request_id_reused`，并且不得创建 reservation 或启动任何阶段。
 
 客户端只有在 accepted 后才能发送 INPUT_PCM。发送 `input.commit` 后不得继续发送音频。
-后端完整校验音频统计并发送 `input.committed` 后，才能产生文本输出。
+后端可以在 recording 阶段一边接收 INPUT_PCM，一边产生 ASR delta 和用于纠错的
+`final=false` ASR snapshot。发送 `input.committed` 前不得发送本请求的最终 ASR snapshot、
+启动 LLM 或发送任何 LLM 输出。
 
 accepted 超时或用户主动取消时，客户端可以在 starting 阶段发送 `request.cancel`。发送后
 立即停止音频且不得 commit；后端仍按取消竞态选择唯一终态。accepted 超过 3 秒时客户端
@@ -48,8 +50,12 @@ accepted 超时或用户主动取消时，客户端可以在 starting 阶段发�
 
 客户端为当前请求维护一块临时文本区域：
 
-- `output.text.delta`：把 delta 追加到临时区域；
+- `output.text.delta`：把 delta 追加到当前 stage 的临时区域；
 - `output.text.snapshot`：用完整 text 原子覆盖临时区域；
+- ASR 和 LLM 各自维护独立的 delta sequence，均从 0 连续递增，snapshot 不重置 sequence；
+- asr_llm 的第一条 LLM 事件必须是
+  `output.text.snapshot(stage=llm, text="", final=false)`；客户端收到它时原子清空 ASR
+  临时文本并切换到 LLM stage，后续 LLM delta 追加到空区域；
 - 请求结束前，临时区域不得写入用户当前聚焦的真实目标；
 - 只有 `final=true` 的 snapshot 后，同一 request ID 的下一条请求级事件是合法
   `request.done`，客户端才把临时区域全文一次性写入真实目标；request_id=null 的心跳等
@@ -57,24 +63,30 @@ accepted 超时或用户主动取消时，客户端可以在 starting 阶段发�
 - request.done.final_text 必须等于最后一条 `final=true` snapshot 的 text；
 - cancelled、terminal error 或断线都不得提交临时区域。
 
-`output.text.delta.sequence` 从 0 连续递增。所有 delta 都属于 ASR 流式阶段。
+ASR streaming 可以是真流式、伪流式或非流式实现。非流式 ASR 可以在录音期间不产生任何
+输出，并在 input.committed 后直接发送完整 ASR snapshot；客户端不得依据更新频率推断模型
+类型。
 
 ## 5. `asr_only` 时序
 
 ```text
 request.start(mode=asr_only)
 request.accepted
-INPUT_PCM...
+INPUT_PCM... <-> output.text.delta(stage=asr)*
+             <-> output.text.snapshot(stage=asr, final=false)*
 input.commit
 input.committed
 output.text.delta(stage=asr)*
+output.text.snapshot(stage=asr, final=false)*
 output.text.snapshot(stage=asr, final=true)
 request.done(mode=asr_only)
 client commits temporary text to target
 ```
 
-ASR 流式 delta 让用户尽早看到文本。ASR 完成时必须发送一次完整 snapshot，覆盖流式拼接
-可能存在的标点、分词或识别修订差异。
+ASR delta 允许用户在录音期间看到文本；ASR 可以随时用 `final=false` snapshot 修订已经展示
+的假设。`input.committed` 后必须发送且只能发送一条 `final=true` 的完整 ASR snapshot，覆盖
+流式拼接可能存在的标点、分词或识别修订差异。该 final snapshot 发出后仍遵守下一条请求级
+服务端事件只能是 request.done 的终态锁定规则。
 
 `selection.llm` 必须为 null，generation 必须省略。
 
@@ -83,22 +95,29 @@ ASR 流式 delta 让用户尽早看到文本。ASR 完成时必须发送一次�
 ```text
 request.start(mode=asr_llm)
 request.accepted
-INPUT_PCM...
+INPUT_PCM... <-> output.text.delta(stage=asr)*
+             <-> output.text.snapshot(stage=asr, final=false)*
 input.commit
 input.committed
 output.text.delta(stage=asr)*
-output.text.snapshot(stage=asr, final=false)
+output.text.snapshot(stage=asr, final=false)  # commit 后的完整 ASR 收口
 backend runs LLM with complete ASR text
+output.text.snapshot(stage=llm, text="", final=false)
+output.text.delta(stage=llm)*
 output.text.snapshot(stage=llm, final=true)
 request.done(mode=asr_llm)
 client commits temporary text to target
 ```
 
-ASR snapshot 只是中间检查点，必须使用 `final=false`，客户端不得据此写入真实目标。LLM
-处理完成后发送第二次全量 snapshot，原子覆盖同一临时区域，并使用 `final=true`。
+asr_llm 的所有 ASR snapshot 都必须使用 `final=false`，客户端不得据此写入真实目标。
+`input.committed` 后至少发送一次完整 ASR snapshot；LLM stage 切换前的最后一条 ASR 事件
+必须是 snapshot，它的全文是交给 LLM 的权威输入。后端只能在该 snapshot 发出后启动 LLM，
+此后不得再发送 ASR 事件。
 
-当前 v2 不定义 LLM delta；LLM 阶段只发送最终全量覆盖。以后若要增加 LLM 流式输出，需要
-经过能力协商或协议升级，不能把 ASR delta 的 stage 偷换为 LLM。
+第一条 LLM 事件必须是 text 为空且 final=false 的 stage 切换 snapshot。LLM delta 的 sequence
+随后从 0 连续递增。LLM 处理完成后必须发送一次完整 `final=true` snapshot，纠正流式拼接差异
+并作为 request.done.final_text 的唯一来源。即使上游 LLM 只能整段返回，也必须先发送空的
+stage 切换 snapshot，再发送最终 snapshot；客户端不需要区分流式和非流式上游。
 
 `selection.llm` 必须为非空。LLM 只能在完整 ASR snapshot 产生后启动。
 
@@ -107,7 +126,7 @@ ASR snapshot 只是中间检查点，必须使用 `final=false`，客户端不�
 `request.done` 只表示完整流程成功：
 
 - asr_only：成功 ASR snapshot 已发送且 final=true；
-- asr_llm：ASR 中间 snapshot 和 LLM final snapshot 均已发送；
+- asr_llm：commit 后完整 ASR snapshot、LLM stage 切换和 LLM final snapshot 均已发送；
 - final_text 与 final snapshot 严格一致；
 - usage 已完成结算。
 

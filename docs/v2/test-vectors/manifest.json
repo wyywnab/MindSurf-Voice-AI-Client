@@ -29,6 +29,7 @@
     "invalid_json": "json/invalid-messages.json",
     "browser_authorization": "json/browser-authorization.json",
     "auth_idempotency": "json/auth-idempotency.json",
+    "session_parameters": "json/session-parameters.json",
     "mode_pipeline_requests": "json/mode-pipeline-requests.json",
     "billing_usage": "json/billing-usage.json",
     "request_lifecycles": "json/request-lifecycles.json",

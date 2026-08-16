@@ -21,9 +21,19 @@
       "name": "refresh retry with same key replays rotated pair",
       "operation": "refresh",
       "credential_status": "rotated",
+      "result_available": true,
       "first": {"key": "10000000-0000-4000-8000-000000000103", "fingerprint": "refresh-request-a"},
       "retry": {"key": "10000000-0000-4000-8000-000000000103", "fingerprint": "refresh-request-a"},
       "expected_outcome": "replay_original_result"
+    },
+    {
+      "name": "refresh retry with same key does not trigger reuse after result expires",
+      "operation": "refresh",
+      "credential_status": "rotated",
+      "result_available": false,
+      "first": {"key": "10000000-0000-4000-8000-000000000106", "fingerprint": "refresh-request-a"},
+      "retry": {"key": "10000000-0000-4000-8000-000000000106", "fingerprint": "refresh-request-a"},
+      "expected_outcome": "idempotency_result_expired"
     },
     {
       "name": "rotated refresh token with a new key is reuse",

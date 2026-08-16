@@ -23,8 +23,9 @@
 2. quota 查询、ASR/LLM 分项 reservation、成功/取消/失败分项结算和幂等扣费；
 3. ticket 过期、一次消费、重复消费、连接上限和日志脱敏；
 4. 长期 WS 空闲保持、心跳超时、服务端 draining 和跨节点撤销；
-5. asr_only 的 ASR delta、最终 snapshot 和目标提交；
-6. asr_llm 的 ASR 中间 snapshot、LLM 最终 snapshot，以及 LLM 失败不提交；
+5. asr_only 录音期间的 ASR delta/修订 snapshot、commit 后最终 snapshot 和目标提交；
+6. asr_llm 的完整 ASR 收口、空 LLM stage 切换 snapshot、LLM delta、LLM 最终 snapshot，
+   以及 LLM 失败不提交；
 7. capabilities stale、Pipeline/mode/selection 交叉校验；
 8. 输入二进制帧 decode/encode 逐字节回环；
 9. commit 统计按实际帧重算，时间戳、sequence 或统计不一致时稳定失败；
