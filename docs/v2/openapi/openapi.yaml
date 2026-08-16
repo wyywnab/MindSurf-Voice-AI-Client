@@ -2,9 +2,9 @@ openapi: 3.1.0
 info:
   title: MindSurf Voice HTTP API
   version: 2.0.0-draft
-  description: |
-    MindSurf Voice API v2 的 HTTP 机器契约。实时音频与请求控制由同级
-    WebSocket v2 规范定义。
+  description: >-
+    系统浏览器授权、Token、用户、额度、用量、文本处理能力发现和长期 WebSocket ticket。
+    实时音频和文本事件由 WebSocket v2 定义。
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -16,16 +16,263 @@ servers:
 security:
   - bearerAuth: []
 tags:
+  - name: Authentication
+  - name: Users
+  - name: Quota
   - name: Capabilities
-  - name: Voices
-  - name: Voice References
-  - name: Conversations
+  - name: Realtime
+
 paths:
+  /v2/auth/authorize:
+    get:
+      tags: [Authentication]
+      operationId: authorizeDesktopClient
+      summary: 在系统浏览器中登录或注册并签发 Authorization Code
+      security: []
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            const: mindsurf-desktop
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            const: code
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            const: mindsurf://auth/callback
+        - name: code_challenge
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{43}$'
+        - name: code_challenge_method
+          in: query
+          required: true
+          schema:
+            const: S256
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{43,512}$'
+        - name: prompt
+          in: query
+          required: false
+          schema:
+            enum: [login, select_account]
+      responses:
+        '200':
+          description: 浏览器认证页面；页面内部处理登录、注册、验证和找回密码
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: >-
+            成功时回跳 code 和原 state；取消或失败时回跳稳定 error 和原 state。
+            Location 不得包含 access token 或 refresh token。
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v2/auth/token:
+    post:
+      tags: [Authentication]
+      operationId: exchangeAuthorizationCode
+      summary: 使用 Authorization Code 和 PKCE verifier 创建登录 session
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorizationCodeInput'
+      responses:
+        '200':
+          description: code 已原子消费并返回当前用户的 token pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/AuthorizationTokenBadRequest'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '403':
+          $ref: '#/components/responses/AccountSuspended'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v2/auth/refresh:
+    post:
+      tags: [Authentication]
+      operationId: refreshAccessToken
+      summary: 轮换 refresh token 并签发新 token pair
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshInput'
+      responses:
+        '200':
+          description: 刷新成功；旧 refresh token 已失效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/AuthenticationFailed'
+        '403':
+          $ref: '#/components/responses/AccountSuspended'
+        '409':
+          description: 幂等 key 冲突，或检测到已轮换 refresh token 被不同 key 重放
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum: [idempotency_conflict, refresh_token_reused]
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v2/auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      summary: 撤销当前登录 session、ticket 和长连接
+      responses:
+        '204':
+          description: 已登出；对同一 session 的重试同样返回 204
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v2/users/me:
+    get:
+      tags: [Users]
+      operationId: getCurrentUser
+      summary: 获取当前用户
+      responses:
+        '200':
+          description: 当前用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v2/quota:
+    get:
+      tags: [Quota]
+      operationId: getQuota
+      summary: 获取当前计费周期额度和累计用量
+      responses:
+        '200':
+          description: 当前额度
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotaResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v2/usage:
+    get:
+      tags: [Quota]
+      operationId: listUsage
+      summary: 分页查询已结算的请求用量
+      parameters:
+        - name: from_ms
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+          description: 查询半开区间 [from_ms, to_ms) 的起点。
+        - name: to_ms
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+          description: 查询半开区间 [from_ms, to_ms) 的终点，必须大于 from_ms。
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+          description: 固定首次查询参数和快照水位的不透明签名游标。
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: 用量分页；按 settled_at_ms 降序、request_id 升序
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /v2/capabilities:
     get:
       tags: [Capabilities]
       operationId: getCapabilities
-      summary: 获取当前用户的业务能力目录
+      summary: 获取当前用户可用的 ASR/LLM 文本处理能力
       responses:
         '200':
           description: 能力目录
@@ -35,460 +282,195 @@ paths:
                 $ref: '#/components/schemas/CapabilitiesResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/AccountSuspended'
         '429':
-          $ref: '#/components/responses/TooManyRequests'
+          $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
-  /v2/voices:
-    get:
-      tags: [Voices]
-      operationId: listVoices
-      summary: 查询当前用户可见的音色
-      parameters:
-        - name: selectable
-          in: query
-          required: false
-          description: 省略时返回全部；true/false 分别筛选可选或不可选音色。
-          schema:
-            type: boolean
-      responses:
-        '200':
-          description: 完整音色列表；内置按 id 升序，自建按 created_at_ms 降序、id 升序。
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/VoiceListResponse'
-        '400':
-          $ref: '#/components/responses/ListVoicesBadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
+  /v2/realtime/tickets:
     post:
-      tags: [Voices]
-      operationId: createVoice
-      summary: 创建用户音色
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/CreateVoiceInput'
+      tags: [Realtime]
+      operationId: createRealtimeTicket
+      summary: 为长期 WebSocket Upgrade 签发一次性短时 ticket
       responses:
-        '202':
-          description: 已接受异步处理
+        '201':
+          description: ticket 已签发；默认 30 秒内消费一次
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CreateVoiceResponse'
-        '400':
-          $ref: '#/components/responses/CreateVoiceBadRequest'
+                $ref: '#/components/schemas/RealtimeTicketResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/CreateVoiceForbidden'
-        '409':
-          $ref: '#/components/responses/CreateVoiceConflict'
-        '413':
-          $ref: '#/components/responses/PayloadTooLarge'
-        '415':
-          $ref: '#/components/responses/UnsupportedMediaType'
+          $ref: '#/components/responses/AccountSuspended'
         '429':
-          $ref: '#/components/responses/TooManyRequests'
+          description: HTTP 频率或实时连接数达到上限
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - properties:
+                      error:
+                        properties:
+                          code:
+                            enum: [rate_limit_exceeded, realtime_connection_limit]
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-
-  /v2/voices/{voice_id}:
-    parameters:
-      - $ref: '#/components/parameters/VoiceId'
-    get:
-      tags: [Voices]
-      operationId: getVoice
-      summary: 查询音色及异步处理状态
-      responses:
-        '200':
-          description: 完整音色资源
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/VoiceResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/VoiceNotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
-    patch:
-      tags: [Voices]
-      operationId: updateVoice
-      summary: 修改自建音色的默认情绪
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateVoiceInput'
-      responses:
-        '200':
-          description: 修改后的完整音色资源
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/VoiceResponse'
-        '400':
-          $ref: '#/components/responses/UpdateVoiceBadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/VoiceNotFound'
-        '409':
-          $ref: '#/components/responses/UpdateVoiceConflict'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
-    delete:
-      tags: [Voices]
-      operationId: deleteVoice
-      summary: 删除自建音色
-      responses:
-        '204':
-          $ref: '#/components/responses/NoContent'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/VoiceNotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /v2/voices/{voice_id}/references:
-    parameters:
-      - $ref: '#/components/parameters/VoiceId'
-    post:
-      tags: [Voice References]
-      operationId: createVoiceReference
-      summary: 增加情绪参考版本
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/CreateReferenceInput'
-      responses:
-        '202':
-          description: 已接受异步处理
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CreateReferenceResponse'
-        '400':
-          $ref: '#/components/responses/CreateReferenceBadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/VoiceNotFound'
-        '409':
-          $ref: '#/components/responses/CreateReferenceConflict'
-        '413':
-          $ref: '#/components/responses/PayloadTooLarge'
-        '415':
-          $ref: '#/components/responses/UnsupportedMediaType'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-
-  /v2/voices/{voice_id}/references/{reference_id}:
-    parameters:
-      - $ref: '#/components/parameters/VoiceId'
-      - $ref: '#/components/parameters/ReferenceId'
-    get:
-      tags: [Voice References]
-      operationId: getVoiceReference
-      summary: 查询情绪参考处理状态
-      responses:
-        '200':
-          description: 情绪参考资源
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/VoiceReferenceResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/VoiceReferenceNotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
-    delete:
-      tags: [Voice References]
-      operationId: deleteVoiceReference
-      summary: 删除情绪参考
-      responses:
-        '204':
-          $ref: '#/components/responses/NoContent'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/VoiceReferenceNotFound'
-        '409':
-          $ref: '#/components/responses/DeleteReferenceConflict'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /v2/conversations/{conversation_id}:
-    parameters:
-      - $ref: '#/components/parameters/ConversationId'
-    delete:
-      tags: [Conversations]
-      operationId: deleteConversation
-      summary: 删除 confirmed conversation 的后端上下文
-      description: |
-        不存在或不属于当前用户的 ID 同样返回 204。只有当前用户自己的活跃
-        conversation 返回 409 conversation_active。
-      responses:
-        '204':
-          $ref: '#/components/responses/NoContent'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '409':
-          $ref: '#/components/responses/DeleteConversationConflict'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
 
 components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 每次逻辑操作生成的 UUID；同一操作的网络重试必须复用。
+      schema:
+        $ref: '#/components/schemas/UUID'
+
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
 
-  parameters:
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      description: >-
-        仅在同步校验通过并原子接受异步任务时消费，失败的同步校验不占用 Key；
-        当前用户范围内从成功写入接受事务起至少保留 24 小时。并发的相同指纹只创建
-        一个资源，其他请求等待后重放。相同指纹重放仍返回 202 和首次接受时
-        相同的 data，但为本次 HTTP 尝试生成新的 request_id；当前资源状态通过 GET 查询。
-        指纹按规范化方法、路径、校验后字段、基础媒体类型和文件原始字节 SHA-256 计算，
-        不包含 multipart boundary、part 顺序、文件名、传输头顺序或媒体类型参数。
-      schema:
-        type: string
-        format: uuid
-    VoiceId:
-      name: voice_id
-      in: path
-      required: true
-      schema:
-        type: string
-        minLength: 1
-    ReferenceId:
-      name: reference_id
-      in: path
-      required: true
-      schema:
-        type: string
-        minLength: 1
-    ConversationId:
-      name: conversation_id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-
   responses:
-    NoContent:
-      description: 成功；响应体必须为空。
     BadRequest:
-      description: 请求字段、查询参数或 multipart 无效。
+      description: 请求字段或查询参数非法
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error400Response'
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        const: invalid_request
     Unauthorized:
-      description: 缺少、无效或过期鉴权。
+      description: access token 缺失、无效或过期
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error401Response'
-    Forbidden:
-      description: 当前可见资源或能力不允许该操作。
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        enum: [authentication_required, authentication_failed, authentication_expired]
+    AuthenticationFailed:
+      description: refresh 凭据无效
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error403Response'
-    NotFound:
-      description: 资源不存在或为避免越权泄露而隐藏。
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        const: authentication_failed
+    AuthorizationTokenBadRequest:
+      description: 请求结构非法，或 Authorization Code/PKCE grant 无效
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error404Response'
-    VoiceNotFound:
-      description: 音色不存在，或为避免越权泄露而隐藏。
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        enum: [invalid_request, authorization_grant_invalid]
+    AccountSuspended:
+      description: 账户不可使用该接口
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/VoiceNotFoundError404Response'
-    VoiceReferenceNotFound:
-      description: 音色或情绪参考不存在，或为避免越权泄露而隐藏。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/VoiceReferenceNotFoundError404Response'
-    Conflict:
-      description: 幂等、资源状态或并发操作冲突。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error409Response'
-    ListVoicesBadRequest:
-      description: selectable 无效或携带未定义查询参数。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ListVoicesError400Response'
-    CreateVoiceBadRequest:
-      description: 创建字段、multipart 或授权确认无效。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/CreateVoiceError400Response'
-    CreateVoiceForbidden:
-      description: 当前用户的 capabilities 未开放音色克隆。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/CreateVoiceError403Response'
-    UpdateVoiceBadRequest:
-      description: 更新请求体无效。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/UpdateVoiceError400Response'
-    CreateReferenceBadRequest:
-      description: 新增参考字段、multipart 或授权确认无效。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/CreateReferenceError400Response'
-    CreateVoiceConflict:
-      description: 创建音色的幂等冲突。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/CreateVoiceError409Response'
-    UpdateVoiceConflict:
-      description: 默认情绪当前不可用。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/UpdateVoiceError409Response'
-    CreateReferenceConflict:
-      description: 新增参考的幂等或 emotion 冲突。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/CreateReferenceError409Response'
-    DeleteReferenceConflict:
-      description: 身份基准或默认情绪参考不能直接删除。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/DeleteReferenceError409Response'
-    DeleteConversationConflict:
-      description: 当前用户自己的 conversation 仍处于 active 状态。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/DeleteConversationError409Response'
-    PayloadTooLarge:
-      description: 上传文件超过 capabilities 声明的限制。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error413Response'
-    UnsupportedMediaType:
-      description: reference_audio 声明了不支持的媒体类型。
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error415Response'
-    TooManyRequests:
-      description: 速率或配额限制。
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        const: account_suspended
+    RateLimited:
+      description: 请求频率超限
       headers:
         Retry-After:
-          description: 可选重试等待秒数。
           schema:
             type: integer
             minimum: 1
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error429Response'
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        const: rate_limit_exceeded
     InternalError:
-      description: 后端内部错误。
+      description: 未分类内部错误
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error500Response'
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        const: server_error
     ServiceUnavailable:
-      description: 当前业务能力暂不可用。
-      headers:
-        Retry-After:
-          description: 可选重试等待秒数。
-          schema:
-            type: integer
-            minimum: 1
+      description: 服务临时不可用
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error503Response'
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        const: service_unavailable
+    IdempotencyConflict:
+      description: 同一 Idempotency-Key 被用于不同请求
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        const: idempotency_conflict
 
   schemas:
-    RequestId:
+    UUID:
       type: string
       format: uuid
 
-    EmotionId:
-      type: string
-      pattern: '^[a-z][a-z0-9_-]{0,31}$'
+    TimestampMs:
+      type: integer
+      minimum: 0
 
-    Failure:
+    RequestId:
+      $ref: '#/components/schemas/UUID'
+
+    Error:
       type: object
       additionalProperties: false
-      required: [code, message]
+      required: [code, message, retryable, details]
       properties:
         code:
           type: string
@@ -496,33 +478,311 @@ components:
         message:
           type: string
           minLength: 1
+        retryable:
+          type: boolean
+        details:
+          type: object
+          additionalProperties: true
 
-    InferenceCandidate:
+    ErrorResponse:
       type: object
       additionalProperties: false
-      required: [id, name, description, pipelines, modes]
+      required: [request_id, error]
+      properties:
+        request_id:
+          $ref: '#/components/schemas/RequestId'
+        error:
+          $ref: '#/components/schemas/Error'
+
+    Device:
+      type: object
+      additionalProperties: false
+      required: [id, name, platform, app_version]
       properties:
         id:
           type: string
           minLength: 1
+          maxLength: 128
         name:
           type: string
           minLength: 1
-        description:
+          maxLength: 128
+        platform:
           type: string
-        pipelines:
+          minLength: 1
+          maxLength: 32
+        app_version:
+          type: string
+          minLength: 1
+          maxLength: 32
+
+    AuthorizationCodeInput:
+      type: object
+      additionalProperties: false
+      required: [grant_type, client_id, code, code_verifier, redirect_uri, device]
+      properties:
+        grant_type:
+          const: authorization_code
+        client_id:
+          const: mindsurf-desktop
+        code:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          writeOnly: true
+        code_verifier:
+          type: string
+          pattern: '^[A-Za-z0-9._~-]{43,128}$'
+          writeOnly: true
+        redirect_uri:
+          const: mindsurf://auth/callback
+        device:
+          $ref: '#/components/schemas/Device'
+
+    RefreshInput:
+      type: object
+      additionalProperties: false
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+          minLength: 1
+          writeOnly: true
+
+    TokenPair:
+      type: object
+      additionalProperties: false
+      required: [token_type, access_token, expires_in, refresh_token, refresh_expires_in]
+      properties:
+        token_type:
+          const: Bearer
+        access_token:
+          type: string
+          minLength: 1
+          x-sensitive: true
+        expires_in:
+          type: integer
+          minimum: 1
+          description: 相对于本次响应时刻的 access token 真实剩余有效秒数；幂等重放时重新计算。
+        refresh_token:
+          type: string
+          minLength: 1
+          x-sensitive: true
+        refresh_expires_in:
+          type: integer
+          minimum: 1
+          description: 相对于本次响应时刻的 refresh token 真实剩余有效秒数；幂等重放时重新计算。
+
+    User:
+      type: object
+      additionalProperties: false
+      required: [user_id, display_name, login, status, plan, created_at_ms]
+      properties:
+        user_id:
+          $ref: '#/components/schemas/UUID'
+        display_name:
+          type: string
+          minLength: 1
+        login:
+          type: string
+          minLength: 1
+        status:
+          enum: [active, suspended]
+        plan:
+          type: string
+          minLength: 1
+        created_at_ms:
+          $ref: '#/components/schemas/TimestampMs'
+
+    AuthData:
+      type: object
+      additionalProperties: false
+      required: [tokens, user]
+      properties:
+        tokens:
+          $ref: '#/components/schemas/TokenPair'
+        user:
+          $ref: '#/components/schemas/User'
+
+    AuthResponse:
+      type: object
+      additionalProperties: false
+      required: [request_id, data]
+      properties:
+        request_id:
+          $ref: '#/components/schemas/RequestId'
+        data:
+          $ref: '#/components/schemas/AuthData'
+
+    UserResponse:
+      type: object
+      additionalProperties: false
+      required: [request_id, data]
+      properties:
+        request_id:
+          $ref: '#/components/schemas/RequestId'
+        data:
+          $ref: '#/components/schemas/User'
+
+    Period:
+      type: object
+      additionalProperties: false
+      required: [starts_at_ms, ends_at_ms]
+      properties:
+        starts_at_ms:
+          $ref: '#/components/schemas/TimestampMs'
+        ends_at_ms:
+          $ref: '#/components/schemas/TimestampMs'
+
+    Credits:
+      type: object
+      additionalProperties: false
+      required: [limit, used, reserved, remaining]
+      properties:
+        limit:
+          type: integer
+          minimum: 0
+        used:
+          type: integer
+          minimum: 0
+        reserved:
+          type: integer
+          minimum: 0
+        remaining:
+          type: integer
+          minimum: 0
+
+    ResourceUsage:
+      type: object
+      additionalProperties: false
+      required:
+        - input_audio_ms
+        - llm_input_tokens
+        - llm_output_tokens
+        - asr_credits_charged
+        - llm_credits_charged
+        - credits_charged
+      properties:
+        input_audio_ms:
+          type: integer
+          minimum: 0
+        llm_input_tokens:
+          type: integer
+          minimum: 0
+        llm_output_tokens:
+          type: integer
+          minimum: 0
+        asr_credits_charged:
+          type: integer
+          minimum: 0
+          description: 当前计费周期累计的 ASR credits。
+        llm_credits_charged:
+          type: integer
+          minimum: 0
+          description: 当前计费周期累计的 LLM 润色 credits。
+        credits_charged:
+          type: integer
+          minimum: 0
+          description: ASR 与 LLM 润色 credits 之和。
+
+    Quota:
+      type: object
+      additionalProperties: false
+      required: [plan, pricing_revision, period, credits, usage]
+      properties:
+        plan:
+          type: string
+          minLength: 1
+        pricing_revision:
+          type: string
+          minLength: 1
+        period:
+          $ref: '#/components/schemas/Period'
+        credits:
+          $ref: '#/components/schemas/Credits'
+        usage:
+          $ref: '#/components/schemas/ResourceUsage'
+
+    QuotaResponse:
+      type: object
+      additionalProperties: false
+      required: [request_id, data]
+      properties:
+        request_id:
+          $ref: '#/components/schemas/RequestId'
+        data:
+          $ref: '#/components/schemas/Quota'
+
+    Mode:
+      enum: [asr_only, asr_llm]
+
+    UsageEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - request_id
+        - mode
+        - settled_at_ms
+        - pricing_revision
+        - input_audio_ms
+        - llm_input_tokens
+        - llm_output_tokens
+        - asr_credits_charged
+        - llm_credits_charged
+        - credits_charged
+      properties:
+        request_id:
+          $ref: '#/components/schemas/UUID'
+        mode:
+          $ref: '#/components/schemas/Mode'
+        settled_at_ms:
+          $ref: '#/components/schemas/TimestampMs'
+        pricing_revision:
+          type: string
+          minLength: 1
+        input_audio_ms:
+          type: integer
+          minimum: 0
+        llm_input_tokens:
+          type: integer
+          minimum: 0
+        llm_output_tokens:
+          type: integer
+          minimum: 0
+        asr_credits_charged:
+          type: integer
+          minimum: 0
+          description: 本请求结算的 ASR credits。
+        llm_credits_charged:
+          type: integer
+          minimum: 0
+          description: 本请求结算的 LLM 润色 credits。
+        credits_charged:
+          type: integer
+          minimum: 0
+          description: 本请求两个计费分项之和。
+
+    UsageList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
           type: array
-          minItems: 1
-          uniqueItems: true
           items:
-            type: string
-            minLength: 1
-        modes:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            enum: [dictation, assistant]
+            $ref: '#/components/schemas/UsageEntry'
+        next_cursor:
+          type: [string, 'null']
+
+    UsageListResponse:
+      type: object
+      additionalProperties: false
+      required: [request_id, data]
+      properties:
+        request_id:
+          $ref: '#/components/schemas/RequestId'
+        data:
+          $ref: '#/components/schemas/UsageList'
 
     NamedOption:
       type: object
@@ -536,11 +796,18 @@ components:
           type: string
           minLength: 1
 
-    GenerationControl:
-      oneOf:
-        - $ref: '#/components/schemas/NumberGenerationControl'
-        - $ref: '#/components/schemas/IntegerGenerationControl'
-    NumberGenerationControl:
+    Selection:
+      type: object
+      additionalProperties: false
+      required: [asr, llm]
+      properties:
+        asr:
+          type: string
+          minLength: 1
+        llm:
+          type: [string, 'null']
+
+    NumberControl:
       type: object
       additionalProperties: false
       required: [type, minimum, maximum, default]
@@ -553,7 +820,8 @@ components:
           type: number
         default:
           type: number
-    IntegerGenerationControl:
+
+    IntegerControl:
       type: object
       additionalProperties: false
       required: [type, minimum, maximum, default]
@@ -567,110 +835,28 @@ components:
         default:
           type: integer
 
-    GenerationControlMap:
-      type: object
-      additionalProperties:
-        $ref: '#/components/schemas/GenerationControl'
-
-    OutputCapability:
-      type: object
-      additionalProperties: false
-      required: [supported, streaming]
-      properties:
-        supported:
-          type: boolean
-        streaming:
-          type: boolean
-      allOf:
-        - if:
-            properties:
-              supported:
-                const: false
-          then:
-            properties:
-              streaming:
-                const: false
-
-    PipelineOutputs:
-      type: object
-      additionalProperties: false
-      required: [text, audio]
-      properties:
-        text:
-          $ref: '#/components/schemas/OutputCapability'
-        audio:
-          allOf:
-            - $ref: '#/components/schemas/OutputCapability'
-            - if:
-                properties:
-                  supported:
-                    const: true
-              then:
-                properties:
-                  streaming:
-                    const: true
-
-    PipelineFeatures:
-      type: object
-      additionalProperties: false
-      required:
-        - input_transcription
-        - outputs
-        - conversation
-        - turn_taking
-        - interruption_trigger
-        - continuation_after_interruption
-        - voice_control
-        - emotion_control
-        - generation_controls
-        - validated_conversation_turns
-      properties:
-        input_transcription:
-          type: boolean
-        outputs:
-          $ref: '#/components/schemas/PipelineOutputs'
-        conversation:
-          type: boolean
-        turn_taking:
-          const: half_duplex
-        interruption_trigger:
-          const: explicit_client_action
-        continuation_after_interruption:
-          enum: [supported, unvalidated, unsupported]
-        voice_control:
-          enum: [none, preset, reference_clone]
-        emotion_control:
-          enum: [none, preset, reference_variant]
-          description: >-
-            可用于该 Pipeline 的 Voice 必须声明相同值；none 使用 null，preset 和
-            reference_variant 均从 Voice.supported_emotions 选择。
-        generation_controls:
-          type: object
-          additionalProperties: false
-          required: [text, audio]
-          properties:
-            text:
-              $ref: '#/components/schemas/GenerationControlMap'
-            audio:
-              $ref: '#/components/schemas/GenerationControlMap'
-        validated_conversation_turns:
-          type: [integer, 'null']
-          minimum: 1
+    GenerationControl:
+      oneOf:
+        - $ref: '#/components/schemas/NumberControl'
+        - $ref: '#/components/schemas/IntegerControl'
 
     Pipeline:
       type: object
       additionalProperties: false
-      required: [id, kind, name, description, modes, max_recording_ms, features]
+      required:
+        - id
+        - name
+        - description
+        - modes
+        - max_recording_ms
+        - asr_options
+        - llm_options
+        - generation_controls
       properties:
         id:
           type: string
           minLength: 1
-          description: 不透明的业务配置 ID，只用于引用，不携带 Pipeline 类型语义。
-        kind:
-          enum: [native_audio, cascade]
-          description: >-
-            决定 WebSocket request.start.selection 的结构；客户端不得从 id、名称或候选
-            分布推断该值。v2 当前只定义 native_audio 和 cascade。
+          description: 不透明业务 ID，不携带 mode 或模型语义。
         name:
           type: string
           minLength: 1
@@ -681,127 +867,75 @@ components:
           minItems: 1
           uniqueItems: true
           items:
-            enum: [dictation, assistant]
+            $ref: '#/components/schemas/Mode'
         max_recording_ms:
           type: integer
           minimum: 1
-          description: 该 Pipeline 每个实时请求预先声明的最大输入音频样本时长。
-        features:
-          $ref: '#/components/schemas/PipelineFeatures'
-
-    VoiceCloningCapabilities:
-      type: object
-      additionalProperties: false
-      required:
-        - supported
-        - asynchronous
-        - accepted_content_types
-        - min_reference_ms
-        - max_reference_ms
-        - recommended_reference_ms
-        - effective_reference_window_ms
-        - max_upload_bytes
-        - emotion_reference_variants
-      properties:
-        supported:
-          type: boolean
-        asynchronous:
-          type: boolean
-        accepted_content_types:
+        asr_options:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        llm_options:
           type: array
           uniqueItems: true
           items:
             type: string
-            pattern: '^audio/'
-        min_reference_ms:
-          type: [integer, 'null']
-          minimum: 1
-        max_reference_ms:
-          type: [integer, 'null']
-          minimum: 1
-        recommended_reference_ms:
-          type: [integer, 'null']
-          minimum: 1
-        effective_reference_window_ms:
-          type: [integer, 'null']
-          minimum: 1
-        max_upload_bytes:
-          type: [integer, 'null']
-          minimum: 1
-        emotion_reference_variants:
-          type: boolean
-      allOf:
-        - if:
-            properties:
-              supported:
-                const: true
-          then:
-            properties:
-              accepted_content_types:
-                minItems: 1
-              min_reference_ms:
-                type: integer
-              max_reference_ms:
-                type: integer
-              recommended_reference_ms:
-                type: integer
-              effective_reference_window_ms:
-                type: integer
-              max_upload_bytes:
-                type: integer
-              asynchronous:
-                const: true
-        - if:
-            properties:
-              supported:
-                const: false
-          then:
-            properties:
-              asynchronous:
-                const: false
-              accepted_content_types:
-                maxItems: 0
-              min_reference_ms:
-                type: 'null'
-              max_reference_ms:
-                type: 'null'
-              recommended_reference_ms:
-                type: 'null'
-              effective_reference_window_ms:
-                type: 'null'
-              max_upload_bytes:
-                type: 'null'
-              emotion_reference_variants:
-                const: false
+            minLength: 1
+        generation_controls:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/GenerationControl'
 
-    Selection:
+    DefaultModeSelection:
       type: object
       additionalProperties: false
-      required: [model, asr, llm, tts, voice, emotion]
+      required: [pipeline, selection]
       properties:
-        model:
-          type: [string, 'null']
-        asr:
-          type: [string, 'null']
-        llm:
-          type: [string, 'null']
-        tts:
-          type: [string, 'null']
-        voice:
-          type: [string, 'null']
-        emotion:
-          oneOf:
-            - $ref: '#/components/schemas/EmotionId'
-            - type: 'null'
-
-    DefaultSelections:
-      type: object
-      minProperties: 1
-      additionalProperties:
-        type: object
-        minProperties: 1
-        additionalProperties:
+        pipeline:
+          type: string
+          minLength: 1
+        selection:
           $ref: '#/components/schemas/Selection'
+
+    ModeDefaults:
+      type: object
+      additionalProperties: false
+      required: [asr_only, asr_llm]
+      properties:
+        asr_only:
+          $ref: '#/components/schemas/DefaultModeSelection'
+        asr_llm:
+          $ref: '#/components/schemas/DefaultModeSelection'
+
+    DefaultPipelines:
+      type: object
+      additionalProperties: false
+      required: [asr_only, asr_llm]
+      properties:
+        asr_only:
+          type: string
+          minLength: 1
+        asr_llm:
+          type: string
+          minLength: 1
+
+    RealtimeCapability:
+      type: object
+      additionalProperties: false
+      required: [websocket_path, ticket_path, subprotocol, persistent]
+      properties:
+        websocket_path:
+          type: string
+          pattern: '^/[^/].*'
+        ticket_path:
+          const: /v2/realtime/tickets
+        subprotocol:
+          const: mindsurf.voice.v2
+        persistent:
+          const: true
 
     Capabilities:
       type: object
@@ -810,13 +944,13 @@ components:
         - protocol_version
         - revision
         - realtime
-        - voice_cloning
+        - modes
         - default_pipeline
         - pipelines
-        - models
-        - inference_options
+        - asr_options
+        - llm_options
         - recognition_languages
-        - default_selections
+        - defaults
       properties:
         protocol_version:
           const: 2
@@ -824,54 +958,40 @@ components:
           type: string
           minLength: 1
         realtime:
-          type: object
-          additionalProperties: false
-          required: [websocket_path, subprotocol]
-          properties:
-            websocket_path:
-              type: string
-              pattern: '^/[^/].*'
-              description: 相对于当前业务后端 origin 的同源路径。
-            subprotocol:
-              const: mindsurf.voice.v2
-        voice_cloning:
-          $ref: '#/components/schemas/VoiceCloningCapabilities'
+          $ref: '#/components/schemas/RealtimeCapability'
+        modes:
+          type: array
+          minItems: 2
+          maxItems: 2
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/Mode'
         default_pipeline:
-          type: string
-          minLength: 1
+          $ref: '#/components/schemas/DefaultPipelines'
         pipelines:
           type: array
           minItems: 1
           items:
             $ref: '#/components/schemas/Pipeline'
-        models:
-          type: array
-          items:
-            $ref: '#/components/schemas/InferenceCandidate'
-        inference_options:
-          type: object
-          additionalProperties: false
-          required: [asr, llm, tts]
-          properties:
-            asr:
-              type: array
-              items:
-                $ref: '#/components/schemas/InferenceCandidate'
-            llm:
-              type: array
-              items:
-                $ref: '#/components/schemas/InferenceCandidate'
-            tts:
-              type: array
-              items:
-                $ref: '#/components/schemas/InferenceCandidate'
-        recognition_languages:
+        asr_options:
           type: array
           minItems: 1
           items:
             $ref: '#/components/schemas/NamedOption'
-        default_selections:
-          $ref: '#/components/schemas/DefaultSelections'
+        llm_options:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/NamedOption'
+        recognition_languages:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        defaults:
+          $ref: '#/components/schemas/ModeDefaults'
 
     CapabilitiesResponse:
       type: object
@@ -883,286 +1003,25 @@ components:
         data:
           $ref: '#/components/schemas/Capabilities'
 
-    EmotionReferenceSummary:
+    RealtimeTicket:
       type: object
       additionalProperties: false
-      required:
-        - id
-        - emotion
-        - status
-        - speaker_verification
-        - duration_ms
-        - effective_window_ms
-        - poll_after_ms
-        - failure
-        - created_at_ms
+      required: [ticket, expires_at_ms, websocket_path, subprotocol]
       properties:
-        id:
+        ticket:
           type: string
-          minLength: 1
-        emotion:
-          $ref: '#/components/schemas/EmotionId'
-        status:
-          enum: [processing, ready, failed]
-        speaker_verification:
-          enum: [baseline, pending, matched, unverified, mismatched]
-        duration_ms:
-          type: [integer, 'null']
-          minimum: 0
-        effective_window_ms:
-          type: [integer, 'null']
-          minimum: 0
-        poll_after_ms:
-          type: [integer, 'null']
-          minimum: 1
-        failure:
-          oneOf:
-            - $ref: '#/components/schemas/Failure'
-            - type: 'null'
-        created_at_ms:
-          type: integer
-          minimum: 0
-      allOf:
-        - if:
-            properties:
-              status:
-                const: processing
-          then:
-            properties:
-              speaker_verification:
-                const: pending
-              poll_after_ms:
-                type: integer
-                minimum: 1
-              failure:
-                type: 'null'
-        - if:
-            properties:
-              status:
-                const: ready
-          then:
-            properties:
-              speaker_verification:
-                enum: [baseline, matched, unverified]
-              poll_after_ms:
-                type: 'null'
-              failure:
-                type: 'null'
-              duration_ms:
-                type: integer
-                minimum: 1
-              effective_window_ms:
-                type: integer
-                minimum: 1
-        - if:
-            properties:
-              status:
-                const: failed
-          then:
-            properties:
-              speaker_verification:
-                enum: [unverified, mismatched]
-              poll_after_ms:
-                type: 'null'
-              failure:
-                $ref: '#/components/schemas/Failure'
-        - if:
-            properties:
-              speaker_verification:
-                const: mismatched
-          then:
-            properties:
-              status:
-                const: failed
-              failure:
-                type: object
-                properties:
-                  code:
-                    const: speaker_mismatch
+          minLength: 32
+          x-sensitive: true
+          description: 一次性短时 opaque ticket；日志必须脱敏。
+        expires_at_ms:
+          $ref: '#/components/schemas/TimestampMs'
+        websocket_path:
+          type: string
+          pattern: '^/[^/].*'
+        subprotocol:
+          const: mindsurf.voice.v2
 
-    Voice:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - name
-        - source
-        - status
-        - quality_tier
-        - selectable
-        - pipelines
-        - emotion_control
-        - supported_emotions
-        - base_reference_id
-        - default_emotion
-        - poll_after_ms
-        - failure
-        - emotion_references
-        - created_at_ms
-        - updated_at_ms
-      properties:
-        id:
-          type: string
-          minLength: 1
-        name:
-          type: string
-          minLength: 1
-          maxLength: 80
-        source:
-          enum: [builtin, custom]
-        status:
-          enum: [processing, ready, failed]
-        quality_tier:
-          enum: [verified, unverified, preview, disabled]
-        selectable:
-          type: boolean
-        pipelines:
-          type: array
-          uniqueItems: true
-          items:
-            type: string
-            minLength: 1
-        emotion_control:
-          enum: [none, preset, reference_variant]
-          description: 必须与 pipelines 中每个可用 Pipeline 的 features.emotion_control 相同。
-        supported_emotions:
-          type: array
-          uniqueItems: true
-          description: preset 的公开枚举，或 reference_variant 中已有 ready reference 的 emotion 集合。
-          items:
-            $ref: '#/components/schemas/EmotionId'
-        base_reference_id:
-          type: [string, 'null']
-        default_emotion:
-          oneOf:
-            - $ref: '#/components/schemas/EmotionId'
-            - type: 'null'
-        poll_after_ms:
-          type: [integer, 'null']
-          minimum: 1
-        failure:
-          oneOf:
-            - $ref: '#/components/schemas/Failure'
-            - type: 'null'
-        emotion_references:
-          type: array
-          items:
-            $ref: '#/components/schemas/EmotionReferenceSummary'
-        created_at_ms:
-          type: integer
-          minimum: 0
-        updated_at_ms:
-          type: integer
-          minimum: 0
-      allOf:
-        - if:
-            properties:
-              source:
-                const: custom
-              status:
-                const: processing
-              emotion_control:
-                const: reference_variant
-            required: [source, status, emotion_control]
-          then:
-            properties:
-              emotion_references:
-                minItems: 1
-                contains:
-                  type: object
-                  required: [status, speaker_verification]
-                  properties:
-                    status:
-                      const: processing
-                    speaker_verification:
-                      const: pending
-                minContains: 1
-        - if:
-            properties:
-              status:
-                const: processing
-          then:
-            properties:
-              selectable:
-                const: false
-              poll_after_ms:
-                type: integer
-                minimum: 1
-              failure:
-                type: 'null'
-              base_reference_id:
-                type: 'null'
-              default_emotion:
-                type: 'null'
-              supported_emotions:
-                maxItems: 0
-        - if:
-            properties:
-              status:
-                const: ready
-          then:
-            properties:
-              poll_after_ms:
-                type: 'null'
-              failure:
-                type: 'null'
-        - if:
-            properties:
-              status:
-                const: failed
-          then:
-            properties:
-              selectable:
-                const: false
-              poll_after_ms:
-                type: 'null'
-              failure:
-                $ref: '#/components/schemas/Failure'
-              base_reference_id:
-                type: 'null'
-              default_emotion:
-                type: 'null'
-              supported_emotions:
-                maxItems: 0
-        - if:
-            properties:
-              source:
-                const: custom
-              status:
-                const: ready
-              emotion_control:
-                const: reference_variant
-            required: [source, status, emotion_control]
-          then:
-            properties:
-              base_reference_id:
-                type: string
-                minLength: 1
-              default_emotion:
-                $ref: '#/components/schemas/EmotionId'
-              supported_emotions:
-                minItems: 1
-        - if:
-            properties:
-              emotion_control:
-                const: none
-            required: [emotion_control]
-          then:
-            properties:
-              default_emotion:
-                type: 'null'
-              supported_emotions:
-                maxItems: 0
-        - if:
-            properties:
-              quality_tier:
-                enum: [preview, disabled]
-          then:
-            properties:
-              selectable:
-                const: false
-
-    VoiceResponse:
+    RealtimeTicketResponse:
       type: object
       additionalProperties: false
       required: [request_id, data]
@@ -1170,490 +1029,4 @@ components:
         request_id:
           $ref: '#/components/schemas/RequestId'
         data:
-          $ref: '#/components/schemas/Voice'
-
-    VoiceListResponse:
-      type: object
-      additionalProperties: false
-      required: [request_id, data]
-      properties:
-        request_id:
-          $ref: '#/components/schemas/RequestId'
-        data:
-          type: object
-          additionalProperties: false
-          required: [items]
-          properties:
-            items:
-              type: array
-              items:
-                $ref: '#/components/schemas/Voice'
-
-    CreateVoiceInput:
-      type: object
-      additionalProperties: false
-      required: [name, reference_audio, emotion, consent_confirmed]
-      properties:
-        name:
-          type: string
-          minLength: 1
-          maxLength: 80
-        reference_audio:
-          type: string
-          format: binary
-        emotion:
-          $ref: '#/components/schemas/EmotionId'
-        consent_confirmed:
-          type: string
-          const: 'true'
-          description: multipart 中固定为小写 ASCII 文本 true。
-
-    CreateVoiceResponse:
-      type: object
-      additionalProperties: false
-      required: [request_id, data]
-      properties:
-        request_id:
-          $ref: '#/components/schemas/RequestId'
-        data:
-          type: object
-          additionalProperties: false
-          required: [id, status, poll_after_ms]
-          properties:
-            id:
-              type: string
-              minLength: 1
-            status:
-              const: processing
-            poll_after_ms:
-              type: integer
-              minimum: 1
-
-    UpdateVoiceInput:
-      type: object
-      additionalProperties: false
-      required: [default_emotion]
-      properties:
-        default_emotion:
-          $ref: '#/components/schemas/EmotionId'
-
-    CreateReferenceInput:
-      type: object
-      additionalProperties: false
-      required: [reference_audio, emotion, consent_confirmed]
-      properties:
-        reference_audio:
-          type: string
-          format: binary
-        emotion:
-          $ref: '#/components/schemas/EmotionId'
-        consent_confirmed:
-          type: string
-          const: 'true'
-
-    CreateReferenceResponse:
-      type: object
-      additionalProperties: false
-      required: [request_id, data]
-      properties:
-        request_id:
-          $ref: '#/components/schemas/RequestId'
-        data:
-          type: object
-          additionalProperties: false
-          required:
-            - voice_id
-            - id
-            - emotion
-            - status
-            - speaker_verification
-            - poll_after_ms
-          properties:
-            voice_id:
-              type: string
-              minLength: 1
-            id:
-              type: string
-              minLength: 1
-            emotion:
-              $ref: '#/components/schemas/EmotionId'
-            status:
-              const: processing
-            speaker_verification:
-              const: pending
-            poll_after_ms:
-              type: integer
-              minimum: 1
-
-    VoiceReference:
-      type: object
-      additionalProperties: false
-      required:
-        - voice_id
-        - id
-        - emotion
-        - status
-        - speaker_verification
-        - duration_ms
-        - effective_window_ms
-        - poll_after_ms
-        - failure
-        - created_at_ms
-        - updated_at_ms
-      properties:
-        voice_id:
-          type: string
-          minLength: 1
-        id:
-          type: string
-          minLength: 1
-        emotion:
-          $ref: '#/components/schemas/EmotionId'
-        status:
-          enum: [processing, ready, failed]
-        speaker_verification:
-          enum: [baseline, pending, matched, unverified, mismatched]
-        duration_ms:
-          type: [integer, 'null']
-          minimum: 0
-        effective_window_ms:
-          type: [integer, 'null']
-          minimum: 0
-        poll_after_ms:
-          type: [integer, 'null']
-          minimum: 1
-        failure:
-          oneOf:
-            - $ref: '#/components/schemas/Failure'
-            - type: 'null'
-        created_at_ms:
-          type: integer
-          minimum: 0
-        updated_at_ms:
-          type: integer
-          minimum: 0
-      allOf:
-        - if:
-            properties:
-              status:
-                const: processing
-          then:
-            properties:
-              speaker_verification:
-                const: pending
-              poll_after_ms:
-                type: integer
-                minimum: 1
-              failure:
-                type: 'null'
-        - if:
-            properties:
-              status:
-                const: ready
-          then:
-            properties:
-              speaker_verification:
-                enum: [baseline, matched, unverified]
-              poll_after_ms:
-                type: 'null'
-              failure:
-                type: 'null'
-              duration_ms:
-                type: integer
-                minimum: 1
-              effective_window_ms:
-                type: integer
-                minimum: 1
-        - if:
-            properties:
-              status:
-                const: failed
-          then:
-            properties:
-              speaker_verification:
-                enum: [unverified, mismatched]
-              poll_after_ms:
-                type: 'null'
-              failure:
-                $ref: '#/components/schemas/Failure'
-        - if:
-            properties:
-              speaker_verification:
-                const: mismatched
-          then:
-            properties:
-              status:
-                const: failed
-              failure:
-                type: object
-                properties:
-                  code:
-                    const: speaker_mismatch
-
-    VoiceReferenceResponse:
-      type: object
-      additionalProperties: false
-      required: [request_id, data]
-      properties:
-        request_id:
-          $ref: '#/components/schemas/RequestId'
-        data:
-          $ref: '#/components/schemas/VoiceReference'
-
-    ErrorDetails:
-      type: object
-      additionalProperties: true
-
-    Error400:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          enum: [invalid_request, invalid_query, consent_required]
-    ListVoicesError400:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          const: invalid_query
-    CreateVoiceError400:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          enum: [invalid_request, consent_required]
-    UpdateVoiceError400:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          const: invalid_request
-    CreateReferenceError400:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          enum: [invalid_request, consent_required]
-    Error401:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          enum: [authentication_required, authentication_failed, authentication_expired]
-    Error403:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          enum: [permission_denied, builtin_voice_immutable]
-    CreateVoiceError403:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          const: permission_denied
-    Error404:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          enum: [voice_not_found, emotion_reference_not_found]
-    VoiceNotFoundError404:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          const: voice_not_found
-    VoiceReferenceNotFoundError404:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          enum: [voice_not_found, emotion_reference_not_found]
-    Error409:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          enum:
-            - idempotency_key_reused
-            - idempotent_resource_deleted
-            - emotion_reference_conflict
-            - default_emotion_unavailable
-            - base_reference_required
-            - default_reference_required
-            - conversation_active
-            - emotion_reference_variants_unsupported
-    CreateVoiceError409:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          enum: [idempotency_key_reused, idempotent_resource_deleted]
-    UpdateVoiceError409:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          const: default_emotion_unavailable
-    CreateReferenceError409:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          enum: [idempotency_key_reused, idempotent_resource_deleted, emotion_reference_conflict, emotion_reference_variants_unsupported]
-    DeleteReferenceError409:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          enum: [base_reference_required, default_reference_required]
-    DeleteConversationError409:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          const: conversation_active
-    Error413:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          const: upload_too_large
-    Error415:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          const: unsupported_media_type
-    Error429:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          enum: [quota_exceeded, rate_limited]
-    Error500:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          const: server_error
-    Error503:
-      $ref: '#/components/schemas/ErrorBase'
-      properties:
-        code:
-          const: service_unavailable
-
-    ErrorBase:
-      type: object
-      additionalProperties: false
-      required: [code, message, details]
-      properties:
-        code:
-          type: string
-          minLength: 1
-        message:
-          type: string
-          minLength: 1
-        details:
-          $ref: '#/components/schemas/ErrorDetails'
-
-    Error400Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/Error400'
-    ListVoicesError400Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/ListVoicesError400'
-    CreateVoiceError400Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/CreateVoiceError400'
-    UpdateVoiceError400Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/UpdateVoiceError400'
-    CreateReferenceError400Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/CreateReferenceError400'
-    Error401Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/Error401'
-    Error403Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/Error403'
-    CreateVoiceError403Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/CreateVoiceError403'
-    Error404Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/Error404'
-    VoiceNotFoundError404Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/VoiceNotFoundError404'
-    VoiceReferenceNotFoundError404Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/VoiceReferenceNotFoundError404'
-    Error409Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/Error409'
-    CreateVoiceError409Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/CreateVoiceError409'
-    UpdateVoiceError409Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/UpdateVoiceError409'
-    CreateReferenceError409Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/CreateReferenceError409'
-    DeleteReferenceError409Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/DeleteReferenceError409'
-    DeleteConversationError409Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/DeleteConversationError409'
-    Error413Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/Error413'
-    Error415Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/Error415'
-    Error429Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/Error429'
-    Error500Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/Error500'
-    Error503Response:
-      $ref: '#/components/schemas/ErrorEnvelopeBase'
-      properties:
-        error:
-          $ref: '#/components/schemas/Error503'
-
-    ErrorEnvelopeBase:
-      type: object
-      additionalProperties: false
-      required: [request_id, error]
-      properties:
-        request_id:
-          $ref: '#/components/schemas/RequestId'
-        error:
-          $ref: '#/components/schemas/ErrorBase'
+          $ref: '#/components/schemas/RealtimeTicket'

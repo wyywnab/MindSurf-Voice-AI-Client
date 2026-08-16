@@ -2,65 +2,49 @@
 
 ## 1. 仓库边界
 
-当前仓库是 MindSurf Voice 客户端仓库。`docs/v2/` 中的文件定义跨端协议，但本仓库的 CI 只验证：
+本仓库维护客户端和后端之间的 v2 契约。绿色协议 CI 只证明 OpenAPI、Schema、文档示例
+和固定向量一致，不证明任一后端实现已经兼容。
 
-- OpenAPI、JSON Schema、文档样例和测试向量彼此一致；
-- 客户端自己的 v2 codec、状态机和行为（实现后）；
-- 协议资产变更没有破坏客户端构建。
+后端必须固定不可变 commit SHA，并读取：
 
-本仓库的绿色 CI **不代表后端实现兼容 v2**。后端必须在自己的仓库建立独立的契约和集成测试，不能把客户端仓库的 CI 当作后端发布门禁。
+- `openapi/openapi.yaml`；
+- `schemas/client-messages.schema.json`；
+- `schemas/server-messages.schema.json`；
+- `docs/WS_PROTOCOL_V2.md`；
+- `docs/request-lifecycle.md`；
+- `test-vectors/`。
 
-## 2. 交付给后端的内容
+## 2. 后端 CI 门禁
 
-每次交付必须给出不可变的 Git tag 或 commit SHA，后端固定该 revision，并读取以下资产：
+至少覆盖：
 
-| 资产 | 后端用途 |
-|---|---|
-| [`openapi/openapi.yaml`](../openapi/openapi.yaml) | 校验 HTTP 路由、请求响应和错误状态 |
-| [`schemas/client-messages.schema.json`](../schemas/client-messages.schema.json) | 校验入站 WS JSON |
-| [`schemas/server-messages.schema.json`](../schemas/server-messages.schema.json) | 校验出站 WS JSON |
-| [`docs/WS_PROTOCOL_V2.md`](./WS_PROTOCOL_V2.md) | 实现二进制布局、时序、超时和关闭语义 |
-| [`docs/request-lifecycle.md`](./request-lifecycle.md) | 实现请求状态机和部分成功规则 |
-| [`docs/conversations.md`](./conversations.md) | 实现 conversation 创建、提交和清理 |
-| [`test-vectors/`](../test-vectors/) | 运行跨语言固定正反例 |
+1. 系统浏览器 authorize、PKCE code 交换、注册/登录网页、refresh 轮换、refresh 重放、
+   logout 和 session 撤销；
+2. quota 查询、ASR/LLM 分项 reservation、成功/取消/失败分项结算和幂等扣费；
+3. ticket 过期、一次消费、重复消费、连接上限和日志脱敏；
+4. 长期 WS 空闲保持、心跳超时、服务端 draining 和跨节点撤销；
+5. asr_only 的 ASR delta、最终 snapshot 和目标提交；
+6. asr_llm 的 ASR 中间 snapshot、LLM 最终 snapshot，以及 LLM 失败不提交；
+7. capabilities stale、Pipeline/mode/selection 交叉校验；
+8. 输入二进制帧 decode/encode 逐字节回环；
+9. commit 统计按实际帧重算，时间戳、sequence 或统计不一致时稳定失败；
+10. success 终态锁定先于 final snapshot；final snapshot 与 done 之间允许心跳，但不允许同请求的其他事件；
+11. starting 阶段取消、accepted 超时和取消/完成竞态只有一个终态；
+12. 会话级与请求级 error 的 request_id、terminal、fatal 和 close code 完全符合错误矩阵；
+13. 活跃请求断线不恢复、不重放且正确结算；
+14. 普通请求终态后连接保持可复用。
+15. 所有请求终态的 ASR/LLM 分项费用之和等于总费用，且各分项不超过对应 reservation；
+16. token/refresh 相同 Idempotency-Key 可恢复原结果，不同请求复用 key 稳定冲突；
+17. request ID 在账户范围永久不可复用，重复 ID 不会创建 reservation 或重复扣费；
+18. Upgrade 错误状态、ticket 消费点和 101 结果不确定场景符合协议矩阵。
 
-如果后端复制协议文件而不是以 submodule、制品包或下载步骤固定它们，后端仓库还应提交一份来源锁定文件，例如：
+## 3. 交付流程
 
-```json
-{
-  "repository": "MindSurf-Voice-AI-Client",
-  "revision": "<full-commit-sha>",
-  "path": "docs/v2",
-  "protocol_version": 2
-}
-```
+1. 更新语义文档、OpenAPI、Schema 和测试向量；
+2. 运行本仓库协议校验；
+3. 记录完整 commit SHA 和破坏性变化；
+4. 后端固定 revision 并运行自己的实现级 CI；
+5. 使用真实客户端完成浏览器授权回跳、Token 交换、长连接、连续多请求、额度和重连联调；
+6. 双方确认后再冻结 Draft。
 
-禁止从可变分支的最新提交静默同步后直接发布。
-
-## 3. 后端自己的 CI 门禁
-
-后端仓库至少应包含以下任务：
-
-1. 对照 OpenAPI 检查 HTTP 实现，并覆盖每个 operation 的成功响应与稳定错误码。
-2. 用客户端消息 Schema 拒绝非法入站 JSON，用服务端消息 Schema 校验所有出站 JSON。
-3. 对二进制测试向量执行 decode → 字段断言 → encode，并要求合法帧逐字节回环一致。
-4. 执行请求时序测试：成功、取消、超时、断连、partial、capabilities revision 过期、
-   不透明 Pipeline ID 到 kind 的同 revision 解析、非流式文本、打断连续性三态、
-   conversation provisional 清理和已提交上下文。
-5. 执行 HTTP 资源状态测试：音色克隆能力关闭、情绪参考版本关闭，以及自建音色从
-   processing 到 ready/failed 的基准 ID、默认情绪和 supported emotions 原子转换。
-6. 用真实客户端或版本固定的客户端 Mock 做至少一次端到端握手、音频上传、完成和取消测试。
-
-协议资产自检脚本可以复制或封装，但它不能替代这些实现级测试。
-
-## 4. 变更和验收流程
-
-协议变更建议按以下顺序交接：
-
-1. 客户端仓库更新语义文档、机器契约和测试向量，协议 CI 通过。
-2. 记录 commit SHA，并在交接说明中列出兼容性影响和待实现项。
-3. 后端仓库更新其锁定 revision，在自己的分支完成实现与 CI。
-4. 客户端固定后端候选版本完成联调验收。
-5. 双方确认后再将 Draft 标记为可发布版本。
-
-任何一方新增字段时都应遵守向前兼容规则；修改必填字段、终态语义、错误含义或二进制布局时不能只更新单方实现。
+禁止从可变分支静默同步协议后直接发布。

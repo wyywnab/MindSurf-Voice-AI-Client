@@ -3,138 +3,59 @@
   "$id": "https://mindsurf.dev/schemas/voice/v2/common/request.schema.json",
   "title": "MindSurf Voice v2 shared request structures",
   "$defs": {
-    "nullableString": {
-      "type": ["string", "null"]
-    },
+    "mode": { "enum": ["asr_only", "asr_llm"] },
     "selection": {
       "type": "object",
-      "additionalProperties": true,
-      "required": ["model", "asr", "llm", "tts"],
-      "properties": {
-        "model": { "$ref": "#/$defs/nullableString" },
-        "asr": { "$ref": "#/$defs/nullableString" },
-        "llm": { "$ref": "#/$defs/nullableString" },
-        "tts": { "$ref": "#/$defs/nullableString" }
-      }
-    },
-    "responseConfig": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": ["input_transcription", "text", "audio", "output_audio", "voice", "emotion"],
-      "properties": {
-        "input_transcription": { "type": "boolean" },
-        "text": { "type": "boolean" },
-        "audio": { "type": "boolean" },
-        "output_audio": {
-          "oneOf": [
-            { "$ref": "audio.schema.json#/$defs/outputFormatId" },
-            { "type": "null" }
-          ]
-        },
-        "voice": { "$ref": "#/$defs/nullableString" },
-        "emotion": {
-          "oneOf": [
-            {
-              "type": "string",
-              "pattern": "^[a-z][a-z0-9_-]{0,31}$"
-            },
-            { "type": "null" }
-          ]
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": { "audio": { "const": false } },
-            "required": ["audio"]
-          },
-          "then": {
-            "properties": {
-              "output_audio": { "type": "null" },
-              "voice": { "type": "null" },
-              "emotion": { "type": "null" }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": { "audio": { "const": true } },
-            "required": ["audio"]
-          },
-          "then": {
-            "properties": {
-              "output_audio": { "$ref": "audio.schema.json#/$defs/outputFormatId" },
-              "voice": {
-                "oneOf": [
-                  { "type": "string", "minLength": 1 },
-                  { "type": "null" }
-                ]
-              }
-            }
-          }
-        }
-      ]
-    },
-    "streamSwitches": {
-      "type": "object",
       "additionalProperties": false,
-      "required": ["input_transcription", "text", "audio"],
+      "required": ["asr", "llm"],
       "properties": {
-        "input_transcription": { "type": "boolean" },
-        "text": { "type": "boolean" },
-        "audio": { "type": "boolean" }
+        "asr": { "type": "string", "minLength": 1 },
+        "llm": { "type": ["string", "null"], "minLength": 1 }
       }
     },
     "generation": {
       "type": "object",
+      "additionalProperties": { "type": ["number", "integer"] }
+    },
+    "inputStatistics": {
+      "type": "object",
       "additionalProperties": false,
+      "required": ["last_sequence", "chunk_count", "sample_count", "duration_ms"],
       "properties": {
-        "text": {
-          "type": "object",
-          "additionalProperties": true
-        },
-        "audio": {
-          "type": "object",
-          "additionalProperties": true
-        }
+        "last_sequence": { "type": "integer", "minimum": 0 },
+        "chunk_count": { "type": "integer", "minimum": 1 },
+        "sample_count": { "type": "integer", "minimum": 1 },
+        "duration_ms": { "type": "integer", "minimum": 1 }
       }
     },
     "usage": {
       "type": "object",
-      "additionalProperties": true,
-      "required": ["recording_ms", "input_tokens", "output_tokens", "output_audio_ms"],
+      "additionalProperties": false,
+      "required": [
+        "input_audio_ms",
+        "llm_input_tokens",
+        "llm_output_tokens",
+        "asr_credits_charged",
+        "llm_credits_charged",
+        "credits_charged"
+      ],
       "properties": {
-        "recording_ms": { "type": ["integer", "null"], "minimum": 0 },
-        "input_tokens": { "type": ["integer", "null"], "minimum": 0 },
-        "output_tokens": { "type": ["integer", "null"], "minimum": 0 },
-        "output_audio_ms": { "type": ["integer", "null"], "minimum": 0 }
+        "input_audio_ms": { "type": "integer", "minimum": 0 },
+        "llm_input_tokens": { "type": "integer", "minimum": 0 },
+        "llm_output_tokens": { "type": "integer", "minimum": 0 },
+        "asr_credits_charged": { "type": "integer", "minimum": 0 },
+        "llm_credits_charged": { "type": "integer", "minimum": 0 },
+        "credits_charged": { "type": "integer", "minimum": 0 }
       }
     },
-    "context": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": ["retained_turns", "dropped_turns"],
-      "properties": {
-        "retained_turns": { "type": "integer", "minimum": 0 },
-        "dropped_turns": { "type": "integer", "minimum": 0 }
-      }
-    },
-    "streamFailure": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": ["code", "message"],
-      "properties": {
-        "code": { "type": "string", "minLength": 1 },
-        "message": { "type": "string", "minLength": 1 }
-      }
-    },
-    "failureMap": {
+    "creditBreakdown": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["asr_credits", "llm_credits", "credits"],
       "properties": {
-        "input_transcription": { "$ref": "#/$defs/streamFailure" },
-        "text": { "$ref": "#/$defs/streamFailure" },
-        "audio": { "$ref": "#/$defs/streamFailure" }
+        "asr_credits": { "type": "integer", "minimum": 0 },
+        "llm_credits": { "type": "integer", "minimum": 0 },
+        "credits": { "type": "integer", "minimum": 0 }
       }
     }
   }

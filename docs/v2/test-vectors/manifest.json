@@ -1,5 +1,5 @@
 {
-  "format_version": 1,
+  "format_version": 2,
   "protocol_version": 2,
   "sources": {
     "openapi": "../openapi/openapi.yaml",
@@ -19,19 +19,19 @@
     "session.ping",
     "request.accepted",
     "input.committed",
-    "input.transcript.delta",
-    "input.transcript.done",
-    "assistant.text.delta",
-    "assistant.text.done",
-    "output.audio.start",
-    "output.audio.done",
+    "output.text.delta",
+    "output.text.snapshot",
     "request.done",
     "request.cancelled",
     "error"
   ],
   "vectors": {
     "invalid_json": "json/invalid-messages.json",
-    "pipeline_kind_requests": "json/pipeline-kind-requests.json",
+    "browser_authorization": "json/browser-authorization.json",
+    "auth_idempotency": "json/auth-idempotency.json",
+    "mode_pipeline_requests": "json/mode-pipeline-requests.json",
+    "billing_usage": "json/billing-usage.json",
+    "request_lifecycles": "json/request-lifecycles.json",
     "binary_audio": "binary/audio-frames.json"
   }
 }

@@ -1,0 +1,83 @@
+{
+  "format_version": 2,
+  "capabilities": {
+    "revision": "cap-mode-test-1",
+    "recognition_languages": ["auto", "zh-CN", "en-US"],
+    "pipelines": [
+      {"id": "opaque-a", "modes": ["asr_only"], "asr_options": ["asr-default"], "llm_options": [], "generation_controls": {}},
+      {"id": "opaque-b", "modes": ["asr_llm"], "asr_options": ["asr-default"], "llm_options": ["llm-default", "llm-fast"], "generation_controls": {"temperature": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.2}, "max_tokens": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 256}}},
+      {"id": "opaque-c", "modes": ["asr_only", "asr_llm"], "asr_options": ["asr-default"], "llm_options": ["llm-default"], "generation_controls": {"temperature": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.2}}}
+    ]
+  },
+  "cases": [
+    {
+      "name": "asr_only uses ASR and null LLM",
+      "valid": true,
+      "request": {"capabilities_revision": "cap-mode-test-1", "pipeline": "opaque-a", "mode": "asr_only", "selection": {"asr": "asr-default", "llm": null}, "language": "auto"}
+    },
+    {
+      "name": "asr_llm uses ASR and LLM",
+      "valid": true,
+      "request": {"capabilities_revision": "cap-mode-test-1", "pipeline": "opaque-b", "mode": "asr_llm", "selection": {"asr": "asr-default", "llm": "llm-fast"}, "language": "zh-CN", "generation": {"temperature": 0.4, "max_tokens": 128}}
+    },
+    {
+      "name": "shared pipeline supports both modes",
+      "valid": true,
+      "request": {"capabilities_revision": "cap-mode-test-1", "pipeline": "opaque-c", "mode": "asr_llm", "selection": {"asr": "asr-default", "llm": "llm-default"}, "language": "en-US"}
+    },
+    {
+      "name": "revision must match before lookup",
+      "valid": false,
+      "expected_rule": "capabilities_revision_mismatch",
+      "request": {"capabilities_revision": "cap-mode-test-0", "pipeline": "opaque-a", "mode": "asr_only", "selection": {"asr": "asr-default", "llm": null}, "language": "auto"}
+    },
+    {
+      "name": "pipeline must support mode",
+      "valid": false,
+      "expected_rule": "pipeline_mode_not_supported",
+      "request": {"capabilities_revision": "cap-mode-test-1", "pipeline": "opaque-a", "mode": "asr_llm", "selection": {"asr": "asr-default", "llm": "llm-default"}, "language": "auto"}
+    },
+    {
+      "name": "asr_only cannot select LLM",
+      "valid": false,
+      "expected_rule": "asr_only_llm_must_be_null",
+      "request": {"capabilities_revision": "cap-mode-test-1", "pipeline": "opaque-c", "mode": "asr_only", "selection": {"asr": "asr-default", "llm": "llm-default"}, "language": "auto"}
+    },
+    {
+      "name": "asr_llm requires LLM",
+      "valid": false,
+      "expected_rule": "asr_llm_llm_required",
+      "request": {"capabilities_revision": "cap-mode-test-1", "pipeline": "opaque-b", "mode": "asr_llm", "selection": {"asr": "asr-default", "llm": null}, "language": "auto"}
+    },
+    {
+      "name": "LLM must belong to pipeline",
+      "valid": false,
+      "expected_rule": "llm_not_available",
+      "request": {"capabilities_revision": "cap-mode-test-1", "pipeline": "opaque-b", "mode": "asr_llm", "selection": {"asr": "asr-default", "llm": "llm-unknown"}, "language": "auto"}
+    },
+    {
+      "name": "language must be advertised",
+      "valid": false,
+      "expected_rule": "language_not_available",
+      "request": {"capabilities_revision": "cap-mode-test-1", "pipeline": "opaque-b", "mode": "asr_llm", "selection": {"asr": "asr-default", "llm": "llm-default"}, "language": "fr-FR"}
+    },
+    {
+      "name": "generation key must be advertised by pipeline",
+      "valid": false,
+      "expected_rule": "generation_key_not_available",
+      "request": {"capabilities_revision": "cap-mode-test-1", "pipeline": "opaque-b", "mode": "asr_llm", "selection": {"asr": "asr-default", "llm": "llm-default"}, "language": "auto", "generation": {"top_p": 0.9}}
+    },
+    {
+      "name": "generation number must be within range",
+      "valid": false,
+      "expected_rule": "generation_value_out_of_range",
+      "request": {"capabilities_revision": "cap-mode-test-1", "pipeline": "opaque-b", "mode": "asr_llm", "selection": {"asr": "asr-default", "llm": "llm-default"}, "language": "auto", "generation": {"temperature": 1.5}}
+    },
+    {
+      "name": "integer generation control rejects fractions",
+      "valid": false,
+      "expected_rule": "generation_type_mismatch",
+      "request": {"capabilities_revision": "cap-mode-test-1", "pipeline": "opaque-b", "mode": "asr_llm", "selection": {"asr": "asr-default", "llm": "llm-default"}, "language": "auto", "generation": {"max_tokens": 12.5}}
+    }
+  ]
+}

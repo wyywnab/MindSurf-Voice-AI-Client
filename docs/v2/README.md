@@ -1,56 +1,50 @@
 # MindSurf Voice API v2
 
-本目录是 MindSurf Voice API v2 的统一规范入口。
+本目录是 MindSurf Voice API v2 Draft 的统一规范入口。
 
 ```text
 v2/
-├── docs/          语义、生命周期、时序、设计边界和实现说明
-├── openapi/       HTTP API 的机器可验证契约
-├── schemas/       WebSocket JSON 消息及共享数据类型的 JSON Schema
-└── test-vectors/  跨语言 JSON 反例与二进制固定向量
+├── docs/          浏览器授权、额度、长期连接、请求状态和设计语义
+├── openapi/       HTTP API 的 OpenAPI 3.1 契约
+├── schemas/       WebSocket JSON 消息及共享类型的 JSON Schema
+└── test-vectors/  JSON 正反例和输入音频二进制固定向量
 ```
 
-## 规范分工
+## 产品边界
 
-同一个约束只保留一个权威定义，其他位置通过链接引用：
+v2 只提供两种单轮模式：
+
+- `asr_only`：ASR；
+- `asr_llm`：ASR 后执行 LLM，作为一个完整流程。
+
+两种模式都流式更新客户端临时文本区域，并在阶段末通过全量 snapshot 覆盖。只有最终
+snapshot 和 `request.done` 都收到后，客户端才把临时文本一次性写入真实目标。
+
+HTTP 通过系统浏览器和 PKCE 完成授权，并提供用户、额度、用量、能力发现和一次性 WS
+ticket。客户端取得 Token 后立即建立 WebSocket，并在应用可用期间通过心跳保持长期连接；
+录音请求复用该连接。注册、验证和账户恢复由浏览器认证站点处理。
+
+v2 不包含 Assistant、多轮 Conversation、TTS、下行音频、音色或情绪能力。
+
+## 权威来源
 
 | 内容 | 权威来源 |
 |---|---|
-| HTTP 路径、方法、参数、状态码和请求/响应结构 | `openapi/` |
-| WebSocket JSON 信封和 payload 字段结构 | `schemas/` |
-| WebSocket 二进制帧布局 | `docs/WS_PROTOCOL_V2.md` 与固定测试向量 |
-| Conversation、请求、取消、超时和部分成功语义 | `docs/` |
-| 产品能力边界及为什么这样设计 | `docs/` |
+| HTTP 路径、状态码和字段 | `openapi/openapi.yaml` |
+| WS JSON 信封和 payload | `schemas/` |
+| 输入音频二进制布局、连接和时序 | `docs/WS_PROTOCOL_V2.md` |
+| 请求成功、降级、取消和断线 | `docs/request-lifecycle.md` |
+| 跨语言固定输入 | `test-vectors/` |
 
-Markdown 中的 JSON 示例用于解释，不应成为独立的数据结构定义。字段类型、必填性、枚举、空值和数值范围应落入 OpenAPI 或 JSON Schema。
-
-## 当前文档
+## 文档入口
 
 - [HTTP API v2](./docs/HTTP_API_V2.md)
 - [WebSocket API v2](./docs/WS_PROTOCOL_V2.md)
-- [Conversation 生命周期](./docs/conversations.md)
-- [Request 生命周期与流完成语义](./docs/request-lifecycle.md)
-- [后端仓库接入与交接](./docs/backend-integration.md)
-- [HTTP OpenAPI 3.1 契约](./openapi/openapi.yaml)
-- [HTTP OpenAPI 写作约定](./openapi/README.md)
-- [WS 客户端消息 Schema](./schemas/client-messages.schema.json)
-- [WS 服务端消息 Schema](./schemas/server-messages.schema.json)
-- [WebSocket Schema 写作约定](./schemas/README.md)
-- [协议测试向量](./test-vectors/README.md)
+- [Request 生命周期](./docs/request-lifecycle.md)
+- [后端接入与交接](./docs/backend-integration.md)
+- [OpenAPI](./openapi/openapi.yaml)
+- [WebSocket Schemas](./schemas/README.md)
+- [测试向量](./test-vectors/README.md)
 
-当前规范仍是 Draft。Conversation 生命周期、capabilities revision 绑定、accepted fallback、
-Pipeline ID/kind 分离、输出能力、打断后连续性、部分成功上下文提交、generation controls、
-音色异步状态和幂等删除竞态已经收敛；HTTP 字段契约由 OpenAPI 3.1 承载，WebSocket
-控制消息由 JSON Schema 2020-12 承载。
-
-## 推荐编写顺序
-
-1. 在 `docs/` 中确定资源和状态机语义，尤其是跨请求生命周期。
-2. 在 `schemas/` 中定义共享标量、控制信封和每种 WebSocket 消息。
-3. 在 `openapi/` 中定义 HTTP 路径、组件模型和错误响应。
-4. 从机器规范生成示例或校验示例，避免 Markdown 与契约漂移。
-5. 客户端、后端和 Mock 使用同一 revision 的正反例测试向量，但分别在自己的仓库建立实现级 CI。
-
-提交协议变更时，应同时说明兼容性影响，并更新对应 schema、示例和验收用例。在
-`2.0.0-draft` 冻结前允许做不兼容收敛，但客户端与后端不得把 Draft 当作稳定版本；
-v2 正式冻结发布后，改变必填字段、终态语义或二进制布局必须提升主版本。
+当前版本仍是 Draft，可以进行不兼容收敛。冻结后，改变 mode、必填字段、终态语义、
+鉴权方式或二进制布局必须提升主版本。

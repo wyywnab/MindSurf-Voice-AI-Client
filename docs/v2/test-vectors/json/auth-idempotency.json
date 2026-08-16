@@ -1,0 +1,37 @@
+{
+  "format_version": 2,
+  "cases": [
+    {
+      "name": "token retry with same key and request replays original result",
+      "operation": "token",
+      "credential_status": "consumed",
+      "first": {"key": "10000000-0000-4000-8000-000000000101", "fingerprint": "token-request-a"},
+      "retry": {"key": "10000000-0000-4000-8000-000000000101", "fingerprint": "token-request-a"},
+      "expected_outcome": "replay_original_result"
+    },
+    {
+      "name": "same key with a different token request conflicts",
+      "operation": "token",
+      "credential_status": "consumed",
+      "first": {"key": "10000000-0000-4000-8000-000000000102", "fingerprint": "token-request-a"},
+      "retry": {"key": "10000000-0000-4000-8000-000000000102", "fingerprint": "token-request-b"},
+      "expected_outcome": "idempotency_conflict"
+    },
+    {
+      "name": "refresh retry with same key replays rotated pair",
+      "operation": "refresh",
+      "credential_status": "rotated",
+      "first": {"key": "10000000-0000-4000-8000-000000000103", "fingerprint": "refresh-request-a"},
+      "retry": {"key": "10000000-0000-4000-8000-000000000103", "fingerprint": "refresh-request-a"},
+      "expected_outcome": "replay_original_result"
+    },
+    {
+      "name": "rotated refresh token with a new key is reuse",
+      "operation": "refresh",
+      "credential_status": "rotated",
+      "first": {"key": "10000000-0000-4000-8000-000000000104", "fingerprint": "refresh-request-a"},
+      "retry": {"key": "10000000-0000-4000-8000-000000000105", "fingerprint": "refresh-request-a"},
+      "expected_outcome": "refresh_token_reused"
+    }
+  ]
+}

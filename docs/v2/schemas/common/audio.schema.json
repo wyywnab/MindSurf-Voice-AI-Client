@@ -1,65 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mindsurf.dev/schemas/voice/v2/common/audio.schema.json",
-  "title": "MindSurf Voice v2 negotiated audio formats",
+  "title": "MindSurf Voice v2 input audio format",
   "$defs": {
-    "pcm16Mono": {
+    "inputAudioFormat": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "encoding", "sample_rate", "channels"],
+      "required": ["encoding", "sample_rate", "channels"],
       "properties": {
-        "id": { "const": "pcm16_mono" },
         "encoding": { "const": "pcm_s16le" },
         "sample_rate": { "const": 16000 },
         "channels": { "const": 1 }
       }
-    },
-    "pcm24Mono": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "encoding", "sample_rate", "channels"],
-      "properties": {
-        "id": { "const": "pcm24_mono" },
-        "encoding": { "const": "pcm_s16le" },
-        "sample_rate": { "const": 24000 },
-        "channels": { "const": 1 }
-      }
-    },
-    "inputAudioFormat": {
-      "$ref": "#/$defs/pcm16Mono"
-    },
-    "outputAudioFormat": {
-      "oneOf": [
-        { "$ref": "#/$defs/pcm16Mono" },
-        { "$ref": "#/$defs/pcm24Mono" }
-      ]
-    },
-    "outputFormatId": {
-      "enum": ["pcm16_mono", "pcm24_mono"]
-    },
-    "outputAudioStartFormat": {
-      "oneOf": [
-        {
-          "type": "object",
-          "required": ["format_id", "encoding", "sample_rate", "channels"],
-          "properties": {
-            "format_id": { "const": "pcm16_mono" },
-            "encoding": { "const": "pcm_s16le" },
-            "sample_rate": { "const": 16000 },
-            "channels": { "const": 1 }
-          }
-        },
-        {
-          "type": "object",
-          "required": ["format_id", "encoding", "sample_rate", "channels"],
-          "properties": {
-            "format_id": { "const": "pcm24_mono" },
-            "encoding": { "const": "pcm_s16le" },
-            "sample_rate": { "const": 24000 },
-            "channels": { "const": 1 }
-          }
-        }
-      ]
     }
   }
 }

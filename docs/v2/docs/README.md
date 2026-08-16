@@ -1,24 +1,16 @@
 # v2 语义文档
 
-本目录保存无法仅靠结构化 schema 表达的协议语义：
+MindSurf Voice API v2 是单轮实时语音文本协议，只支持：
+
+- `asr_only`：ASR；
+- `asr_llm`：ASR 后执行 LLM，作为一个完整流程。
+
+两种模式都把流式文本写入客户端临时区域，并在阶段末用全量 snapshot 覆盖。只有最终
+snapshot 后的 `request.done` 才允许客户端把临时文本写入真实目标。
 
 - [HTTP API v2](./HTTP_API_V2.md)
 - [WebSocket API v2](./WS_PROTOCOL_V2.md)
-- [Conversation 生命周期](./conversations.md)
-- [Request 生命周期与流完成语义](./request-lifecycle.md)
-- [后端仓库接入与交接](./backend-integration.md)
+- [Request 生命周期](./request-lifecycle.md)
+- [后端仓库接入](./backend-integration.md)
 
-后续建议把两份长文档逐步拆成：
-
-```text
-docs/
-├── overview.md
-├── conversations.md          # 已建立的权威语义
-├── request-lifecycle.md      # 已建立的权威语义
-├── errors-and-retries.md
-├── audio-transport.md
-├── HTTP_API_V2.md
-└── WS_PROTOCOL_V2.md
-```
-
-拆分前保留现有文件作为完整基线；拆分过程中不要复制字段表，字段级契约应引用 `../openapi/` 或 `../schemas/`。
+本版本不定义 Assistant、Conversation、TTS、下行音频、音色或情绪能力。

@@ -1,0 +1,59 @@
+{
+  "format_version": 2,
+  "cases": [
+    {
+      "name": "asr_only charges only ASR",
+      "valid": true,
+      "mode": "asr_only",
+      "reservation": {"asr_credits": 8, "llm_credits": 0, "credits": 8},
+      "usage": {"input_audio_ms": 8000, "llm_input_tokens": 0, "llm_output_tokens": 0, "asr_credits_charged": 5, "llm_credits_charged": 0, "credits_charged": 5}
+    },
+    {
+      "name": "asr_llm charges ASR and polishing separately",
+      "valid": true,
+      "mode": "asr_llm",
+      "reservation": {"asr_credits": 8, "llm_credits": 4, "credits": 12},
+      "usage": {"input_audio_ms": 8000, "llm_input_tokens": 9, "llm_output_tokens": 11, "asr_credits_charged": 5, "llm_credits_charged": 4, "credits_charged": 9}
+    },
+    {
+      "name": "reservation total must equal stage reservations",
+      "valid": false,
+      "expected_rule": "reservation_total_mismatch",
+      "mode": "asr_llm",
+      "reservation": {"asr_credits": 8, "llm_credits": 4, "credits": 10},
+      "usage": {"input_audio_ms": 8000, "llm_input_tokens": 9, "llm_output_tokens": 11, "asr_credits_charged": 5, "llm_credits_charged": 4, "credits_charged": 9}
+    },
+    {
+      "name": "charged total must equal stage charges",
+      "valid": false,
+      "expected_rule": "usage_total_mismatch",
+      "mode": "asr_llm",
+      "reservation": {"asr_credits": 8, "llm_credits": 4, "credits": 12},
+      "usage": {"input_audio_ms": 8000, "llm_input_tokens": 9, "llm_output_tokens": 11, "asr_credits_charged": 5, "llm_credits_charged": 4, "credits_charged": 8}
+    },
+    {
+      "name": "asr_only cannot report LLM usage or charge",
+      "valid": false,
+      "expected_rule": "asr_only_llm_usage_nonzero",
+      "mode": "asr_only",
+      "reservation": {"asr_credits": 8, "llm_credits": 0, "credits": 8},
+      "usage": {"input_audio_ms": 8000, "llm_input_tokens": 1, "llm_output_tokens": 0, "asr_credits_charged": 5, "llm_credits_charged": 0, "credits_charged": 5}
+    },
+    {
+      "name": "ASR charge cannot exceed ASR reservation",
+      "valid": false,
+      "expected_rule": "asr_charge_exceeds_reservation",
+      "mode": "asr_llm",
+      "reservation": {"asr_credits": 4, "llm_credits": 4, "credits": 8},
+      "usage": {"input_audio_ms": 8000, "llm_input_tokens": 9, "llm_output_tokens": 11, "asr_credits_charged": 5, "llm_credits_charged": 4, "credits_charged": 9}
+    },
+    {
+      "name": "LLM charge cannot exceed LLM reservation",
+      "valid": false,
+      "expected_rule": "llm_charge_exceeds_reservation",
+      "mode": "asr_llm",
+      "reservation": {"asr_credits": 8, "llm_credits": 3, "credits": 11},
+      "usage": {"input_audio_ms": 8000, "llm_input_tokens": 9, "llm_output_tokens": 11, "asr_credits_charged": 5, "llm_credits_charged": 4, "credits_charged": 9}
+    }
+  ]
+}

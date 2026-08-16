@@ -21,50 +21,34 @@
         "arch": { "type": "string", "minLength": 1 }
       }
     },
-    "auth": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["scheme", "token"],
-      "properties": {
-        "scheme": { "const": "bearer" },
-        "token": { "type": "string", "minLength": 1 }
-      }
-    },
-    "clientHelloPayload": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": ["client", "protocol_versions", "input_audio", "output_audio", "auth"],
-      "properties": {
-        "client": { "$ref": "#/$defs/clientIdentity" },
-        "protocol_versions": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "contains": { "const": 2 },
-          "items": { "type": "integer", "minimum": 1 }
-        },
-        "input_audio": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "contains": { "$ref": "common/audio.schema.json#/$defs/inputAudioFormat" },
-          "items": { "$ref": "common/audio.schema.json#/$defs/inputAudioFormat" }
-        },
-        "output_audio": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": { "$ref": "common/audio.schema.json#/$defs/outputAudioFormat" }
-        },
-        "auth": { "$ref": "#/$defs/auth" }
-      }
-    },
     "clientHello": {
       "allOf": [
         { "$ref": "envelope.schema.json#/$defs/sessionEnvelope" },
         {
           "properties": {
             "type": { "const": "client.hello" },
-            "payload": { "$ref": "#/$defs/clientHelloPayload" }
+            "payload": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["client", "protocol_versions", "input_audio"],
+              "properties": {
+                "client": { "$ref": "#/$defs/clientIdentity" },
+                "protocol_versions": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "contains": { "const": 2 },
+                  "items": { "type": "integer", "minimum": 1 }
+                },
+                "input_audio": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": { "$ref": "common/audio.schema.json#/$defs/inputAudioFormat" }
+                }
+              },
+              "not": { "anyOf": [{ "required": ["auth"] }, { "required": ["output_audio"] }] }
+            }
           }
         }
       ]
@@ -79,9 +63,7 @@
               "type": "object",
               "additionalProperties": true,
               "required": ["nonce"],
-              "properties": {
-                "nonce": { "type": "string", "minLength": 1, "maxLength": 256 }
-              }
+              "properties": { "nonce": { "type": "string", "minLength": 1, "maxLength": 256 } }
             }
           }
         }
@@ -90,108 +72,39 @@
     "requestStartPayload": {
       "type": "object",
       "additionalProperties": true,
-      "required": [
-        "mode",
-        "pipeline",
-        "capabilities_revision",
-        "selection",
-        "conversation_id",
-        "language",
-        "response"
-      ],
+      "required": ["mode", "pipeline", "capabilities_revision", "selection", "language"],
       "properties": {
-        "mode": { "enum": ["dictation", "assistant"] },
+        "mode": { "$ref": "common/request.schema.json#/$defs/mode" },
         "pipeline": { "type": "string", "minLength": 1 },
         "capabilities_revision": { "type": "string", "minLength": 1 },
         "selection": { "$ref": "common/request.schema.json#/$defs/selection" },
-        "conversation_id": {
-          "oneOf": [
-            { "$ref": "envelope.schema.json#/$defs/uuid" },
-            { "type": "null" }
-          ]
-        },
         "language": { "type": "string", "minLength": 1 },
-        "response": { "$ref": "common/request.schema.json#/$defs/responseConfig" },
         "generation": { "$ref": "common/request.schema.json#/$defs/generation" }
       },
       "allOf": [
         {
-          "if": {
-            "properties": { "mode": { "const": "dictation" } },
-            "required": ["mode"]
-          },
+          "not": {
+            "anyOf": [
+              { "required": ["task"] },
+              { "required": ["conversation_id"] },
+              { "required": ["response"] },
+              { "required": ["voice"] },
+              { "required": ["emotion"] },
+              { "required": ["output_audio"] }
+            ]
+          }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "asr_only" } }, "required": ["mode"] },
           "then": {
-            "properties": {
-              "conversation_id": { "type": "null" },
-              "selection": {
-                "properties": {
-                  "llm": { "type": "null" },
-                  "tts": { "type": "null" }
-                }
-              },
-              "response": {
-                "properties": {
-                  "input_transcription": { "const": true },
-                  "text": { "const": false },
-                  "audio": { "const": false }
-                }
-              }
-            },
+            "properties": { "selection": { "properties": { "llm": { "type": "null" } } } },
             "not": { "required": ["generation"] }
           }
         },
         {
-          "if": {
-            "properties": { "mode": { "const": "assistant" } },
-            "required": ["mode"]
-          },
+          "if": { "properties": { "mode": { "const": "asr_llm" } }, "required": ["mode"] },
           "then": {
-            "properties": {
-              "response": {
-                "anyOf": [
-                  {
-                    "properties": { "text": { "const": true } },
-                    "required": ["text"]
-                  },
-                  {
-                    "properties": { "audio": { "const": true } },
-                    "required": ["audio"]
-                  }
-                ]
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "response": {
-                "properties": { "text": { "const": false } },
-                "required": ["text"]
-              }
-            },
-            "required": ["response"]
-          },
-          "then": {
-            "properties": {
-              "generation": { "not": { "required": ["text"] } }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "response": {
-                "properties": { "audio": { "const": false } },
-                "required": ["audio"]
-              }
-            },
-            "required": ["response"]
-          },
-          "then": {
-            "properties": {
-              "generation": { "not": { "required": ["audio"] } }
-            }
+            "properties": { "selection": { "properties": { "llm": { "type": "string", "minLength": 1 } } } }
           }
         }
       ]
@@ -199,33 +112,13 @@
     "requestStart": {
       "allOf": [
         { "$ref": "envelope.schema.json#/$defs/requestEnvelope" },
-        {
-          "properties": {
-            "type": { "const": "request.start" },
-            "payload": { "$ref": "#/$defs/requestStartPayload" }
-          }
-        }
+        { "properties": { "type": { "const": "request.start" }, "payload": { "$ref": "#/$defs/requestStartPayload" } } }
       ]
     },
     "inputCommit": {
       "allOf": [
         { "$ref": "envelope.schema.json#/$defs/requestEnvelope" },
-        {
-          "properties": {
-            "type": { "const": "input.commit" },
-            "payload": {
-              "type": "object",
-              "additionalProperties": true,
-              "required": ["last_sequence", "frame_count", "sample_count", "duration_ms"],
-              "properties": {
-                "last_sequence": { "type": "integer", "minimum": 0 },
-                "frame_count": { "type": "integer", "minimum": 1 },
-                "sample_count": { "type": "integer", "minimum": 1 },
-                "duration_ms": { "type": "integer", "minimum": 0 }
-              }
-            }
-          }
-        }
+        { "properties": { "type": { "const": "input.commit" }, "payload": { "$ref": "common/request.schema.json#/$defs/inputStatistics" } } }
       ]
     },
     "requestCancel": {
@@ -239,15 +132,7 @@
               "additionalProperties": true,
               "required": ["reason"],
               "properties": {
-                "reason": {
-                  "enum": [
-                    "user_cancelled",
-                    "user_interrupted",
-                    "client_timeout",
-                    "network_congestion",
-                    "protocol_error"
-                  ]
-                }
+                "reason": { "enum": ["user_cancelled", "client_timeout", "network_congestion", "protocol_error"] }
               }
             }
           }

@@ -1,6 +1,22 @@
 {
-  "format_version": 1,
+  "format_version": 2,
   "request_id": "00112233-4455-6677-8899-aabbccddeeff",
+  "sample_rate": 16000,
+  "commits": [
+    {
+      "name": "input-a canonical commit statistics",
+      "stream": "input-a",
+      "valid": true,
+      "statistics": {"last_sequence": 1, "chunk_count": 2, "sample_count": 4, "duration_ms": 1}
+    },
+    {
+      "name": "input-a rejects rounded-down duration",
+      "stream": "input-a",
+      "valid": false,
+      "expected_rule": "input_statistics_mismatch",
+      "statistics": {"last_sequence": 1, "chunk_count": 2, "sample_count": 4, "duration_ms": 0}
+    }
+  ],
   "cases": [
     {
       "name": "input stream first frame",
@@ -8,7 +24,7 @@
       "direction": "client_to_server",
       "valid": true,
       "frame_hex": "4d5356410201000000300000000000000000000000000000000000040000000000112233445566778899aabbccddeeff0000ff7f",
-      "expected": { "kind": 1, "sequence": 0, "timestamp_us": 0, "payload_length": 4, "samples": [0, 32767] }
+      "expected": {"kind": 1, "sequence": 0, "timestamp_us": 0, "payload_length": 4, "samples": [0, 32767]}
     },
     {
       "name": "input stream second frame",
@@ -16,15 +32,7 @@
       "direction": "client_to_server",
       "valid": true,
       "frame_hex": "4d535641020100000030000000000001000000000000007d000000040000000000112233445566778899aabbccddeeffffff0001",
-      "expected": { "kind": 1, "sequence": 1, "timestamp_us": 125, "payload_length": 4, "samples": [-1, 256] }
-    },
-    {
-      "name": "output stream first frame",
-      "stream": "output-a",
-      "direction": "server_to_client",
-      "valid": true,
-      "frame_hex": "4d5356410202000000300000000000000000000000000000000000040000000000112233445566778899aabbccddeeff00800100",
-      "expected": { "kind": 2, "sequence": 0, "timestamp_us": 0, "payload_length": 4, "samples": [-32768, 1] }
+      "expected": {"kind": 1, "sequence": 1, "timestamp_us": 125, "payload_length": 4, "samples": [-1, 256]}
     },
     {
       "name": "version 3 is not a v2 frame",
@@ -34,11 +42,18 @@
       "frame_hex": "4d5356410301000000300000000000000000000000000000000000040000000000112233445566778899aabbccddeeff0000ff7f"
     },
     {
-      "name": "declared payload length exceeds message",
+      "name": "kind 2 output frame is not defined",
       "direction": "server_to_client",
       "valid": false,
+      "expected_error": "unsupported_kind",
+      "frame_hex": "4d5356410202000000300000000000000000000000000000000000040000000000112233445566778899aabbccddeeff00800100"
+    },
+    {
+      "name": "declared payload length exceeds message",
+      "direction": "client_to_server",
+      "valid": false,
       "expected_error": "message_length_mismatch",
-      "frame_hex": "4d5356410202000000300000000000000000000000000000000000060000000000112233445566778899aabbccddeeff00800100"
+      "frame_hex": "4d5356410201000000300000000000000000000000000000000000060000000000112233445566778899aabbccddeeff0000ff7f"
     }
   ]
 }

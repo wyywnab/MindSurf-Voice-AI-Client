@@ -1,0 +1,62 @@
+{
+  "format_version": 2,
+  "attempt": {
+    "client_id": "mindsurf-desktop",
+    "redirect_uri": "mindsurf://auth/callback",
+    "state": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS",
+    "code_verifier": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abc",
+    "code_challenge": "dYSqskoTcWrpu8GYY0XpWlzOc0c5rd9YO3uAgh_zmV4"
+  },
+  "cases": [
+    {
+      "name": "successful callback exchanges a fresh code with matching PKCE",
+      "valid": true,
+      "callback": {"code": "code-1", "state": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS"},
+      "token_request": {"client_id": "mindsurf-desktop", "redirect_uri": "mindsurf://auth/callback", "code": "code-1", "code_verifier": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abc"},
+      "code_status": "fresh"
+    },
+    {
+      "name": "user cancellation is a valid terminal callback",
+      "valid": true,
+      "callback": {"error": "access_denied", "state": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS"}
+    },
+    {
+      "name": "callback state must match active attempt",
+      "valid": false,
+      "expected_rule": "callback_state_mismatch",
+      "callback": {"code": "code-2", "state": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"},
+      "token_request": {"client_id": "mindsurf-desktop", "redirect_uri": "mindsurf://auth/callback", "code": "code-2", "code_verifier": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abc"},
+      "code_status": "fresh"
+    },
+    {
+      "name": "callback cannot contain both code and error",
+      "valid": false,
+      "expected_rule": "callback_result_ambiguous",
+      "callback": {"code": "code-3", "error": "access_denied", "state": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS"}
+    },
+    {
+      "name": "token exchange verifier must match challenge",
+      "valid": false,
+      "expected_rule": "pkce_verification_failed",
+      "callback": {"code": "code-4", "state": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS"},
+      "token_request": {"client_id": "mindsurf-desktop", "redirect_uri": "mindsurf://auth/callback", "code": "code-4", "code_verifier": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"},
+      "code_status": "fresh"
+    },
+    {
+      "name": "token exchange redirect must match authorization attempt",
+      "valid": false,
+      "expected_rule": "authorization_binding_mismatch",
+      "callback": {"code": "code-5", "state": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS"},
+      "token_request": {"client_id": "mindsurf-desktop", "redirect_uri": "mindsurf://wrong/callback", "code": "code-5", "code_verifier": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abc"},
+      "code_status": "fresh"
+    },
+    {
+      "name": "authorization code cannot be consumed twice",
+      "valid": false,
+      "expected_rule": "authorization_code_not_fresh",
+      "callback": {"code": "code-6", "state": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS"},
+      "token_request": {"client_id": "mindsurf-desktop", "redirect_uri": "mindsurf://auth/callback", "code": "code-6", "code_verifier": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abc"},
+      "code_status": "used"
+    }
+  ]
+}

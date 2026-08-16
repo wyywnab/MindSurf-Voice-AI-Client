@@ -1,33 +1,17 @@
-# HTTP OpenAPI
+# HTTP OpenAPI 3.1
 
-本目录用于维护 MindSurf Voice HTTP API v2 的 OpenAPI 3.1 契约。
+[`openapi.yaml`](./openapi.yaml) 是 HTTP v2 的字段级权威契约，覆盖 9 个 operation：系统
+浏览器授权、Authorization Code 换 Token、刷新、登出、当前用户、额度、用量、能力目录和
+realtime ticket。
 
-当前主入口是 [`openapi.yaml`](./openapi.yaml)，已覆盖 capabilities、voices、voice references 和 conversations 的全部 v2 HTTP 路径。规模继续增长时按领域拆分：
+编写规则：
 
-```text
-openapi/
-├── openapi.yaml
-├── paths/
-│   ├── capabilities.yaml
-│   ├── voices.yaml
-│   └── conversations.yaml
-└── components/
-    ├── common.yaml
-    ├── capabilities.yaml
-    ├── voices.yaml
-    └── errors.yaml
-```
-
-编写要求：
-
-- 使用 OpenAPI 3.1，使 schema 语义与 JSON Schema 2020-12 对齐。
-- 每个操作定义成功响应、所有稳定错误响应和鉴权要求。
-- 用 schema 表达 required、nullable、enum、format、长度和数值范围。
-- multipart 明确每个 part 的媒体类型和文本编码规则。
-- 错误码与 HTTP 状态码建立唯一映射；不要只维护一张无映射的错误码列表。
-- 相同状态码在不同 operation 中必须引用收窄后的专用错误 union；不得让一个操作在
-  机器契约中返回其他资源域的错误码。
-- 异步资源明确 `202 -> processing -> ready|failed` 的转换及轮询字段。
-- `operationId` 和组件名称保持稳定，供客户端类型生成和契约测试使用。
-
-当前契约版本仍标记为 `2.0.0-draft`。冻结前应加入 OpenAPI lint、示例校验和客户端类型生成检查。
+- 默认 Bearer security，authorize/token/refresh 显式 `security: []`；
+- code、PKCE verifier、access/refresh token 和 ticket 标记为敏感字段；
+- token 和 refresh 使用必填 Idempotency-Key 安全恢复结果不确定的重试；
+- 桌面客户端是无 client secret 的 public client，只允许 Authorization Code + S256 PKCE；
+- 成功和错误均携带 request ID，204 除外；
+- HTTP 只管理账户和长期资源，不承载实时音频；
+- 不得加入 Conversation、TTS、Voice 或 Emotion 资源；
+- Pipeline ID 是不透明引用，跨资源选择由同 revision 能力目录校验；
+- WebSocket ticket 一次消费、短时有效，但建立的 WS 是长期连接。

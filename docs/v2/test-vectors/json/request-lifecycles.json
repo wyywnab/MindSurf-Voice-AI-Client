@@ -1,0 +1,113 @@
+{
+  "format_version": 2,
+  "cases": [
+    {
+      "name": "asr_only success allows session heartbeat before done",
+      "valid": true,
+      "events": [
+        {"type": "request.accepted", "payload": {"mode": "asr_only"}},
+        {"type": "input.committed", "payload": {}},
+        {"type": "output.text.delta", "payload": {"stage": "asr", "sequence": 0, "delta": "hello"}},
+        {"type": "output.text.snapshot", "payload": {"stage": "asr", "text": "Hello.", "final": true}},
+        {"type": "session.ping", "payload": {"nonce": "hb-1"}},
+        {"type": "request.done", "payload": {"mode": "asr_only", "final_text": "Hello."}}
+      ]
+    },
+    {
+      "name": "asr_llm success has intermediate ASR and final LLM snapshots",
+      "valid": true,
+      "events": [
+        {"type": "request.accepted", "payload": {"mode": "asr_llm"}},
+        {"type": "input.committed", "payload": {}},
+        {"type": "output.text.snapshot", "payload": {"stage": "asr", "text": "raw", "final": false}},
+        {"type": "output.text.snapshot", "payload": {"stage": "llm", "text": "polished", "final": true}},
+        {"type": "request.done", "payload": {"mode": "asr_llm", "final_text": "polished"}}
+      ]
+    },
+    {
+      "name": "asr_llm ASR snapshot cannot be final",
+      "valid": false,
+      "expected_rule": "snapshot_mode_mismatch",
+      "events": [
+        {"type": "request.accepted", "payload": {"mode": "asr_llm"}},
+        {"type": "input.committed", "payload": {}},
+        {"type": "output.text.snapshot", "payload": {"stage": "asr", "text": "raw", "final": true}}
+      ]
+    },
+    {
+      "name": "asr_only snapshot cannot be intermediate",
+      "valid": false,
+      "expected_rule": "snapshot_mode_mismatch",
+      "events": [
+        {"type": "request.accepted", "payload": {"mode": "asr_only"}},
+        {"type": "input.committed", "payload": {}},
+        {"type": "output.text.snapshot", "payload": {"stage": "asr", "text": "raw", "final": false}}
+      ]
+    },
+    {
+      "name": "done mode must match accepted mode",
+      "valid": false,
+      "expected_rule": "done_mode_mismatch",
+      "events": [
+        {"type": "request.accepted", "payload": {"mode": "asr_only"}},
+        {"type": "input.committed", "payload": {}},
+        {"type": "output.text.snapshot", "payload": {"stage": "asr", "text": "final", "final": true}},
+        {"type": "request.done", "payload": {"mode": "asr_llm", "final_text": "final"}}
+      ]
+    },
+    {
+      "name": "request event cannot appear between final snapshot and done",
+      "valid": false,
+      "expected_rule": "final_not_followed_by_done",
+      "events": [
+        {"type": "request.accepted", "payload": {"mode": "asr_only"}},
+        {"type": "input.committed", "payload": {}},
+        {"type": "output.text.snapshot", "payload": {"stage": "asr", "text": "final", "final": true}},
+        {"type": "output.text.delta", "payload": {"stage": "asr", "sequence": 0, "delta": "late"}},
+        {"type": "request.done", "payload": {"mode": "asr_only", "final_text": "final"}}
+      ]
+    },
+    {
+      "name": "request events after terminal are rejected",
+      "valid": false,
+      "expected_rule": "event_after_terminal",
+      "events": [
+        {"type": "request.accepted", "payload": {"mode": "asr_llm"}},
+        {"type": "error", "payload": {"terminal": true, "fatal": false}},
+        {"type": "output.text.snapshot", "payload": {"stage": "llm", "text": "late", "final": true}}
+      ]
+    },
+    {
+      "name": "cancel after final loses race and done remains terminal",
+      "valid": true,
+      "events": [
+        {"type": "request.accepted", "payload": {"mode": "asr_only"}},
+        {"type": "input.committed", "payload": {}},
+        {"type": "output.text.snapshot", "payload": {"stage": "asr", "text": "final", "final": true}},
+        {"type": "request.cancel", "payload": {"reason": "user_cancelled"}},
+        {"type": "request.done", "payload": {"mode": "asr_only", "final_text": "final"}}
+      ]
+    },
+    {
+      "name": "cancelled cannot replace done after final",
+      "valid": false,
+      "expected_rule": "final_not_followed_by_done",
+      "events": [
+        {"type": "request.accepted", "payload": {"mode": "asr_only"}},
+        {"type": "input.committed", "payload": {}},
+        {"type": "output.text.snapshot", "payload": {"stage": "asr", "text": "final", "final": true}},
+        {"type": "request.cancel", "payload": {"reason": "user_cancelled"}},
+        {"type": "request.cancelled", "payload": {}}
+      ]
+    },
+    {
+      "name": "cancel before final may win",
+      "valid": true,
+      "events": [
+        {"type": "request.accepted", "payload": {"mode": "asr_llm"}},
+        {"type": "request.cancel", "payload": {"reason": "user_cancelled"}},
+        {"type": "request.cancelled", "payload": {}}
+      ]
+    }
+  ]
+}
