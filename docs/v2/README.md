@@ -1,6 +1,6 @@
 # MindSurf Voice API v2
 
-本目录是 MindSurf Voice API v2 Draft 的统一规范入口。
+本目录是 MindSurf Voice API v2 冻结版的统一规范入口。
 
 ```text
 v2/
@@ -136,5 +136,5 @@ sequenceDiagram
 - [WebSocket Schemas](./schemas/README.md)
 - [测试向量](./test-vectors/README.md)
 
-当前版本仍是 Draft，可以进行不兼容收敛。冻结后，改变 mode、必填字段、终态语义、
-鉴权方式或二进制布局必须提升主版本。
+v2 契约已于 2026-08-17 冻结。改变 mode、必填字段、HTTP 或 WebSocket public API、消息格式、
+终态语义、鉴权方式或二进制布局均属于不兼容变更，必须提升主版本。

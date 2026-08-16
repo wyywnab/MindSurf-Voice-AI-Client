@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: MindSurf Voice HTTP API
-  version: 2.0.0-draft
+  version: 2.0.0
   description: >-
     系统浏览器授权、Token、用户、额度、用量、文本处理能力发现和长期 WebSocket ticket。
     实时音频和文本事件由 WebSocket v2 定义。

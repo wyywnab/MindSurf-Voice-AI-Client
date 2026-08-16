@@ -2,7 +2,7 @@
 
 > 协议版本：2
 >
-> 文档状态：Draft
+> 文档状态：Frozen
 >
 > 子协议：`mindsurf.voice.v2`
 >
