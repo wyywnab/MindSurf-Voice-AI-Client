@@ -4,9 +4,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { CommandResult } from "../types/app";
 import { isMainTabId, type MainTabId } from "../types/navigation";
 import type { AppLocale } from "./i18n";
-import type { VoiceInteractionMode } from "../types/voice";
+import type { VoiceModeV2 } from "../types/httpApi";
 
-const VOICE_MODES = new Set<VoiceInteractionMode>(["dictation", "assistant", "mixed"]);
+const VOICE_MODES = new Set<VoiceModeV2>(["asr_only", "asr_llm"]);
 
 export async function syncTrayConfiguration(options: {
   locale: AppLocale;
@@ -20,7 +20,7 @@ export async function syncTrayConfiguration(options: {
   }
 }
 
-export async function syncTrayMode(mode: VoiceInteractionMode) {
+export async function syncTrayMode(mode: VoiceModeV2) {
   try {
     const result = await invoke<CommandResult<void>>("set_tray_mode", { mode });
     return result.ok;
@@ -30,7 +30,7 @@ export async function syncTrayMode(mode: VoiceInteractionMode) {
 }
 
 export async function subscribeTrayActions(callbacks: {
-  onMode: (mode: VoiceInteractionMode) => void;
+  onMode: (mode: VoiceModeV2) => void;
   onNavigate: (page: MainTabId) => void;
 }): Promise<UnlistenFn> {
   const unlisteners: UnlistenFn[] = [];
@@ -44,8 +44,8 @@ export async function subscribeTrayActions(callbacks: {
     );
     unlisteners.push(
       await listen<string>("tray://mode", (event) => {
-        if (VOICE_MODES.has(event.payload as VoiceInteractionMode)) {
-          callbacks.onMode(event.payload as VoiceInteractionMode);
+        if (VOICE_MODES.has(event.payload as VoiceModeV2)) {
+          callbacks.onMode(event.payload as VoiceModeV2);
         }
       }),
     );

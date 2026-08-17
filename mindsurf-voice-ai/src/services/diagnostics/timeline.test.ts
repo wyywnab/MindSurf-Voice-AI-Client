@@ -9,14 +9,11 @@ describe("calculateTimelineMetrics", () => {
       event("request.triggered", 10),
       event("recording.prepare_started", 20),
       event("recording.started", 45),
-      event("input.commit_sent", 100),
-      event("asr.final", 180),
       event("request.done", 210),
     ];
 
     expect(calculateTimelineMetrics({ events })).toEqual([
       { label: "录音准备", durationMs: 25 },
-      { label: "最终识别", durationMs: 80 },
       { label: "总请求", durationMs: 200 },
     ]);
   });

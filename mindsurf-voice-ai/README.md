@@ -1,108 +1,70 @@
-# MindSurf Voice AI
+# MindSurf Voice AI Desktop
 
-MindSurf Voice AI 的 Windows/macOS 桌面客户端，基于 Tauri 2、Vue 3 和
-TypeScript。
+基于 Tauri 2、Vue 3 和 TypeScript 的 Voice API v2 桌面客户端。
 
-客户端支持听写、助手和混合模式、ASR/LLM 流式文本、TTS 流式语音播放、
-Windows SendInput 与 macOS Accessibility API Unicode 文本注入，以及可实际按
-键录入的全局按住说话快捷键。Windows 默认使用 `Ctrl + Win`，macOS 默认使用
-`Control + Command + Space`；按住录音，释放提交，`Escape` 取消当前请求。
+## 当前能力
 
-## 环境要求
+- 系统浏览器 Authorization Code + PKCE 登录与深链回跳；
+- refresh token 系统 Keychain 保存与原子轮换，access token 仅保留在内存；
+- HTTP 用户、额度、用量、能力目录与一次性 realtime ticket；
+- `mindsurf.voice.v2` 长连接、心跳、关闭码分类和新 ticket 重连；
+- `asr_only` 与 `asr_llm` 两种单轮文本模式；
+- 16 kHz 单声道 PCM16 上行、final snapshot + `request.done` 双确认；
+- Windows/macOS 原生文本注入、麦克风选择、快捷键、悬浮窗、托盘和脱敏诊断。
 
-- Node.js 22+
-- Rust stable
-- Windows 10/11 与 WebView2，或 macOS 10.15+
-- macOS 构建需要 Xcode Command Line Tools
+协议不包含多轮对话或服务端下行音频。
 
 ## 本地开发
 
-客户端不会自动启动 Mock 服务。下面的命令均从仓库根目录执行。
+先按仓库根目录 [README](../README.md) 启动本地 Mock，再执行：
 
-### Windows
-
-先启动 Mock：
-
-```powershell
-Set-Location .\mindsurf-voice-mock
-npm install
-npm start
-```
-
-再打开一个 PowerShell 窗口启动客户端：
-
-```powershell
-Set-Location .\mindsurf-voice-ai
-npm install
+```bash
+npm ci
 npm run tauri dev
 ```
 
-### macOS
-
-先启动 Mock：
-
-```bash
-cd mindsurf-voice-mock
-npm install
-npm start
-```
-
-再打开一个终端窗口启动客户端：
-
-```bash
-cd mindsurf-voice-ai
-npm install
-npm run tauri dev
-```
-
-macOS 首次运行需在"系统设置 → 隐私与安全性"中允许麦克风和辅助功能权限。
-全局快捷键使用系统 Carbon 热键 API，不依赖"输入监控"权限。
-
-调试阶段默认连接本地 Mock 服务：
+在账户页将 Voice API origin 设为：
 
 ```text
-ws://127.0.0.1:8000/v1/voice/ws
+http://127.0.0.1:8000
 ```
 
-Mock 服务位于客户端同级目录 `../mindsurf-voice-mock`。
+随后点击登录。Mock 会通过系统浏览器自动签发本地 Authorization Code 并回跳应用。
 
 ## 质量检查
 
-```powershell
+```bash
 npm run check
 npm run build
 
-Set-Location src-tauri
+cd src-tauri
 cargo fmt --all -- --check
-cargo check --all-targets
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets
+cargo check
+cargo test
 ```
 
-`npm run check` 会执行 Prettier、ESLint、TypeScript 和前端测试。
-
-## 目录
+## 模块
 
 ```text
 src/
-├─ components/     UI 组件（录音/连接/权限/设置面板、悬浮窗等）
-├─ audio/          重采样、PCM16、分帧、WAV 与流式播放器
-├─ composables/    Vue 业务组合逻辑（录音等）
-├─ controllers/    请求/录音/悬浮窗/文本输出的业务编排
-├─ services/       传输、协议、录音、文本注入、设置、诊断、托盘等
-├─ stores/         连接/请求/设置/诊断等状态域
-├─ styles/         全局样式
-└─ types/          TypeScript 领域类型
+├─ components/     账户、录音、连接、权限、设置、诊断与悬浮窗 UI
+├─ composables/    录音组合逻辑
+├─ controllers/    授权、连接、请求、录音、悬浮窗与文本输出编排
+├─ services/       HTTP、realtime v2、录音、注入、设置、诊断和托盘
+├─ stores/         登录、账户、额度、能力、连接、请求、设置和诊断状态
+└─ types/          HTTP、realtime、设置与 UI 类型
 
-src-tauri/src/
-├─ commands/       Tauri commands（文本注入、快捷方式、权限、托盘等）
-├─ error.rs        统一命令结果与错误类型
-├─ lib.rs          Tauri 应用入口
-└─ main.rs         桌面进程入口
+src-tauri/src/commands/
+├─ credentials.rs      Keychain refresh token
+├─ native_recorder.rs  原生录音
+├─ text_injection.rs   原生文本注入
+└─ ...                 深链、权限、快捷键、托盘、悬浮窗与诊断
 ```
 
-Phase 2 架构详情见仓库根目录的 [`PHASE2_IMPLEMENTATION.md`](../docs/PHASE2_IMPLEMENTATION.md)，
-级联协议见 [`WS_PROTOCOL.md`](../docs/WS_PROTOCOL.md)，原生音频与级联统一接入协议见
-[`WS_PROTOCOL_V2.md`](../docs/v2/docs/WS_PROTOCOL_V2.md)，非实时资源管理见
-[`HTTP_API_V2.md`](../docs/v2/docs/HTTP_API_V2.md)。v2 规范入口见
-[`docs/v2/README.md`](../docs/v2/README.md)。
+规范入口：
+
+- [Voice API v2](../docs/v2/README.md)
+- [HTTP API](../docs/v2/docs/HTTP_API_V2.md)
+- [WebSocket v2](../docs/v2/docs/WS_PROTOCOL_V2.md)
+- [Request 生命周期](../docs/v2/docs/request-lifecycle.md)
+- [Phase 3 实施状态](../docs/PHASE3_IMPLEMENTATION.md)

@@ -1,5 +1,8 @@
 # MindSurf Voice AI 第二阶段实现文档
 
+> **历史文档：本阶段的协议与产品范围已被 Phase 3 和冻结的
+> [`docs/v2/`](./v2/README.md) 完整取代，不得作为当前实现或联调依据。**
+
 > 文档状态：实施中
 > 适用范围：`mindsurf-voice-ai` Windows/macOS Tauri 客户端与联调 Mock
 > 阶段定位：架构整理、稳定性提升与正式服务接入准备
@@ -7,19 +10,19 @@
 
 ## 实施状态
 
-| 里程碑 | 状态 | 完成日期 | 说明 |
-|---|---|---|---|
-| M1 | 已完成 | 2026-08-02 | 已拆分连接、请求、设置和诊断状态域，引入请求状态机、请求/录音/悬浮窗控制器、协议事件路由与文本输出 Backend。 |
-| M2 | 已完成 | 2026-08-03 | 已接入 Tauri Store、按档案隔离的加密 Token、多服务档案与连通性测试，并补齐 Windows/macOS 多麦克风、语言、语音和播放音量选项。 |
-| M3 | 已完成 | 2026-08-03 | 已实现请求时间线、完整运行摘要、结构化文件日志、时间筛选、清理/目录操作、轮转和脱敏 ZIP 诊断导出。 |
-| 发布前安全加固 | 已完成 | 2026-08-03 | 已启用发布 CSP、按窗口拆分 Capability，并提供一键清除设置、全部 Token/加密密钥和诊断日志。 |
-| M4 | 已完成（待双平台人工签收） | 2026-08-03 | 已实现 19 类可配置 Mock 故障、控制器/传输/路由集成测试和完整质量门；Windows/macOS 原生交互按 8.4 清单签收。 |
+| 里程碑         | 状态                       | 完成日期   | 说明                                                                                                                          |
+| -------------- | -------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| M1             | 已完成                     | 2026-08-02 | 已拆分连接、请求、设置和诊断状态域，引入请求状态机、请求/录音/悬浮窗控制器、协议事件路由与文本输出 Backend。                  |
+| M2             | 已完成                     | 2026-08-03 | 已接入 Tauri Store、按档案隔离的加密 Token、多服务档案与连通性测试，并补齐 Windows/macOS 多麦克风、语言、语音和播放音量选项。 |
+| M3             | 已完成                     | 2026-08-03 | 已实现请求时间线、完整运行摘要、结构化文件日志、时间筛选、清理/目录操作、轮转和脱敏 ZIP 诊断导出。                            |
+| 发布前安全加固 | 已完成                     | 2026-08-03 | 已启用发布 CSP、按窗口拆分 Capability，并提供一键清除设置、全部 Token/加密密钥和诊断日志。                                    |
+| M4             | 已完成（待双平台人工签收） | 2026-08-03 | 已实现 19 类可配置 Mock 故障、控制器/传输/路由集成测试和完整质量门；Windows/macOS 原生交互按 8.4 清单签收。                   |
 
 M2 已删除 `voiceSession.ts` 兼容入口，组件直接依赖拆分后的 Store 与 Controller。设置统一写入 Tauri Store，不保留 `localStorage` 适配器或旧设置迁移逻辑；服务 Token 经系统钥匙串托管的密钥加密后再写入 Store。
 
 本文档定义 MindSurf Voice AI 客户端第二阶段的实现范围、模块边界、开发顺序和验收标准。第二阶段以现有功能的重构和稳定化为主，在不改变当前单次语音请求交互模型的前提下，补充服务配置、应用层鉴权、请求时间线和运行日志。
 
-客户端与服务端之间的正式接口仍以 [`WS_PROTOCOL.md`](./WS_PROTOCOL.md) 为唯一依据。第二阶段涉及的鉴权扩展必须先更新协议文档，再同步修改客户端、服务端和 Mock。
+本文档仅保留为历史实施记录；其中的接口链接和产品描述均已失效。
 
 ## 1. 阶段背景
 
@@ -67,12 +70,12 @@ Phase 1 已经完成核心功能闭环，但当前实现仍保留较明显的阶
 
 第二阶段分为四个里程碑，必须优先完成重构，再开发依赖新结构的配置和可观测性功能。
 
-| 里程碑 | 内容 | 依赖 |
-|---|---|---|
-| M1 | 核心架构重构与状态机整理 | Phase 1 基线 |
-| M2 | 统一配置存储、音频选项、服务地址与 Token 鉴权 | M1 |
-| M3 | 请求时间线、运行日志与日志导出 | M1、M2 |
-| M4 | Mock 故障注入、异常路径测试与阶段验收 | M1～M3 |
+| 里程碑 | 内容                                          | 依赖         |
+| ------ | --------------------------------------------- | ------------ |
+| M1     | 核心架构重构与状态机整理                      | Phase 1 基线 |
+| M2     | 统一配置存储、音频选项、服务地址与 Token 鉴权 | M1           |
+| M3     | 请求时间线、运行日志与日志导出                | M1、M2       |
+| M4     | Mock 故障注入、异常路径测试与阶段验收         | M1～M3       |
 
 ## 5. M1：核心架构重构
 
@@ -312,10 +315,10 @@ control+super
 
 平台策略：
 
-| 平台 | 默认值 | 注册方式 | 仅修饰键 | 能力检测 |
-|---|---|---|---|---|
-| Windows | `control+super` | Rust 低层键盘钩子；带普通键的组合额外使用 `RegisterHotKey` 探测系统冲突 | 支持 | `windows` |
-| macOS | `control+super+Space` | Tauri Global Shortcut / 系统全局热键 | 当前需要普通键 | `macos` |
+| 平台    | 默认值                | 注册方式                                                                | 仅修饰键       | 能力检测  |
+| ------- | --------------------- | ----------------------------------------------------------------------- | -------------- | --------- |
+| Windows | `control+super`       | Rust 低层键盘钩子；带普通键的组合额外使用 `RegisterHotKey` 探测系统冲突 | 支持           | `windows` |
+| macOS   | `control+super+Space` | Tauri Global Shortcut / 系统全局热键                                    | 当前需要普通键 | `macos`   |
 
 Linux 不在本阶段实现范围内；其他平台统一通过相同接口返回 `unsupported_platform`。
 
@@ -345,7 +348,10 @@ interface TextOutputBackend {
   readonly kind: "direct_injection" | "input_method";
   isAvailable(): Promise<boolean>;
   prepareTarget(): Promise<TextOutputTarget | null>;
-  output(target: TextOutputTarget | null, text: string): Promise<TextOutputResult>;
+  output(
+    target: TextOutputTarget | null,
+    text: string,
+  ): Promise<TextOutputResult>;
 }
 ```
 
@@ -633,15 +639,15 @@ interface RequestTimelineEvent {
 
 关键耗时：
 
-| 指标 | 计算 |
-|---|---|
-| 录音准备耗时 | `recording.started - recording.prepare_started` |
-| 提交确认耗时 | `input.committed - input.commit_sent` |
-| 最终 ASR 延迟 | `asr.final - input.commit_sent` |
-| 首 Token 延迟 | `assistant.first_token - input.commit_sent` |
-| 首音频到达延迟 | `output.first_chunk - input.commit_sent` |
-| 首次播放延迟 | `output.playback_started - input.commit_sent` |
-| 总请求耗时 | 终态事件 - `request.triggered` |
+| 指标           | 计算                                            |
+| -------------- | ----------------------------------------------- |
+| 录音准备耗时   | `recording.started - recording.prepare_started` |
+| 提交确认耗时   | `input.committed - input.commit_sent`           |
+| 最终 ASR 延迟  | `asr.final - input.commit_sent`                 |
+| 首 Token 延迟  | `assistant.first_token - input.commit_sent`     |
+| 首音频到达延迟 | `output.first_chunk - input.commit_sent`        |
+| 首次播放延迟   | `output.playback_started - input.commit_sent`   |
+| 总请求耗时     | 终态事件 - `request.triggered`                  |
 
 听写模式、无 TTS 模式只显示适用指标。
 
@@ -838,15 +844,15 @@ cargo test
 
 Mock 使用稳定场景名，通过 `node server.mjs --fault <name>` 或 `MOCK_FAULTS=<name>` 启用；多个场景使用逗号组合，延迟类场景使用 `--fault-delay-ms` 或 `MOCK_FAULT_DELAY_MS`。未指定场景时仍为正常路径。
 
-| 故障类别 | 稳定场景名 |
-|---|---|
-| 握手延迟/超时 | `handshake_delay`、`handshake_timeout` |
-| 鉴权缺失/错误/过期 | `auth_missing`、`auth_invalid`、`auth_expired` |
-| 请求确认超时 | `request_accepted_timeout`、`input_committed_timeout` |
-| 推理阶段异常 | `asr_final_missing`、`llm_first_token_delay`、`tts_midstream_failure` |
-| 连接与取消异常 | `disconnect_during_request`、`cancellation_timeout` |
-| 协议健壮性 | `duplicate_event_id`、`stale_request_id`、`unknown_message_type`、`out_of_order_control`、`corrupt_audio_frame` |
-| 请求终态异常 | `request_done_early`、`request_done_missing` |
+| 故障类别           | 稳定场景名                                                                                                      |
+| ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| 握手延迟/超时      | `handshake_delay`、`handshake_timeout`                                                                          |
+| 鉴权缺失/错误/过期 | `auth_missing`、`auth_invalid`、`auth_expired`                                                                  |
+| 请求确认超时       | `request_accepted_timeout`、`input_committed_timeout`                                                           |
+| 推理阶段异常       | `asr_final_missing`、`llm_first_token_delay`、`tts_midstream_failure`                                           |
+| 连接与取消异常     | `disconnect_during_request`、`cancellation_timeout`                                                             |
+| 协议健壮性         | `duplicate_event_id`、`stale_request_id`、`unknown_message_type`、`out_of_order_control`、`corrupt_audio_frame` |
+| 请求终态异常       | `request_done_early`、`request_done_missing`                                                                    |
 
 自动化验收已经覆盖：
 

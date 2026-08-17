@@ -2,6 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { load, type Store } from "@tauri-apps/plugin-store";
 
 import { DEFAULT_APP_SETTINGS, type AppSettings } from "../../types/settings";
+import { validateApiOrigin } from "../http/apiOrigin";
 import { parseShortcutBinding } from "../shortcutBinding";
 
 const STORE_PATH = "settings.json";
@@ -17,8 +18,7 @@ class TauriSettingsRepository implements SettingsRepository {
 
   async load() {
     if (!isTauri()) return structuredClone(DEFAULT_APP_SETTINGS);
-    const stored = await (await this.store()).get<unknown>(SETTINGS_KEY);
-    return parseSettings(stored);
+    return parseSettings(await (await this.store()).get<unknown>(SETTINGS_KEY));
   }
 
   async save(settings: AppSettings) {
@@ -35,54 +35,29 @@ class TauriSettingsRepository implements SettingsRepository {
 }
 
 export function parseSettings(value: unknown): AppSettings {
-  if (!isRecord(value) || value.schemaVersion !== 1) {
+  if (!isRecord(value) || (value.schemaVersion !== 1 && value.schemaVersion !== 2)) {
     return structuredClone(DEFAULT_APP_SETTINGS);
   }
   const defaults = DEFAULT_APP_SETTINGS;
-  const serviceProfiles = Array.isArray(value.serviceProfiles)
-    ? value.serviceProfiles.flatMap(parseServiceProfile)
-    : [];
-  const profiles = serviceProfiles.length
-    ? serviceProfiles
-    : structuredClone(defaults.serviceProfiles);
-  const activeServiceProfileId =
-    typeof value.activeServiceProfileId === "string" &&
-    profiles.some((profile) => profile.id === value.activeServiceProfileId)
-      ? value.activeServiceProfileId
-      : profiles[0]!.id;
-  const audio = isRecord(value.audio) ? value.audio : {};
-  const interaction = isRecord(value.interaction) ? value.interaction : {};
-  const shortcut = isRecord(value.shortcut) ? value.shortcut : {};
-  const overlay = isRecord(value.overlay) ? value.overlay : {};
-  const inference = isRecord(value.inference) ? value.inference : {};
-  const developer = isRecord(value.developer) ? value.developer : {};
-  const interfaceSettings = isRecord(value.interface) ? value.interface : {};
-  const autoInjection = isRecord(interaction.autoInjection)
-    ? interaction.autoInjection
-    : {};
+  const audio = recordOrEmpty(value.audio);
+  const interaction = recordOrEmpty(value.interaction);
+  const shortcut = recordOrEmpty(value.shortcut);
+  const overlay = recordOrEmpty(value.overlay);
+  const developer = recordOrEmpty(value.developer);
+  const interfaceSettings = recordOrEmpty(value.interface);
+  const autoInjection = recordOrEmpty(interaction.autoInjection);
   return {
-    schemaVersion: 1,
-    activeServiceProfileId,
-    serviceProfiles: profiles,
+    schemaVersion: 2,
+    voiceApiOrigin: apiOriginValue(value.voiceApiOrigin, defaults.voiceApiOrigin),
     audio: {
       inputDeviceId:
         typeof audio.inputDeviceId === "string" ? audio.inputDeviceId : null,
-      language: stringValue(audio.language, defaults.audio.language),
-      audioResponseEnabled: booleanValue(
-        audio.audioResponseEnabled,
-        defaults.audio.audioResponseEnabled,
-      ),
-      voice: stringValue(audio.voice, defaults.audio.voice),
-      playbackVolume: numberValue(audio.playbackVolume, 0, 1, 1),
     },
     interaction: {
-      defaultMode: isVoiceMode(interaction.defaultMode)
-        ? interaction.defaultMode
-        : defaults.interaction.defaultMode,
+      defaultMode: interaction.defaultMode === "asr_llm" ? "asr_llm" : "asr_only",
       autoInjection: {
-        dictation: booleanValue(autoInjection.dictation, true),
-        assistant: booleanValue(autoInjection.assistant, false),
-        mixed: booleanValue(autoInjection.mixed, false),
+        asr_only: booleanValue(autoInjection.asr_only, true),
+        asr_llm: booleanValue(autoInjection.asr_llm, false),
       },
       injectionMaxCodePoints: numberValue(
         interaction.injectionMaxCodePoints,
@@ -103,60 +78,33 @@ export function parseSettings(value: unknown): AppSettings {
         ? overlay.position
         : defaults.overlay.position,
     },
-    inference: {
-      asrId: stringValue(inference.asrId, ""),
-      llmId: stringValue(inference.llmId, ""),
-      ttsId: stringValue(inference.ttsId, ""),
-      outputAudioId: stringValue(inference.outputAudioId, ""),
-    },
     developer: {
       enabled: booleanValue(developer.enabled, false),
       useWebViewContextMenu: booleanValue(developer.useWebViewContextMenu, false),
       showDiagnosticsPage: booleanValue(developer.showDiagnosticsPage, false),
     },
     interface: {
-      locale: isAppLocale(interfaceSettings.locale)
-        ? interfaceSettings.locale
-        : defaults.interface.locale,
+      locale:
+        interfaceSettings.locale === "en-US" ? "en-US" : defaults.interface.locale,
     },
   };
 }
 
-function isAppLocale(value: unknown): value is AppSettings["interface"]["locale"] {
-  return value === "zh-CN" || value === "en-US";
-}
-
-function parseServiceProfile(value: unknown) {
-  if (!isRecord(value)) return [];
-  const id = typeof value.id === "string" ? value.id.trim() : "";
-  const name = typeof value.name === "string" ? value.name.trim() : "";
-  const websocketUrl =
-    typeof value.websocketUrl === "string" ? value.websocketUrl.trim() : "";
-  if (!id || !name || !websocketUrl) return [];
-  return [
-    {
-      id,
-      name,
-      websocketUrl,
-      autoConnect: booleanValue(value.autoConnect, false),
-      authMode: value.authMode === "bearer" ? ("bearer" as const) : ("none" as const),
-      preferredPipeline:
-        value.preferredPipeline === "cascade" ||
-        value.preferredPipeline === "native_audio"
-          ? (value.preferredPipeline as "cascade" | "native_audio")
-          : ("auto" as const),
-      createdAt: numberValue(value.createdAt, 0, Number.MAX_SAFE_INTEGER, Date.now()),
-      updatedAt: numberValue(value.updatedAt, 0, Number.MAX_SAFE_INTEGER, Date.now()),
-    },
-  ];
+function recordOrEmpty(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function stringValue(value: unknown, fallback: string) {
-  return typeof value === "string" ? value : fallback;
+function apiOriginValue(value: unknown, fallback: string) {
+  if (typeof value !== "string") return fallback;
+  try {
+    return validateApiOrigin(value);
+  } catch {
+    return fallback;
+  }
 }
 
 function booleanValue(value: unknown, fallback: boolean) {
@@ -167,12 +115,6 @@ function numberValue(value: unknown, min: number, max: number, fallback: number)
   return typeof value === "number" && Number.isFinite(value)
     ? Math.min(max, Math.max(min, value))
     : fallback;
-}
-
-function isVoiceMode(
-  value: unknown,
-): value is AppSettings["interaction"]["defaultMode"] {
-  return value === "dictation" || value === "assistant" || value === "mixed";
 }
 
 function isShortcutBinding(

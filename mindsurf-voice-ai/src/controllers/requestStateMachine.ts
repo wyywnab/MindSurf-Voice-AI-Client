@@ -14,17 +14,23 @@ const NORMAL_TRANSITIONS: Record<
   RequestLifecycleState,
   ReadonlySet<RequestLifecycleState>
 > = {
-  idle: new Set(["preparing"]),
-  preparing: new Set(["recording", "cancelling", "failed"]),
+  idle: new Set(["preparing", "starting"]),
+  preparing: new Set(["starting", "cancelling", "failed"]),
+  starting: new Set(["recording", "cancelling", "failed"]),
   recording: new Set(["committing", "cancelling", "failed"]),
-  committing: new Set(["recognizing", "cancelling", "failed"]),
-  recognizing: new Set(["generating", "completed", "cancelling", "failed"]),
-  generating: new Set(["playing", "completed", "cancelling", "failed"]),
-  playing: new Set(["completed", "cancelling", "failed"]),
-  completed: new Set(["preparing"]),
-  cancelling: new Set(["cancelled", "failed"]),
-  cancelled: new Set(["preparing"]),
-  failed: new Set(["preparing"]),
+  committing: new Set(["processing_asr_final", "cancelling", "failed"]),
+  processing_asr_final: new Set([
+    "processing_llm",
+    "ready_to_commit",
+    "cancelling",
+    "failed",
+  ]),
+  processing_llm: new Set(["ready_to_commit", "cancelling", "failed"]),
+  ready_to_commit: new Set(["completed", "cancelling", "failed"]),
+  completed: new Set(["preparing", "starting"]),
+  cancelling: new Set(["completed", "cancelled", "failed"]),
+  cancelled: new Set(["preparing", "starting"]),
+  failed: new Set(["preparing", "starting"]),
 };
 
 export class InvalidRequestTransitionError extends Error {
@@ -56,8 +62,7 @@ export function createRequestTransition(
   reason: string,
   now: () => number = () => performance.now(),
 ): RequestTransition {
-  if (!canTransitionRequest(from, to)) {
+  if (!canTransitionRequest(from, to))
     throw new InvalidRequestTransitionError(from, to);
-  }
   return { from, to, reason, atMonotonicMs: now() };
 }

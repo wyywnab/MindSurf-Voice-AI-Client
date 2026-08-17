@@ -1,10 +1,21 @@
 mod commands;
 mod error;
 
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -14,6 +25,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            let _ = commands::credentials::purge_obsolete_credentials(app.handle());
             let _ = commands::diagnostics::initialize(app.handle());
             commands::shortcuts::initialize(app.handle().clone());
             commands::overlay::initialize(app)?;
@@ -30,10 +42,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
-            commands::credentials::clear_service_token,
-            commands::credentials::get_credential_status,
-            commands::credentials::get_service_token,
-            commands::credentials::save_service_token,
+            commands::credentials::get_refresh_token,
+            commands::credentials::get_refresh_token_status,
+            commands::credentials::save_refresh_token,
+            commands::credentials::clear_refresh_token,
             commands::diagnostics::export_diagnostics,
             commands::diagnostics::clear_diagnostic_logs,
             commands::diagnostics::open_diagnostic_log_directory,

@@ -1,90 +1,80 @@
 # MindSurf Voice AI 客户端交付说明
 
-> 更新日期：2026-08-04
-> 交付范围：Phase 2 M1-M4 Windows/macOS 客户端及联调 Mock
+> 更新日期：2026-08-17
+>
+> 协议基线：冻结的 Voice API v2
+>
+> 当前范围：Phase 3 M1-M5 客户端、自动化验证与本地 Mock；跨平台人工签收待完成
 
-## 1. 交付定位
+## 已交付
 
-本仓库交付 MindSurf Voice AI 系统中的客户端，负责用户交互、麦克风采集、音频上传、结果展示、文本注入和语音播放。
+- Tauri 2 + Vue 3 桌面客户端；
+- 系统浏览器 Authorization Code + PKCE、深链与单实例回跳；
+- refresh token Keychain 保存、轮换、启动恢复与登出清理；
+- HTTP user、quota、usage、capabilities 和 realtime ticket；
+- `mindsurf.voice.v2` 长连接、hello、心跳、关闭码策略和新 ticket 重连；
+- `asr_only` / `asr_llm` 单轮文本请求与 48 字节 INPUT_PCM 上行帧；
+- accepted 回显校验、commit 统计、文本 stage/sequence、final/done 双确认和取消竞态；
+- Windows/macOS 录音、麦克风选择、全局快捷键、悬浮窗、系统托盘与 Unicode 文本注入；
+- 设置 schema v2、脱敏诊断、日志轮转和清理本地数据；
+- HTTP + ticket + WebSocket v2 本地 Mock 与可配置故障注入；
+- 前端、Rust、Mock 和冻结协议自动化质量门。
 
-仓库中的 Mock 服务用于客户端开发和接口验证。
+当前产品只输出文本，不包含多轮对话和服务端下行音频。接口权威入口为
+[docs/v2](./v2/README.md)。
 
-## 2. 技术栈
+## Mock 交付
 
-| 模块 | 技术 |
-|---|---|
-| 桌面框架 | Tauri 2、Rust 2021 |
-| 前端 | Vue 3、TypeScript、Vite |
-| 原生桌面能力 | Windows API、macOS CoreGraphics/AppKit/Accessibility、Carbon 全局热键、文本注入 |
-| 音频处理 | Web Audio API、AVAudioRecorder（macOS 原生）、重采样、PCM16 编码与分帧 |
-| 通信协议 | WebSocket、自定义 `mindsurf.voice.v1` 协议 |
-| 配置与凭据 | Tauri Store、AES-256-GCM、系统钥匙串 |
-| 本地 Mock | Node.js、`ws`、FFmpeg |
-| 工程质量 | Vitest、ESLint、Prettier、vue-tsc、Cargo |
+`mindsurf-voice-mock` 提供全部 9 个 OpenAPI operation 对应路径、PKCE/token 生命周期、内存账户与
+额度、用量分页、一次性 ticket、长期 WebSocket 和两种请求模式。正常流程和故障注入均不依赖
+正式后端、数据库或 FFmpeg。
 
-## 3. 客户端功能介绍
+启动与故障列表见 [Mock README](../mindsurf-voice-mock/README.md)。
 
-客户端提供三种工作模式：
+## 自动化验证
 
-| 模式 | 说明 |
-|---|---|
-| 听写模式 | 将语音识别为文字，并注入当前光标位置 |
-| 助手模式 | 将语音作为问题，流式展示并播放助手回复 |
-| 混合模式 | 同时保留识别文本和助手回复 |
+```bash
+npm run validate:protocol-v2
 
-默认按住快捷键开始录音，松开后提交；按 `Escape` 可以取消当前请求。客户端还提供连接状态、录音悬浮窗、音量反馈、系统托盘、中英文界面切换和快捷键录入配置。
+cd mindsurf-voice-mock
+npm test
 
-![客户端主界面](./images/image1.png)
+cd ../mindsurf-voice-ai
+npm run check
+npm run build
 
-![录音悬浮窗](./images/imgae2.png)
-
-## 4. 客户端已实现
-
-- Tauri + Vue 桌面应用基础框架。
-- 听写、助手、混合三种模式及请求状态机管理。
-- 浏览器 AudioWorklet 与 macOS AVAudioRecorder 原生双录音后端。
-- 麦克风采集、音量计算、16 kHz 单声道 PCM16 重采样与 20 ms 分帧。
-- WebSocket 握手、控制消息、二进制音频帧、心跳、超时和自动重连。
-- 多服务档案的新建、复制、切换、删除、自动连接、连通性测试及本机 `ws://`/远程 `wss://` 安全校验。
-- Bearer Token 应用层鉴权、AES-256-GCM 加密落盘及鉴权失败停止重连。
-- Windows/macOS 多麦克风输入、识别语言、语音回复开关、音色和播放音量配置。
-- 连接、请求、设置和诊断状态域拆分，以及 VoiceRequestController/RecordingController/OverlaySyncController 编排。
-- 请求关键节点时间线、阶段耗时、音频收发/underrun/重连摘要和唯一终态跟踪。
-- Rust 结构化文件日志、5 MiB x 5 文件轮转、时间/级别/模块筛选、清理和脱敏 ZIP 诊断导出。
-- ASR 与 LLM 文本的流式接收和展示。
-- TTS 音频分片缓冲、连续播放和停止。
-- Windows/macOS 全局按住说话快捷键及快捷键实际按键录入、规范化、冲突检查与注册失败回滚。
-- Windows SendInput Unicode 文本注入。
-- macOS Accessibility API 与 CGEvent Unicode 文本注入及权限引导。
-- macOS 跨 Space 非激活悬浮窗、菜单栏托盘和多显示器定位。
-- macOS 原生 AVAudioRecorder 录音及原生电平表。
-- 中英文界面语言切换及应用菜单、托盘菜单本地化。
-- 录音悬浮窗、系统托盘、权限和错误提示。
-- 请求提交、取消及断线后的状态清理。
-- 遵循当前协议的本地 Mock 服务及测试音频输出。
-- Mock 19 类可配置故障注入（握手/鉴权/推理/协议/连接异常）。
-- 前端音频、协议、状态机、设置校验、文本注入、WebSocket 和控制器集成测试。
-- Rust Token 加解密、日志轮转/脱敏、快捷键解析和文本注入单元测试。
-
-## 5. 客户端待实现
-
-- 接入正式服务端凭据签发与轮换流程。
-- 按需求进行 Linux 跨平台适配。
-- 接入正式服务地址，替换本地 Mock。
-- 配置正式升级服务地址和更新签名公钥。
-- 使用正式 Apple Developer 凭据完成签名、公证及发布验证。
-
-## 6. 交付内容
-
-```text
-mindsurf-voice-ai/               Tauri 桌面客户端源码
-mindsurf-voice-mock/             客户端联调用 WebSocket Mock
-README.md                        项目启动说明
-docs/DELIVERY.md                 客户端交付说明（本文件）
-docs/MACOS.md                    macOS 适配与发布说明
-docs/WS_PROTOCOL.md              WebSocket 协议
-docs/PHASE1_IMPLEMENTATION.md    Phase 1 实现基线
-docs/PHASE2_IMPLEMENTATION.md    Phase 2 实施计划与状态
+cd src-tauri
+cargo fmt --all -- --check
+cargo check
+cargo test
 ```
 
-运行方法及环境要求见 [`README.md`](../README.md)，接口说明见 [`WS_PROTOCOL.md`](./WS_PROTOCOL.md)。
+自动化覆盖 OpenAPI/Schema/文档示例/测试向量、客户端状态机与控制器、Mock HTTP/WS 全链路、
+Rust 原生命令和生产构建。
+
+## 待跨平台人工签收
+
+以下内容必须在真实 Windows 和 macOS 桌面环境完成，当前不能由本地自动化替代：
+
+- 系统浏览器登录回跳、重复/过期回跳和启动恢复；
+- Keychain/Windows Credential Manager 的 token 写入、轮换、登出和旧凭据清理；
+- 麦克风权限、设备切换、长录音、取消和原生录音回退；
+- 全局按住说话快捷键、冲突提示和权限恢复；
+- 多显示器/全屏 Space 悬浮窗与托盘模式切换；
+- 两种模式的 final/done 一次性文本注入，以及取消、失败、断线时零注入；
+- 睡眠/唤醒、网络切换和连续请求下的长期连接恢复；
+- 签名、公证、安装包和正式升级渠道。
+
+平台操作细节见 [macOS 说明](./MACOS.md) 和
+[Phase 3 实施文档](./PHASE3_IMPLEMENTATION.md)。
+
+## 交付内容
+
+```text
+mindsurf-voice-ai/               桌面客户端源码
+mindsurf-voice-mock/             Voice API v2 本地 Mock 与集成测试
+docs/v2/                         冻结协议、OpenAPI、Schema 和测试向量
+docs/PHASE3_IMPLEMENTATION.md    当前实施状态
+docs/PHASE1_IMPLEMENTATION.md    已取代的历史记录
+docs/PHASE2_IMPLEMENTATION.md    已取代的历史记录
+```

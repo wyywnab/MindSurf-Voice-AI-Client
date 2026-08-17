@@ -3,5 +3,20 @@
   "identifier": "default",
   "description": "Settings, storage, and application capability for the main window",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "store:default"]
+  "permissions": [
+    "core:default",
+    "deep-link:default",
+    "dialog:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://**" },
+        { "url": "http://127.0.0.1:*" },
+        { "url": "http://localhost:*" },
+        { "url": "http://[::1]:*" }
+      ]
+    },
+    "opener:allow-open-url",
+    "store:default"
+  ]
 }

@@ -2,11 +2,8 @@ import type { RequestTimelineEvent, TimelineMetric } from "../../types/diagnosti
 
 const METRIC_DEFINITIONS = [
   ["录音准备", "recording.prepare_started", "recording.started"],
-  ["提交确认", "input.commit_sent", "input.committed"],
-  ["最终识别", "input.commit_sent", "asr.final"],
-  ["首 Token", "input.commit_sent", "assistant.first_token"],
-  ["首音频到达", "input.commit_sent", "output.first_chunk"],
-  ["首次播放", "input.commit_sent", "output.playback_started"],
+  ["请求接受", "request.start", "recording.started"],
+  ["处理完成", "recording.stopped", "request.done"],
 ] as const;
 
 export function calculateTimelineMetrics(timeline: {

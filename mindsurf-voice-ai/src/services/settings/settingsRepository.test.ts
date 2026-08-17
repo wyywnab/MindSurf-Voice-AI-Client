@@ -4,75 +4,39 @@ import { DEFAULT_APP_SETTINGS } from "../../types/settings";
 import { parseSettings } from "./settingsRepository";
 
 describe("parseSettings", () => {
-  it("uses new defaults for an absent or obsolete schema", () => {
+  it("uses v2 defaults for absent or unsupported settings", () => {
     expect(parseSettings(null)).toEqual(DEFAULT_APP_SETTINGS);
     expect(parseSettings({ schemaVersion: 0 })).toEqual(DEFAULT_APP_SETTINGS);
   });
 
-  it("falls back when the active service profile is missing", () => {
+  it("bounds the injection limit and accepts only v2 modes", () => {
     const settings = structuredClone(DEFAULT_APP_SETTINGS);
-    settings.activeServiceProfileId = "missing";
-    expect(parseSettings(settings).activeServiceProfileId).toBe("local-mock");
-  });
-
-  it("bounds playback volume and injection length", () => {
-    const settings = structuredClone(DEFAULT_APP_SETTINGS);
-    settings.audio.playbackVolume = 4;
     settings.interaction.injectionMaxCodePoints = 99_999;
+    settings.interaction.defaultMode = "asr_llm";
     const parsed = parseSettings(settings);
-    expect(parsed.audio.playbackVolume).toBe(1);
     expect(parsed.interaction.injectionMaxCodePoints).toBe(8_000);
+    expect(parsed.interaction.defaultMode).toBe("asr_llm");
   });
 
-  it("loads developer mode only when explicitly enabled", () => {
-    const settings = structuredClone(DEFAULT_APP_SETTINGS);
-    settings.developer.enabled = true;
-    settings.developer.useWebViewContextMenu = true;
-    settings.developer.showDiagnosticsPage = true;
-    expect(parseSettings(settings).developer).toEqual({
-      enabled: true,
-      useWebViewContextMenu: true,
-      showDiagnosticsPage: true,
+  it("migrates safe common fields from schema 1 without preserving removed fields", () => {
+    const parsed = parseSettings({
+      schemaVersion: 1,
+      voiceApiOrigin: "https://voice.example.com",
+      audio: { inputDeviceId: "microphone" },
+      interaction: { injectionMaxCodePoints: 512 },
+      overlay: { enabled: false, position: "left" },
+      shortcut: { enabled: false, binding: "control+shift+KeyV" },
+      interface: { locale: "en-US" },
     });
-
-    const legacy = structuredClone(DEFAULT_APP_SETTINGS) as unknown as Record<
-      string,
-      unknown
-    >;
-    delete legacy.developer;
-    expect(parseSettings(legacy).developer).toEqual(DEFAULT_APP_SETTINGS.developer);
-  });
-
-  it("loads a supported interface locale and falls back for legacy settings", () => {
-    const settings = structuredClone(DEFAULT_APP_SETTINGS);
-    settings.interface.locale = "en-US";
-    expect(parseSettings(settings).interface.locale).toBe("en-US");
-
-    const legacy = structuredClone(DEFAULT_APP_SETTINGS) as unknown as Record<
-      string,
-      unknown
-    >;
-    delete legacy.interface;
-    expect(parseSettings(legacy).interface.locale).toBe("zh-CN");
-  });
-
-  it("keeps valid service profiles and rejects malformed entries", () => {
-    const settings = structuredClone(DEFAULT_APP_SETTINGS) as unknown as Record<
-      string,
-      unknown
-    >;
-    settings.serviceProfiles = [
-      {
-        ...DEFAULT_APP_SETTINGS.serviceProfiles[0],
-        id: "production",
-        name: "正式服务",
-        websocketUrl: "wss://voice.example.com/v1/voice/ws",
-      },
-      { id: "", name: "无效", websocketUrl: "" },
-    ];
-    settings.activeServiceProfileId = "production";
-    const parsed = parseSettings(settings);
-    expect(parsed.activeServiceProfileId).toBe("production");
-    expect(parsed.serviceProfiles).toHaveLength(1);
+    expect(parsed).toMatchObject({
+      schemaVersion: 2,
+      voiceApiOrigin: "https://voice.example.com",
+      audio: { inputDeviceId: "microphone" },
+      interaction: { defaultMode: "asr_only", injectionMaxCodePoints: 512 },
+      overlay: { enabled: false, position: "left" },
+      interface: { locale: "en-US" },
+    });
+    expect(parsed).not.toHaveProperty("serviceProfiles");
+    expect(parsed.audio).toEqual({ inputDeviceId: "microphone" });
   });
 });

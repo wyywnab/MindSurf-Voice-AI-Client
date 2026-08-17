@@ -1,7 +1,7 @@
 import type { RequestLifecycleState } from "./request";
-import type { VoiceInteractionMode } from "./voice";
+import type { VoiceModeV2 } from "./httpApi";
 
-export type TimelineStage = "input" | "asr" | "llm" | "tts" | "output" | "request";
+export type TimelineStage = "input" | "asr" | "llm" | "output" | "request";
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface RequestTimelineEvent {
@@ -16,14 +16,12 @@ export interface RequestTimelineEvent {
 
 export interface RequestTimeline {
   requestId: string;
-  mode: VoiceInteractionMode;
+  mode: VoiceModeV2;
   startedAtMs: number;
   terminalState: RequestLifecycleState | null;
   recordingDurationMs: number | null;
   audioFramesSent: number;
   audioBytesSent: number;
-  audioChunksReceived: number;
-  underrunCount: number;
   reconnectCount: number;
   events: RequestTimelineEvent[];
 }

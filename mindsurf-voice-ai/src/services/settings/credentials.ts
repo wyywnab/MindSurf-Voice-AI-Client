@@ -6,40 +6,34 @@ interface CredentialStatus {
   configured: boolean;
 }
 
-export async function getCredentialStatus(profileId: string) {
+export async function getRefreshTokenStatus() {
   if (!isTauri()) return false;
   const result = await invoke<CommandResult<CredentialStatus>>(
-    "get_credential_status",
-    { profileId },
+    "get_refresh_token_status",
   );
   if (!result.ok) throw new Error(result.error.message);
   return result.data.configured;
 }
 
-export async function saveServiceToken(profileId: string, token: string) {
+export async function readRefreshToken() {
+  if (!isTauri()) return null;
+  const result = await invoke<CommandResult<string | null>>("get_refresh_token");
+  if (!result.ok) throw new Error(result.error.message);
+  return result.data;
+}
+
+export async function saveRefreshToken(token: string) {
   if (!isTauri()) return false;
-  const result = await invoke<CommandResult<CredentialStatus>>("save_service_token", {
-    profileId,
+  const result = await invoke<CommandResult<CredentialStatus>>("save_refresh_token", {
     token,
   });
   if (!result.ok) throw new Error(result.error.message);
   return result.data.configured;
 }
 
-export async function clearServiceToken(profileId: string) {
+export async function clearRefreshToken() {
   if (!isTauri()) return false;
-  const result = await invoke<CommandResult<CredentialStatus>>("clear_service_token", {
-    profileId,
-  });
+  const result = await invoke<CommandResult<CredentialStatus>>("clear_refresh_token");
   if (!result.ok) throw new Error(result.error.message);
   return result.data.configured;
-}
-
-export async function readServiceTokenForConnection(profileId: string) {
-  if (!isTauri()) return null;
-  const result = await invoke<CommandResult<string | null>>("get_service_token", {
-    profileId,
-  });
-  if (!result.ok) throw new Error(result.error.message);
-  return result.data;
 }

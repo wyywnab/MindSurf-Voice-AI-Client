@@ -8,15 +8,15 @@ import {
 } from "./requestStateMachine";
 
 describe("requestStateMachine", () => {
-  it("accepts the normal assistant request path", () => {
+  it("accepts the v2 ASR and LLM request path", () => {
     const path = [
       "idle",
-      "preparing",
+      "starting",
       "recording",
       "committing",
-      "recognizing",
-      "generating",
-      "playing",
+      "processing_asr_final",
+      "processing_llm",
+      "ready_to_commit",
       "completed",
     ] as const;
 
@@ -27,7 +27,7 @@ describe("requestStateMachine", () => {
 
   it("rejects events that try to leave a terminal state", () => {
     expect(() =>
-      createRequestTransition("completed", "playing", "late audio", () => 42),
+      createRequestTransition("completed", "recording", "late audio", () => 42),
     ).toThrow(InvalidRequestTransitionError);
   });
 
@@ -41,17 +41,20 @@ describe("requestStateMachine", () => {
   it("allows cancellation and failure from every active state", () => {
     for (const state of [
       "preparing",
+      "starting",
       "recording",
       "committing",
-      "recognizing",
-      "generating",
-      "playing",
+      "processing_asr_final",
+      "processing_llm",
+      "ready_to_commit",
     ] as const) {
       expect(canTransitionRequest(state, "cancelling")).toBe(true);
       expect(canTransitionRequest(state, "failed")).toBe(true);
     }
     expect(canTransitionRequest("cancelling", "cancelled")).toBe(true);
-    expect(canTransitionRequest("cancelling", "completed")).toBe(false);
+    // Voice v2 cancel can lose the server-side success race. The request still
+    // reaches completed, while commit eligibility remains permanently revoked.
+    expect(canTransitionRequest("cancelling", "completed")).toBe(true);
   });
 
   it("records deterministic transition metadata", () => {

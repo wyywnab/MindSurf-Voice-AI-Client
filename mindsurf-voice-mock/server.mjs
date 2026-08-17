@@ -1,747 +1,1332 @@
-import { randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
-import { dirname, join } from "node:path";
+import {
+  createHash,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from "node:crypto";
+import { createServer as createHttpServer } from "node:http";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { WebSocket, WebSocketServer } from "ws";
 import { parseFaultConfiguration, printFaultHelp } from "./faults.mjs";
 
-if (process.argv.includes("--help")) {
-  console.log(printFaultHelp());
-  process.exit(0);
-}
+export const SUBPROTOCOL = "mindsurf.voice.v2";
+export const WEBSOCKET_PATH = "/v2/voice/ws";
+export const CAPABILITIES_REVISION = "mock-cap-2026-08-17-1";
 
-const port = Number.parseInt(process.env.PORT ?? "8000", 10);
-const path = "/v1/voice/ws";
-const subprotocol = "mindsurf.voice.v1";
-const outputSampleRate = 24_000;
-const outputChunkDurationMs = 80;
-const outputSendIntervalMs = 40;
-const outputChunkBytes = (outputSampleRate * outputChunkDurationMs * 2) / 1_000;
-const requiredToken = process.env.MOCK_AUTH_TOKEN ?? "";
-const expiredToken = process.env.MOCK_EXPIRED_TOKEN ?? "expired-token";
-const faultConfig = parseFaultConfiguration();
-const mockPcm = loadMockAudio();
+const ACCESS_LIFETIME_SECONDS = 900;
+const REFRESH_LIFETIME_SECONDS = 86_400;
+const TICKET_LIFETIME_MS = 30_000;
+const MAX_CONTROL_BYTES = 65_536;
+const MAX_BINARY_BYTES = 65_584;
+const MAX_RECORDING_MS = 120_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const HEARTBEAT_TIMEOUT_MS = 5_000;
+const INPUT_IDLE_TIMEOUT_MS = 10_000;
+const USER = Object.freeze({
+  user_id: "019d643e-1550-761a-b7a0-471791bcaf01",
+  display_name: "Local Mock User",
+  login: "mock@mindsurf.local",
+  status: "active",
+  plan: "mock",
+  created_at_ms: 1_786_723_200_000,
+});
 
-const server = new WebSocketServer({
-  host: "127.0.0.1",
-  port,
-  path,
-  handleProtocols(protocols) {
-    return protocols.has(subprotocol) ? subprotocol : false;
+const CAPABILITIES = Object.freeze({
+  protocol_version: 2,
+  revision: CAPABILITIES_REVISION,
+  realtime: {
+    websocket_path: WEBSOCKET_PATH,
+    ticket_path: "/v2/realtime/tickets",
+    subprotocol: SUBPROTOCOL,
+    persistent: true,
+  },
+  modes: ["asr_only", "asr_llm"],
+  pipelines: [
+    {
+      id: "mock-text-pipeline",
+      name: "Mock Text Pipeline",
+      description: "Deterministic local ASR and LLM text processing",
+      modes: ["asr_only", "asr_llm"],
+      max_recording_ms: 120_000,
+      asr_options: ["mock-asr"],
+      llm_options: ["mock-llm"],
+      generation_controls: {
+        temperature: { type: "number", minimum: 0, maximum: 1, default: 0.2 },
+        max_tokens: { type: "integer", minimum: 1, maximum: 512, default: 128 },
+      },
+    },
+  ],
+  asr_options: [{ id: "mock-asr", name: "Mock ASR" }],
+  llm_options: [{ id: "mock-llm", name: "Mock LLM" }],
+  recognition_languages: ["auto", "zh-CN", "en-US"],
+  defaults: {
+    asr_only: {
+      pipeline: "mock-text-pipeline",
+      selection: { asr: "mock-asr", llm: null },
+    },
+    asr_llm: {
+      pipeline: "mock-text-pipeline",
+      selection: { asr: "mock-asr", llm: "mock-llm" },
+    },
   },
 });
 
-server.on("connection", (socket) => {
-  console.log("Client connected.");
-  const state = {
-    handshaken: false,
-    lastPongNonce: null,
-    request: null,
-  };
+export function createMockServer(options = {}) {
+  const host = options.host ?? "127.0.0.1";
+  const port = options.port ?? 8000;
+  const faults = options.faults ?? parseFaultConfiguration();
+  const state = createState(faults);
+  const websocketServer = new WebSocketServer({
+    noServer: true,
+    handleProtocols(protocols) {
+      return protocols.has(SUBPROTOCOL) ? SUBPROTOCOL : false;
+    },
+  });
+  const server = createHttpServer((request, response) => {
+    void handleHttpRequest(state, request, response).catch((error) => {
+      console.error("Mock HTTP request failed:", safeErrorName(error));
+      if (!response.headersSent) {
+        sendHttpError(
+          response,
+          500,
+          "server_error",
+          "Mock internal error",
+          true,
+        );
+      } else response.destroy();
+    });
+  });
 
-  const heartbeat = setInterval(() => {
-    if (!state.handshaken || socket.readyState !== WebSocket.OPEN) {
-      return;
-    }
+  server.on("upgrade", (request, socket, head) => {
+    handleUpgrade(state, websocketServer, request, socket, head);
+  });
+  websocketServer.on("connection", (socket) => handleWebSocket(state, socket));
 
-    const nonce = randomUUID();
-    state.lastPongNonce = null;
-    send(socket, "session.ping", null, { nonce });
-
-    setTimeout(() => {
-      if (
-        socket.readyState === WebSocket.OPEN &&
-        state.lastPongNonce !== nonce
-      ) {
-        socket.close(1_001, "heartbeat timeout");
-      }
-    }, 10_000);
-  }, 15_000);
-
-  socket.on("message", (data, isBinary) => {
-    try {
-      if (isBinary) {
-        handleAudioFrame(socket, state, data);
-      } else {
-        handleControlMessage(socket, state, data.toString("utf8"));
-      }
-    } catch (error) {
-      sendError(
-        socket,
-        state.request?.id ?? null,
-        "internal_error",
-        error instanceof Error ? error.message : "mock server error",
-        true,
+  return {
+    host,
+    port,
+    state,
+    async start() {
+      await new Promise((resolveStart, reject) => {
+        server.once("error", reject);
+        server.listen(port, host, () => {
+          server.off("error", reject);
+          resolveStart();
+        });
+      });
+      const address = server.address();
+      return typeof address === "object" && address ? address.port : port;
+    },
+    async close() {
+      for (const client of websocketServer.clients) client.terminate();
+      await new Promise((resolveClose, reject) =>
+        server.close((error) => (error ? reject(error) : resolveClose())),
       );
-    }
-  });
-
-  socket.on("close", () => {
-    clearInterval(heartbeat);
-  });
-});
-
-server.on("listening", () => {
-  console.log(`MindSurf mock listening on ws://127.0.0.1:${port}${path}`);
-  if (faultConfig.names.size) {
-    console.log(`Enabled faults: ${[...faultConfig.names].join(", ")}`);
-  }
-});
-
-function hasFault(name) {
-  return faultConfig.names.has(name);
+    },
+  };
 }
 
-function handleControlMessage(socket, state, raw) {
-  let message;
-  try {
-    message = JSON.parse(raw);
-  } catch {
-    sendError(socket, null, "invalid_json", "JSON 解析失败", false);
-    return;
+function createState(faults) {
+  return {
+    faults,
+    authorizationCodes: new Map(),
+    accessTokens: new Map(),
+    refreshTokens: new Map(),
+    rotatedRefreshTokens: new Set(),
+    idempotency: new Map(),
+    tickets: new Map(),
+    usedRequestIds: new Set(),
+    usage: [],
+    creditsLimit: 10_000,
+    creditsUsed: 0,
+    creditsReserved: 0,
+    destroyedTokenResponse: false,
+    destroyedRefreshResponse: false,
+  };
+}
+
+async function handleHttpRequest(state, request, response) {
+  const url = new URL(request.url ?? "/", "http://mock.local");
+  if (request.method === "GET" && url.pathname === "/v2/auth/authorize") {
+    return authorize(state, url, response);
+  }
+  if (request.method === "POST" && url.pathname === "/v2/auth/token") {
+    return exchangeToken(state, request, response);
+  }
+  if (request.method === "POST" && url.pathname === "/v2/auth/refresh") {
+    return refreshToken(state, request, response);
   }
 
-  if (!state.handshaken) {
-    if (message.type !== "client.hello") {
-      sendError(socket, null, "handshake_required", "需要先握手", true);
-      socket.close(4_001, "handshake required");
-      return;
-    }
-
-    const auth = message.payload?.auth;
-    if (hasFault("auth_missing")) {
-      sendError(
-        socket,
-        null,
-        "authentication_required",
-        "服务需要 Token",
-        true,
-      );
-      socket.close(4_003, "authentication required");
-      return;
-    }
-    if (hasFault("auth_invalid")) {
-      sendError(socket, null, "authentication_failed", "Token 无效", true);
-      socket.close(4_003, "authentication failed");
-      return;
-    }
-    if (hasFault("auth_expired")) {
-      sendError(socket, null, "token_expired", "Token 已过期", true);
-      socket.close(4_003, "token expired");
-      return;
-    }
-    if (requiredToken && !auth) {
-      sendError(
-        socket,
-        null,
-        "authentication_required",
-        "服务需要 Token",
-        true,
-      );
-      socket.close(4_003, "authentication required");
-      return;
-    }
-    if (auth?.scheme !== undefined && auth.scheme !== "bearer") {
-      sendError(socket, null, "authentication_failed", "鉴权方式无效", true);
-      socket.close(4_003, "authentication failed");
-      return;
-    }
-    if (auth?.token === expiredToken) {
-      sendError(socket, null, "token_expired", "Token 已过期", true);
-      socket.close(4_003, "token expired");
-      return;
-    }
-    if (requiredToken && auth?.token !== requiredToken) {
-      sendError(socket, null, "authentication_failed", "Token 无效", true);
-      socket.close(4_003, "authentication failed");
-      return;
-    }
-
-    if (hasFault("handshake_timeout")) return;
-    const completeHandshake = () => {
-      if (socket.readyState !== WebSocket.OPEN) return;
-      state.handshaken = true;
-      console.log("Protocol handshake completed.");
-      send(socket, "server.hello", null, createServerHello());
-    };
-    if (hasFault("handshake_delay")) {
-      setTimeout(completeHandshake, faultConfig.delayMs);
-    } else {
-      completeHandshake();
-    }
+  const session = authenticate(state, request, response);
+  if (!session) return;
+  if (request.method === "POST" && url.pathname === "/v2/auth/logout") {
+    revokeSession(state, session.sessionId);
+    response.writeHead(204).end();
     return;
   }
+  if (request.method === "GET" && url.pathname === "/v2/users/me") {
+    return sendData(response, USER);
+  }
+  if (request.method === "GET" && url.pathname === "/v2/quota") {
+    return sendData(response, quotaFor(state));
+  }
+  if (request.method === "GET" && url.pathname === "/v2/usage") {
+    return listUsage(state, url, response);
+  }
+  if (request.method === "GET" && url.pathname === "/v2/capabilities") {
+    return sendData(response, CAPABILITIES);
+  }
+  if (request.method === "POST" && url.pathname === "/v2/realtime/tickets") {
+    return issueTicket(state, session, response);
+  }
+  sendHttpError(response, 404, "invalid_request", "Unknown API route", false);
+}
 
-  switch (message.type) {
-    case "session.pong":
-      state.lastPongNonce = message.payload?.nonce ?? null;
-      break;
-    case "request.start":
-      startRequest(socket, state, message);
-      break;
-    case "input.commit":
-      commitInput(socket, state, message);
-      break;
-    case "request.cancel":
-      cancelRequest(socket, state, message);
-      break;
-    case "error":
-      break;
-    default:
-      sendError(
-        socket,
-        message.request_id ?? null,
-        "unsupported_message_type",
-        `不支持消息类型 ${message.type}`,
+function authorize(state, url, response) {
+  const stateValue = url.searchParams.get("state") ?? "";
+  const challenge = url.searchParams.get("code_challenge") ?? "";
+  const valid =
+    url.searchParams.get("client_id") === "mindsurf-desktop" &&
+    url.searchParams.get("response_type") === "code" &&
+    url.searchParams.get("redirect_uri") === "mindsurf://auth/callback" &&
+    url.searchParams.get("code_challenge_method") === "S256" &&
+    /^[A-Za-z0-9_-]{43}$/.test(challenge) &&
+    /^[A-Za-z0-9_-]{43,512}$/.test(stateValue) &&
+    (!url.searchParams.has("prompt") ||
+      ["login", "select_account"].includes(url.searchParams.get("prompt")));
+  if (!valid) {
+    sendHttpError(
+      response,
+      400,
+      "invalid_request",
+      "Invalid authorization request",
+      false,
+    );
+    return;
+  }
+  const callback = new URL("mindsurf://auth/callback");
+  callback.searchParams.set("state", stateValue);
+  if (hasFault(state, "authorize_rejected")) {
+    callback.searchParams.set("error", "access_denied");
+  } else {
+    const code = opaqueToken(32);
+    state.authorizationCodes.set(code, {
+      challenge,
+      expiresAtMs: Date.now() + 60_000,
+    });
+    callback.searchParams.set("code", code);
+  }
+  response.writeHead(302, {
+    Location: callback.toString(),
+    "Cache-Control": "no-store",
+  });
+  response.end();
+}
+
+async function exchangeToken(state, request, response) {
+  const idempotencyKey = idempotencyHeader(request, response);
+  if (!idempotencyKey) return;
+  const body = await readJson(request, response);
+  if (!body) return;
+  const replay = idempotentReplay(
+    state,
+    idempotencyKey,
+    "token",
+    body,
+    response,
+  );
+  if (replay) return;
+  if (!validAuthorizationCodeInput(body)) {
+    sendHttpError(
+      response,
+      400,
+      "invalid_request",
+      "Authorization token request is invalid",
+      false,
+    );
+    return;
+  }
+  const grant = state.authorizationCodes.get(body.code);
+  const verifierChallenge =
+    typeof body.code_verifier === "string"
+      ? sha256Base64Url(body.code_verifier)
+      : "";
+  if (
+    body.grant_type !== "authorization_code" ||
+    body.client_id !== "mindsurf-desktop" ||
+    body.redirect_uri !== "mindsurf://auth/callback" ||
+    !grant ||
+    grant.expiresAtMs <= Date.now() ||
+    !safeEqual(verifierChallenge, grant.challenge)
+  ) {
+    sendHttpError(
+      response,
+      400,
+      "authorization_grant_invalid",
+      "Authorization grant is invalid",
+      false,
+    );
+    return;
+  }
+  state.authorizationCodes.delete(body.code);
+  const data = createAuthData(state);
+  rememberIdempotency(state, idempotencyKey, "token", body, data);
+  if (
+    hasFault(state, "token_response_uncertain") &&
+    !state.destroyedTokenResponse
+  ) {
+    state.destroyedTokenResponse = true;
+    response.destroy();
+    return;
+  }
+  sendData(response, data);
+}
+
+async function refreshToken(state, request, response) {
+  const idempotencyKey = idempotencyHeader(request, response);
+  if (!idempotencyKey) return;
+  const body = await readJson(request, response);
+  if (!body) return;
+  const replay = idempotentReplay(
+    state,
+    idempotencyKey,
+    "refresh",
+    body,
+    response,
+  );
+  if (replay) return;
+  if (
+    Object.keys(body).length !== 1 ||
+    typeof body.refresh_token !== "string" ||
+    !body.refresh_token
+  ) {
+    sendHttpError(
+      response,
+      400,
+      "invalid_request",
+      "Refresh request is invalid",
+      false,
+    );
+    return;
+  }
+  if (hasFault(state, "refresh_token_reused")) {
+    sendHttpError(
+      response,
+      409,
+      "refresh_token_reused",
+      "Refresh token reuse detected",
+      false,
+    );
+    return;
+  }
+  const current = state.refreshTokens.get(body.refresh_token);
+  if (!current || current.expiresAtMs <= Date.now()) {
+    const code = state.rotatedRefreshTokens.has(body.refresh_token)
+      ? "refresh_token_reused"
+      : "authentication_failed";
+    sendHttpError(
+      response,
+      code === "refresh_token_reused" ? 409 : 401,
+      code,
+      "Refresh credential is invalid",
+      false,
+    );
+    return;
+  }
+  state.refreshTokens.delete(body.refresh_token);
+  state.rotatedRefreshTokens.add(body.refresh_token);
+  const data = createAuthData(state, current.sessionId);
+  rememberIdempotency(state, idempotencyKey, "refresh", body, data);
+  if (
+    hasFault(state, "refresh_response_uncertain") &&
+    !state.destroyedRefreshResponse
+  ) {
+    state.destroyedRefreshResponse = true;
+    response.destroy();
+    return;
+  }
+  sendData(response, data);
+}
+
+function createAuthData(state, existingSessionId = randomUUID()) {
+  const accessToken = opaqueToken(36);
+  const refreshToken = opaqueToken(48);
+  const now = Date.now();
+  state.accessTokens.set(accessToken, {
+    sessionId: existingSessionId,
+    expiresAtMs: now + ACCESS_LIFETIME_SECONDS * 1_000,
+  });
+  state.refreshTokens.set(refreshToken, {
+    sessionId: existingSessionId,
+    expiresAtMs: now + REFRESH_LIFETIME_SECONDS * 1_000,
+  });
+  return {
+    tokens: {
+      token_type: "Bearer",
+      access_token: accessToken,
+      expires_in: ACCESS_LIFETIME_SECONDS,
+      refresh_token: refreshToken,
+      refresh_expires_in: REFRESH_LIFETIME_SECONDS,
+    },
+    user: USER,
+  };
+}
+
+function authenticate(state, request, response) {
+  const authorization = request.headers.authorization ?? "";
+  const match = /^Bearer (\S+)$/.exec(authorization);
+  if (!match) {
+    sendHttpError(
+      response,
+      401,
+      "authentication_required",
+      "Bearer access token required",
+      false,
+    );
+    return null;
+  }
+  const session = state.accessTokens.get(match[1]);
+  if (!session) {
+    sendHttpError(
+      response,
+      401,
+      "authentication_failed",
+      "Access token is invalid",
+      false,
+    );
+    return null;
+  }
+  if (session.expiresAtMs <= Date.now()) {
+    sendHttpError(
+      response,
+      401,
+      "authentication_expired",
+      "Access token expired",
+      false,
+    );
+    return null;
+  }
+  return session;
+}
+
+function revokeSession(state, sessionId) {
+  for (const [token, session] of state.accessTokens) {
+    if (session.sessionId === sessionId) state.accessTokens.delete(token);
+  }
+  for (const [token, session] of state.refreshTokens) {
+    if (session.sessionId === sessionId) state.refreshTokens.delete(token);
+  }
+  for (const ticket of state.tickets.values()) {
+    if (ticket.sessionId === sessionId) ticket.revoked = true;
+  }
+}
+
+function listUsage(state, url, response) {
+  const fromMs = Number(url.searchParams.get("from_ms"));
+  const toMs = Number(url.searchParams.get("to_ms"));
+  const limit = Number(url.searchParams.get("limit") ?? 50);
+  if (
+    !Number.isSafeInteger(fromMs) ||
+    !Number.isSafeInteger(toMs) ||
+    toMs <= fromMs ||
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > 100
+  ) {
+    sendHttpError(
+      response,
+      400,
+      "invalid_request",
+      "Invalid usage query",
+      false,
+    );
+    return;
+  }
+  let offset = 0;
+  const cursor = url.searchParams.get("cursor");
+  if (cursor) {
+    try {
+      const parsed = JSON.parse(
+        Buffer.from(cursor, "base64url").toString("utf8"),
+      );
+      if (
+        parsed.from_ms !== fromMs ||
+        parsed.to_ms !== toMs ||
+        parsed.limit !== limit ||
+        !Number.isInteger(parsed.offset)
+      )
+        throw new Error();
+      offset = parsed.offset;
+    } catch {
+      sendHttpError(
+        response,
+        400,
+        "invalid_request",
+        "Invalid usage cursor",
         false,
       );
+      return;
+    }
   }
+  const matches = state.usage
+    .filter((item) => item.settled_at_ms >= fromMs && item.settled_at_ms < toMs)
+    .sort(
+      (a, b) =>
+        b.settled_at_ms - a.settled_at_ms ||
+        a.request_id.localeCompare(b.request_id),
+    );
+  const items = matches.slice(offset, offset + limit);
+  const nextOffset = offset + items.length;
+  const nextCursor =
+    nextOffset < matches.length
+      ? Buffer.from(
+          JSON.stringify({
+            from_ms: fromMs,
+            to_ms: toMs,
+            limit,
+            offset: nextOffset,
+          }),
+        ).toString("base64url")
+      : null;
+  sendData(response, { items, next_cursor: nextCursor });
 }
 
-function startRequest(socket, state, message) {
-  if (state.request) {
-    sendError(
-      socket,
-      message.request_id,
-      "request_already_active",
-      "已有活跃请求",
-      true,
-    );
+function issueTicket(state, session, response) {
+  const ticket = opaqueToken(36);
+  const expiresAtMs = hasFault(state, "ticket_expired")
+    ? Date.now() - 1
+    : Date.now() + TICKET_LIFETIME_MS;
+  state.tickets.set(ticket, {
+    sessionId: session.sessionId,
+    expiresAtMs,
+    consumed: hasFault(state, "ticket_consumed"),
+    revoked: false,
+  });
+  sendData(
+    response,
+    {
+      ticket,
+      expires_at_ms: expiresAtMs,
+      websocket_path: WEBSOCKET_PATH,
+      subprotocol: SUBPROTOCOL,
+    },
+    201,
+  );
+}
+
+function handleUpgrade(state, websocketServer, request, socket, head) {
+  const url = new URL(request.url ?? "/", "http://mock.local");
+  if (url.pathname !== WEBSOCKET_PATH)
+    return rejectUpgrade(socket, 400, "invalid_request");
+  if (
+    [...url.searchParams.keys()].some((key) => key !== "ticket") ||
+    url.searchParams.getAll("ticket").length !== 1
+  ) {
+    return rejectUpgrade(socket, 400, "invalid_request");
+  }
+  const origin = request.headers.origin;
+  if (
+    origin &&
+    ![
+      "http://127.0.0.1:1420",
+      "http://localhost:1420",
+      "http://tauri.localhost",
+      "https://tauri.localhost",
+      "tauri://localhost",
+    ].includes(origin)
+  ) {
+    return rejectUpgrade(socket, 403, "origin_not_allowed");
+  }
+  if (
+    !(request.headers["sec-websocket-protocol"] ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .includes(SUBPROTOCOL)
+  ) {
+    return rejectUpgrade(socket, 426, "websocket_subprotocol_required");
+  }
+  const ticketValue = url.searchParams.get("ticket");
+  const ticket = ticketValue ? state.tickets.get(ticketValue) : null;
+  if (!ticket || ticket.revoked)
+    return rejectUpgrade(socket, 401, "realtime_ticket_invalid");
+  if (ticket.expiresAtMs <= Date.now())
+    return rejectUpgrade(socket, 401, "realtime_ticket_expired");
+  if (ticket.consumed)
+    return rejectUpgrade(socket, 409, "realtime_ticket_consumed");
+  ticket.consumed = true;
+  websocketServer.handleUpgrade(request, socket, head, (websocket) => {
+    websocketServer.emit("connection", websocket, request);
+  });
+}
+
+function rejectUpgrade(socket, status, code) {
+  const body = JSON.stringify(errorEnvelope(code, code, false));
+  socket.end(
+    `HTTP/1.1 ${status} Upgrade Rejected\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+  );
+}
+
+function handleWebSocket(serverState, socket) {
+  const state = {
+    handshaken: false,
+    request: null,
+    seenEventIds: new Set(),
+    outstandingPing: null,
+    heartbeatTimer: null,
+    heartbeatDeadline: null,
+    helloTimer: setTimeout(() => socket.close(4001, "hello timeout"), 3_000),
+  };
+  socket.on("message", (data, isBinary) => {
+    try {
+      if (isBinary)
+        handleAudioFrame(serverState, state, socket, Buffer.from(data));
+      else handleControl(serverState, state, socket, data.toString("utf8"));
+    } catch (error) {
+      sendSessionError(socket, "invalid_message", safeErrorName(error), false);
+      socket.close(1002, "protocol error");
+    }
+  });
+  socket.on("close", () => {
+    clearTimeout(state.helloTimer);
+    clearInterval(state.heartbeatTimer);
+    clearTimeout(state.heartbeatDeadline);
+    clearTimeout(state.request?.idleTimer);
+  });
+}
+
+function handleControl(serverState, state, socket, raw) {
+  if (Buffer.byteLength(raw) > MAX_CONTROL_BYTES)
+    throw new Error("control message too large");
+  const message = JSON.parse(raw);
+  validateEnvelope(message);
+  if (state.seenEventIds.has(message.event_id)) return;
+  state.seenEventIds.add(message.event_id);
+  if (!state.handshaken) {
+    if (message.type !== "client.hello" || message.request_id !== null) {
+      sendSessionError(
+        socket,
+        "handshake_required",
+        "client.hello required",
+        true,
+      );
+      socket.close(4001, "handshake required");
+      return;
+    }
+    if (!validClientHello(message.payload)) {
+      sendSessionError(
+        socket,
+        "protocol_version_mismatch",
+        "Voice v2 hello required",
+        true,
+      );
+      socket.close(1002, "protocol mismatch");
+      return;
+    }
+    clearTimeout(state.helloTimer);
+    if (hasFault(serverState, "hello_timeout")) return;
+    state.handshaken = true;
+    sendControl(socket, "server.hello", null, serverHello());
+    startHeartbeat(serverState, state, socket);
     return;
   }
-
-  const mode = message.payload?.mode;
-  const selection = message.payload?.selection ?? {};
-  const wantsText = message.payload?.response?.text === true;
-  const wantsAudio = message.payload?.response?.audio === true;
-  const language = message.payload?.language ?? "auto";
-  const voice = message.payload?.response?.voice ?? "default";
-  if (mode !== "dictation" && mode !== "assistant") {
-    sendError(
-      socket,
-      message.request_id,
-      "invalid_request",
-      "请求模式无效",
-      false,
-    );
+  if (message.type === "session.pong") {
+    if (
+      message.request_id === null &&
+      message.payload?.nonce === state.outstandingPing &&
+      !hasFault(serverState, "heartbeat_timeout")
+    ) {
+      state.outstandingPing = null;
+      clearTimeout(state.heartbeatDeadline);
+    }
     return;
   }
   if (
-    selection.asr !== "asr-mock" ||
-    (mode === "assistant" && selection.llm !== "llm-mock") ||
-    (mode === "assistant" &&
-      wantsAudio &&
-      (selection.tts !== "tts-mock" ||
-        selection.output_audio !== "pcm16-24k-mono")) ||
-    (mode === "assistant" &&
-      !wantsAudio &&
-      (selection.tts !== null || selection.output_audio !== null)) ||
-    (mode === "dictation" &&
-      (selection.llm !== null ||
-        selection.tts !== null ||
-        selection.output_audio !== null))
+    ["request.start", "input.commit", "request.cancel"].includes(
+      message.type,
+    ) &&
+    message.request_id === null
   ) {
-    sendError(
+    sendSessionError(
       socket,
-      message.request_id,
-      "unsupported_inference_option",
-      "请求的推理候选不可用",
+      "invalid_message",
+      "Request message requires request_id",
       false,
     );
+    socket.close(1002, "protocol error");
     return;
   }
-  if (wantsText !== (mode === "assistant")) {
-    sendError(
-      socket,
-      message.request_id,
-      "invalid_request",
-      "文本回复配置与请求模式不一致",
-      false,
-    );
-    return;
-  }
-  if (mode === "dictation" && wantsAudio) {
-    sendError(
-      socket,
-      message.request_id,
-      "invalid_request",
-      "语音回复配置与请求模式不一致",
-      false,
-    );
-    return;
-  }
-  if (!["auto", "zh-CN", "en-US"].includes(language)) {
-    sendError(
-      socket,
-      message.request_id,
-      "invalid_request",
-      "识别语言无效",
-      false,
-    );
-    return;
-  }
-  if (!["default", "mock_audio"].includes(voice)) {
-    sendError(
-      socket,
-      message.request_id,
-      "invalid_request",
-      "语音音色无效",
-      false,
-    );
-    return;
-  }
-
-  state.request = {
-    id: message.request_id,
-    frameCount: 0,
-    lastSequence: -1,
-    revision: -1,
-    sampleCount: 0,
-    mode,
-    wantsAudio,
-    wantsText,
-    voice,
-  };
-
-  if (hasFault("request_accepted_timeout")) return;
-
-  send(socket, "request.accepted", message.request_id, {
-    mode,
-    language,
-    selection: {
-      asr: "asr-mock",
-      llm: mode === "assistant" ? "llm-mock" : null,
-      tts: wantsAudio ? "tts-mock" : null,
-      output_audio: wantsAudio ? "pcm16-24k-mono" : null,
-    },
-    voice,
-    max_recording_ms: 60_000,
-  });
-  console.log(`Request accepted (${mode}).`);
+  if (message.type === "request.start")
+    return startRequest(serverState, state, socket, message);
+  if (message.type === "input.commit")
+    return commitInput(serverState, state, socket, message);
+  if (message.type === "request.cancel")
+    return cancelRequest(serverState, state, socket, message);
+  sendSessionError(
+    socket,
+    "unsupported_message_type",
+    "Unsupported client message",
+    false,
+  );
 }
 
-function handleAudioFrame(socket, state, data) {
-  if (!state.request) {
-    sendError(socket, null, "request_not_found", "没有活跃请求", false);
-    return;
-  }
+function startHeartbeat(serverState, state, socket) {
+  state.heartbeatTimer = setInterval(() => {
+    if (state.outstandingPing || socket.readyState !== WebSocket.OPEN) return;
+    const nonce = opaqueToken(12);
+    state.outstandingPing = nonce;
+    sendControl(socket, "session.ping", null, { nonce });
+    state.heartbeatDeadline = setTimeout(() => {
+      if (state.outstandingPing === nonce)
+        socket.close(4002, "heartbeat timeout");
+    }, HEARTBEAT_TIMEOUT_MS);
+  }, HEARTBEAT_INTERVAL_MS);
+}
 
-  const frame = Buffer.from(data);
-  if (frame.length < 48 || frame.toString("ascii", 0, 4) !== "MSVA") {
-    sendError(
+function startRequest(serverState, state, socket, message) {
+  if (state.request)
+    return sendRequestError(
       socket,
-      state.request.id,
-      "invalid_audio_frame",
-      "音频帧头无效",
+      message.request_id,
+      "request_in_progress",
+      "A request is already active",
+      "request",
+      false,
+      zeroUsage(),
+    );
+  if (serverState.usedRequestIds.has(message.request_id))
+    return sendRequestError(
+      socket,
+      message.request_id,
+      "request_id_reused",
+      "Request ID was already used",
+      "request",
+      false,
+      zeroUsage(),
+    );
+  serverState.usedRequestIds.add(message.request_id);
+  const validation = validateRequestStart(message.payload);
+  if (validation)
+    return sendRequestError(
+      socket,
+      message.request_id,
+      validation.code,
+      validation.message,
+      validation.stage,
+      validation.retryable,
+      zeroUsage(),
+      validation.details,
+    );
+  const request = {
+    id: message.request_id,
+    options: structuredClone(message.payload),
+    sequence: 0,
+    sampleCount: 0,
+    chunkCount: 0,
+    successLocked: false,
+    accepted: false,
+    terminal: false,
+    idleTimer: null,
+  };
+  state.request = request;
+  if (hasFault(serverState, "capabilities_stale")) {
+    terminalError(
+      serverState,
+      state,
+      socket,
+      request,
+      "capabilities_stale",
+      "Capabilities revision changed",
+      "routing",
       true,
     );
-    state.request = null;
     return;
   }
+  if (hasFault(serverState, "accepted_timeout")) return;
+  const llmCredits = request.options.mode === "asr_llm" ? 4 : 0;
+  serverState.creditsReserved += 8 + llmCredits;
+  sendControl(socket, "request.accepted", request.id, {
+    ...structuredClone(request.options),
+    max_recording_ms: MAX_RECORDING_MS,
+    quota_reservation: {
+      asr_credits: 8,
+      llm_credits: llmCredits,
+      credits: 8 + llmCredits,
+    },
+  });
+  request.accepted = true;
+  armInputIdle(serverState, state, socket, request);
+}
 
+function handleAudioFrame(serverState, state, socket, frame) {
+  const request = state.request;
+  if (!state.handshaken || !request || !request.accepted || request.terminal) {
+    throw new Error("binary frame outside accepted request");
+  }
+  if (
+    frame.length < 50 ||
+    frame.length > MAX_BINARY_BYTES ||
+    frame.toString("ascii", 0, 4) !== "MSVA"
+  ) {
+    return terminalError(
+      serverState,
+      state,
+      socket,
+      request,
+      "invalid_audio_frame",
+      "Invalid audio frame",
+      "protocol",
+      false,
+    );
+  }
   const version = frame.readUInt8(4);
   const kind = frame.readUInt8(5);
+  const flags = frame.readUInt16BE(6);
   const headerLength = frame.readUInt16BE(8);
+  const reserved = frame.readUInt16BE(10);
   const sequence = frame.readUInt32BE(12);
+  const timestampUs = frame.readBigUInt64BE(16);
   const payloadLength = frame.readUInt32BE(24);
+  const reservedTail = frame.readUInt32BE(28);
   const requestId = bytesToUuid(frame.subarray(32, 48));
-
+  const expectedTimestamp = BigInt(
+    Math.floor((request.sampleCount * 1_000_000) / 16_000),
+  );
   if (
-    version !== 1 ||
+    version !== 2 ||
     kind !== 1 ||
+    flags !== 0 ||
     headerLength !== 48 ||
-    frame.length !== headerLength + payloadLength ||
-    requestId !== state.request.id ||
-    sequence !== state.request.lastSequence + 1 ||
-    payloadLength === 0 ||
-    payloadLength % 2 !== 0
+    reserved !== 0 ||
+    reservedTail !== 0 ||
+    sequence !== request.sequence ||
+    timestampUs !== expectedTimestamp ||
+    payloadLength < 2 ||
+    payloadLength % 2 !== 0 ||
+    frame.length !== 48 + payloadLength ||
+    requestId !== request.id
   ) {
-    sendError(
+    return terminalError(
+      serverState,
+      state,
       socket,
-      state.request.id,
+      request,
       "invalid_audio_frame",
-      "音频帧字段或序号无效",
-      true,
+      "Invalid audio frame fields",
+      "protocol",
+      false,
     );
-    state.request = null;
-    return;
   }
-
-  state.request.lastSequence = sequence;
-  state.request.frameCount += 1;
-  state.request.sampleCount += payloadLength / 2;
-
-  if (state.request.frameCount % 25 === 0) {
-    state.request.revision += 1;
-    const seconds = (state.request.sampleCount / 16_000).toFixed(1);
-    send(socket, "asr.partial", state.request.id, {
-      text: `正在识别，本地 Mock 已接收 ${seconds} 秒音频…`,
-      revision: state.request.revision,
-      stable_prefix_length: 4,
-    });
-  }
+  request.sequence += 1;
+  request.chunkCount += 1;
+  request.sampleCount += payloadLength / 2;
+  armInputIdle(serverState, state, socket, request);
 }
 
-function commitInput(socket, state, message) {
+function commitInput(serverState, state, socket, message) {
   const request = state.request;
-  if (!request || request.id !== message.request_id) {
-    sendError(
+  if (!request || request.id !== message.request_id)
+    return sendRequestError(
       socket,
       message.request_id,
       "request_not_found",
-      "请求不存在",
+      "Request not found",
+      "request",
+      false,
+      zeroUsage(),
+    );
+  if (!request.accepted) {
+    return terminalError(
+      serverState,
+      state,
+      socket,
+      request,
+      "invalid_message",
+      "input.commit arrived before request.accepted",
+      "protocol",
       false,
     );
+  }
+  clearTimeout(request.idleTimer);
+  if (request.chunkCount === 0)
+    return terminalError(
+      serverState,
+      state,
+      socket,
+      request,
+      "input_empty",
+      "No audio was received",
+      "input",
+      false,
+    );
+  const statistics = {
+    last_sequence: request.chunkCount - 1,
+    chunk_count: request.chunkCount,
+    sample_count: request.sampleCount,
+    duration_ms: Math.ceil((request.sampleCount * 1_000) / 16_000),
+  };
+  if (!sameStatistics(message.payload, statistics))
+    return terminalError(
+      serverState,
+      state,
+      socket,
+      request,
+      "input_statistics_mismatch",
+      "Input statistics mismatch",
+      "input",
+      false,
+    );
+  sendControl(
+    socket,
+    "input.committed",
+    request.id,
+    hasFault(serverState, "input_statistics_mismatch")
+      ? { ...statistics, sample_count: statistics.sample_count + 1 }
+      : statistics,
+  );
+  if (hasFault(serverState, "disconnect_processing")) {
+    socket.close(1011, "injected processing disconnect");
     return;
   }
+  setTimeout(
+    () => completeTextRequest(serverState, state, socket, request, statistics),
+    20,
+  );
+}
 
-  const payload = message.payload ?? {};
-  const matches =
-    payload.last_sequence ===
-      (request.frameCount > 0 ? request.lastSequence : null) &&
-    payload.frame_count === request.frameCount &&
-    payload.sample_count === request.sampleCount;
-
-  if (!matches) {
-    sendError(
+function completeTextRequest(serverState, state, socket, request, statistics) {
+  if (state.request !== request || request.terminal) return;
+  if (hasFault(serverState, "asr_failed"))
+    return terminalError(
+      serverState,
+      state,
       socket,
-      request.id,
-      "audio_commit_mismatch",
-      "提交统计与音频帧不一致",
+      request,
+      "asr_failed",
+      "Injected ASR failure",
+      "asr",
       true,
     );
-    state.request = null;
-    return;
-  }
-
-  if (hasFault("input_committed_timeout")) return;
-
-  send(socket, "input.committed", request.id, {
-    accepted_duration_ms: Math.round((request.sampleCount / 16_000) * 1_000),
+  const asrText = "这是来自 Voice API v2 Mock 的识别结果。";
+  sendControl(socket, "output.text.delta", request.id, {
+    stage: "asr",
+    sequence: 0,
+    delta: asrText,
   });
-  console.log(`Input committed (${request.frameCount} frames).`);
-
-  const requestId = request.id;
-  const durationMs = Math.round((request.sampleCount / 16_000) * 1_000);
-  injectProtocolFaults(socket, requestId);
-  if (hasFault("disconnect_during_request")) {
-    socket.close(1_011, "injected disconnect");
-    return;
-  }
-  if (hasFault("request_done_early")) {
-    sendRequestDone(socket, requestId, durationMs);
-    state.request = null;
-    return;
-  }
-  setTimeout(() => {
-    if (state.request?.id !== requestId) {
-      return;
-    }
-    if (hasFault("asr_final_missing")) return;
-    send(socket, "asr.final", requestId, {
-      text: "这是来自本地 Mock 服务的识别结果。",
-      language: "zh-CN",
-      confidence: 0.99,
-      duration_ms: durationMs,
-    });
-  }, 250);
-
-  if (request.mode === "assistant") {
-    const deltas = ["这是", "来自本地 Mock 服务的", "流式助手回复。"];
-    const llmDelay = hasFault("llm_first_token_delay")
-      ? faultConfig.delayMs
-      : 350;
-    deltas.forEach((delta, sequence) => {
-      setTimeout(
-        () => {
-          if (state.request?.id !== requestId) {
-            return;
-          }
-          send(socket, "assistant.text.delta", requestId, {
-            sequence,
-            delta,
-          });
-        },
-        llmDelay + sequence * 80,
-      );
-    });
-
-    setTimeout(
-      () => {
-        if (state.request?.id !== requestId) {
-          return;
-        }
-        send(socket, "assistant.text.done", requestId, {
-          text: deltas.join(""),
-          last_sequence: deltas.length - 1,
-          finish_reason: "stop",
-          usage: {
-            input_tokens: 12,
-            output_tokens: 18,
-          },
-        });
-      },
-      llmDelay + deltas.length * 80,
+  if (request.options.mode === "asr_only") {
+    lockAndFinish(
+      serverState,
+      state,
+      socket,
+      request,
+      asrText,
+      statistics,
+      "asr",
     );
-
-    if (request.wantsAudio) {
-      setTimeout(
-        () => {
-          if (state.request?.id !== requestId) {
-            return;
-          }
-          streamMockAudio(socket, state, requestId, durationMs);
-        },
-        Math.max(430, llmDelay + 80),
-      );
-    } else {
-      setTimeout(
-        () => {
-          if (state.request?.id !== requestId) {
-            return;
-          }
-          if (hasFault("request_done_missing")) return;
-          sendRequestDone(socket, requestId, durationMs, llmDelay);
-          state.request = null;
-        },
-        Math.max(650, llmDelay + deltas.length * 80 + 50),
-      );
-    }
     return;
   }
-
-  setTimeout(() => {
-    if (state.request?.id !== requestId) {
-      return;
-    }
-    if (hasFault("request_done_missing")) return;
-    sendRequestDone(socket, requestId, durationMs);
-    state.request = null;
-  }, 300);
-}
-
-function cancelRequest(socket, state, message) {
-  if (hasFault("cancellation_timeout")) return;
-  if (state.request?.id === message.request_id) {
-    state.request = null;
-  }
-  send(socket, "request.cancelled", message.request_id, {
-    reason: message.payload?.reason ?? "user_cancelled",
+  sendControl(socket, "output.text.snapshot", request.id, {
+    stage: "asr",
+    text: asrText,
+    final: false,
   });
-  console.log("Request cancelled.");
-}
-
-function createServerHello() {
-  return {
-    session_id: randomUUID(),
-    protocol_version: 1,
-    pipeline: "cascade",
-    limits: {
-      max_recording_ms: 60_000,
-      max_json_bytes: 65_536,
-      max_binary_bytes: 65_536,
-    },
-    features: {
-      streaming_asr: true,
-      streaming_text: true,
-      streaming_audio: true,
-      cancellation: true,
-    },
-    inference_options: {
-      defaults: {
-        asr: "asr-mock",
-        llm: "llm-mock",
-        tts: "tts-mock",
-        output_audio: "pcm16-24k-mono",
-      },
-      asr: [
-        {
-          id: "asr-mock",
-          name: "Mock ASR",
-          description: "Deterministic local protocol test recognizer",
-        },
-      ],
-      llm: [
-        {
-          id: "llm-mock",
-          name: "Mock LLM",
-          description: "Deterministic streaming text generator",
-        },
-      ],
-      tts: [
-        {
-          id: "tts-mock",
-          name: "Mock TTS",
-          description: "Placeholder for capability negotiation",
-        },
-      ],
-      output_audio: [
-        {
-          id: "pcm16-24k-mono",
-          name: "PCM 24 kHz Mono",
-          description: "Mock output audio capability",
-          encoding: "pcm_s16le",
-          sample_rate: 24_000,
-          channels: 1,
-        },
-      ],
-    },
-    recognition_languages: [
-      { id: "auto", name: "自动识别" },
-      { id: "zh-CN", name: "简体中文" },
-      { id: "en-US", name: "English" },
-    ],
-    voices: [
-      { id: "default", name: "默认音色" },
-      { id: "mock_audio", name: "Mock Audio" },
-    ],
-    heartbeat: {
-      interval_ms: 15_000,
-      timeout_ms: 10_000,
-    },
-  };
-}
-
-function streamMockAudio(socket, state, requestId, inputDurationMs) {
-  send(socket, "output.audio.start", requestId, {
-    encoding: "pcm_s16le",
-    sample_rate: outputSampleRate,
-    channels: 1,
-    voice: state.request?.voice ?? "default",
+  sendControl(socket, "output.text.snapshot", request.id, {
+    stage: "llm",
+    text: "",
+    final: false,
   });
-
-  const chunkCount = Math.ceil(mockPcm.length / outputChunkBytes);
-  let sequence = 0;
-  const sendNext = () => {
-    if (
-      state.request?.id !== requestId ||
-      socket.readyState !== WebSocket.OPEN
-    ) {
-      return;
-    }
-    const start = sequence * outputChunkBytes;
-    const end = Math.min(start + outputChunkBytes, mockPcm.length);
-    let frame = createOutputAudioFrame(
-      requestId,
+  if (hasFault(serverState, "llm_failed"))
+    return terminalError(
+      serverState,
+      state,
+      socket,
+      request,
+      "llm_failed",
+      "Injected LLM failure",
+      "llm",
+      true,
+      usageFor(request, statistics, true),
+    );
+  const chunks = ["这是", "经过 Mock LLM 处理的", "最终文本。"];
+  chunks.forEach((delta, sequence) =>
+    sendControl(socket, "output.text.delta", request.id, {
+      stage: "llm",
       sequence,
-      sequence * outputChunkDurationMs * 1_000,
-      mockPcm.subarray(start, end),
-    );
-    if (hasFault("corrupt_audio_frame") && sequence === 0) {
-      frame = Buffer.from(frame);
-      frame.write("BAD!", 0, "ascii");
-    }
-    socket.send(frame);
-    sequence += 1;
+      delta,
+    }),
+  );
+  lockAndFinish(
+    serverState,
+    state,
+    socket,
+    request,
+    chunks.join(""),
+    statistics,
+    "llm",
+  );
+}
 
-    if (hasFault("tts_midstream_failure") && sequence === 1) {
-      sendProtocolError(
+function lockAndFinish(
+  serverState,
+  state,
+  socket,
+  request,
+  finalText,
+  statistics,
+  stage,
+) {
+  const usage = usageFor(request, statistics, stage === "llm");
+  request.successLocked = true;
+  request.finalText = finalText;
+  request.finalUsage = usage;
+  sendControl(socket, "output.text.snapshot", request.id, {
+    stage,
+    text: finalText,
+    final: true,
+  });
+  if (hasFault(serverState, "request_done_missing")) return;
+  const delay = hasFault(serverState, "cancel_race")
+    ? serverState.faults.delayMs
+    : 0;
+  setTimeout(() => {
+    if (state.request !== request || request.terminal) return;
+    sendControl(socket, "request.done", request.id, {
+      result: "success",
+      mode: request.options.mode,
+      final_text: hasFault(serverState, "final_done_mismatch")
+        ? `${finalText}!`
+        : finalText,
+      usage,
+    });
+    settle(serverState, state, request, usage);
+  }, delay);
+}
+
+function cancelRequest(serverState, state, socket, message) {
+  const request = state.request;
+  if (!request || request.id !== message.request_id)
+    return sendRequestError(
+      socket,
+      message.request_id,
+      "request_not_found",
+      "Request not found",
+      "request",
+      false,
+      zeroUsage(),
+    );
+  if (request.successLocked) return;
+  const usage = usageFor(request, null, false);
+  sendControl(socket, "request.cancelled", request.id, {
+    reason: message.payload?.reason ?? "user_cancelled",
+    usage,
+  });
+  settle(serverState, state, request, usage);
+}
+
+function terminalError(
+  serverState,
+  state,
+  socket,
+  request,
+  code,
+  message,
+  stage,
+  retryable,
+  usage = usageFor(request, null, false),
+) {
+  sendRequestError(socket, request.id, code, message, stage, retryable, usage);
+  settle(serverState, state, request, usage);
+}
+
+function settle(serverState, state, request, usage) {
+  if (request.terminal) return;
+  request.terminal = true;
+  clearTimeout(request.idleTimer);
+  const reserved = request.options.mode === "asr_llm" ? 12 : 8;
+  serverState.creditsReserved = Math.max(
+    0,
+    serverState.creditsReserved - reserved,
+  );
+  serverState.creditsUsed += usage.credits_charged;
+  serverState.usage.push({
+    request_id: request.id,
+    mode: request.options.mode,
+    settled_at_ms: Date.now(),
+    pricing_revision: "mock-pricing-1",
+    ...usage,
+  });
+  if (state.request === request) state.request = null;
+}
+
+function armInputIdle(serverState, state, socket, request) {
+  clearTimeout(request.idleTimer);
+  request.idleTimer = setTimeout(() => {
+    if (state.request === request && !request.terminal)
+      terminalError(
+        serverState,
+        state,
         socket,
-        requestId,
-        "tts_stream_failed",
-        "注入的 TTS 中途失败",
-        "tts",
+        request,
+        "input_idle_timeout",
+        "Input idle timeout",
+        "input",
         false,
       );
-      setTimeout(() => {
-        if (state.request?.id !== requestId) return;
-        if (!hasFault("request_done_missing")) {
-          sendRequestDone(socket, requestId, inputDurationMs);
-        }
-        state.request = null;
-      }, 300);
-      return;
-    }
+  }, INPUT_IDLE_TIMEOUT_MS);
+}
 
-    if (sequence < chunkCount) {
-      setTimeout(sendNext, outputSendIntervalMs);
-      return;
+function validateRequestStart(payload) {
+  if (!payload || typeof payload !== "object")
+    return {
+      code: "invalid_selection",
+      message: "Request payload is invalid",
+      stage: "routing",
+      retryable: false,
+      details: { field: "payload" },
+    };
+  const removedContextKey = ["conversation", "id"].join("_");
+  const forbiddenKeys = [
+    "task",
+    removedContextKey,
+    "response",
+    "voice",
+    "emotion",
+    "output_audio",
+  ];
+  if (forbiddenKeys.some((key) => key in payload)) {
+    return {
+      code: "invalid_message",
+      message: "Request contains a removed field",
+      stage: "protocol",
+      retryable: false,
+    };
+  }
+  if (payload.capabilities_revision !== CAPABILITIES_REVISION)
+    return {
+      code: "capabilities_stale",
+      message: "Capabilities revision is stale",
+      stage: "routing",
+      retryable: true,
+    };
+  if (payload.pipeline !== "mock-text-pipeline")
+    return {
+      code: "pipeline_unavailable",
+      message: "Pipeline is unavailable",
+      stage: "routing",
+      retryable: true,
+    };
+  if (!CAPABILITIES.modes.includes(payload.mode))
+    return {
+      code: "unsupported_mode",
+      message: "Mode is unsupported",
+      stage: "routing",
+      retryable: false,
+    };
+  if (!CAPABILITIES.recognition_languages.includes(payload.language))
+    return {
+      code: "invalid_selection",
+      message: "Language is invalid",
+      stage: "routing",
+      retryable: false,
+      details: { field: "language" },
+    };
+  const expectedLlm = payload.mode === "asr_llm" ? "mock-llm" : null;
+  if (
+    !payload.selection ||
+    typeof payload.selection !== "object" ||
+    Array.isArray(payload.selection) ||
+    Object.keys(payload.selection).sort().join(",") !== "asr,llm" ||
+    payload.selection?.asr !== "mock-asr" ||
+    payload.selection?.llm !== expectedLlm
+  )
+    return {
+      code: "invalid_selection",
+      message: "Model selection is invalid",
+      stage: "routing",
+      retryable: false,
+      details: { field: "selection" },
+    };
+  if (payload.mode === "asr_only" && payload.generation !== undefined)
+    return {
+      code: "invalid_selection",
+      message: "Generation is not valid for asr_only",
+      stage: "routing",
+      retryable: false,
+      details: { field: "generation" },
+    };
+  if (payload.generation !== undefined) {
+    for (const [key, value] of Object.entries(payload.generation)) {
+      const control = CAPABILITIES.pipelines[0].generation_controls[key];
+      if (
+        !control ||
+        typeof value !== "number" ||
+        value < control.minimum ||
+        value > control.maximum ||
+        (control.type === "integer" && !Number.isInteger(value))
+      )
+        return {
+          code: "invalid_selection",
+          message: "Generation control is invalid",
+          stage: "routing",
+          retryable: false,
+          details: { field: `generation.${key}` },
+        };
     }
+  }
+  return null;
+}
 
-    const sampleCount = mockPcm.length / 2;
-    const durationMs = Math.round((sampleCount / outputSampleRate) * 1_000);
-    send(socket, "output.audio.done", requestId, {
-      last_sequence: chunkCount - 1,
-      chunk_count: chunkCount,
-      sample_count: sampleCount,
-      duration_ms: durationMs,
-    });
-    if (!hasFault("request_done_missing")) {
-      sendRequestDone(socket, requestId, inputDurationMs, 350, {
-        audio_first_chunk_after_commit: 430,
-        server_total_after_commit:
-          430 + (chunkCount - 1) * outputSendIntervalMs,
-      });
-    }
-    state.request = null;
+function validClientHello(payload) {
+  return (
+    payload &&
+    typeof payload === "object" &&
+    Array.isArray(payload.protocol_versions) &&
+    payload.protocol_versions.includes(2) &&
+    Array.isArray(payload.input_audio) &&
+    payload.input_audio.some(
+      (item) =>
+        item?.encoding === "pcm_s16le" &&
+        item.sample_rate === 16_000 &&
+        item.channels === 1,
+    ) &&
+    !("auth" in payload) &&
+    !("output_audio" in payload)
+  );
+}
+
+function validAuthorizationCodeInput(body) {
+  const device = body.device;
+  return (
+    Object.keys(body).sort().join(",") ===
+      "client_id,code,code_verifier,device,grant_type,redirect_uri" &&
+    body.grant_type === "authorization_code" &&
+    body.client_id === "mindsurf-desktop" &&
+    typeof body.code === "string" &&
+    body.code.length >= 1 &&
+    body.code.length <= 2_048 &&
+    typeof body.code_verifier === "string" &&
+    /^[A-Za-z0-9._~-]{43,128}$/.test(body.code_verifier) &&
+    body.redirect_uri === "mindsurf://auth/callback" &&
+    device &&
+    typeof device === "object" &&
+    !Array.isArray(device) &&
+    Object.keys(device).sort().join(",") === "app_version,id,name,platform" &&
+    [device.id, device.name, device.platform, device.app_version].every(
+      (value) => typeof value === "string" && value.length >= 1,
+    )
+  );
+}
+
+function validateEnvelope(message) {
+  if (!message || typeof message !== "object" || Array.isArray(message))
+    throw new Error("control envelope is invalid");
+  const keys = Object.keys(message).sort();
+  const expected = [
+    "event_id",
+    "payload",
+    "request_id",
+    "sent_at_ms",
+    "type",
+    "v",
+  ];
+  if (
+    keys.length !== expected.length ||
+    keys.some((key, index) => key !== expected[index]) ||
+    message.v !== 2 ||
+    typeof message.type !== "string" ||
+    !isUuid(message.event_id) ||
+    (message.request_id !== null && !isUuid(message.request_id)) ||
+    !Number.isSafeInteger(message.sent_at_ms) ||
+    message.sent_at_ms < 0 ||
+    !message.payload ||
+    typeof message.payload !== "object" ||
+    Array.isArray(message.payload)
+  )
+    throw new Error("control envelope is invalid");
+}
+
+function serverHello() {
+  return {
+    session_id: randomUUID(),
+    protocol_version: 2,
+    input_audio: { encoding: "pcm_s16le", sample_rate: 16_000, channels: 1 },
+    heartbeat_interval_ms: HEARTBEAT_INTERVAL_MS,
+    heartbeat_timeout_ms: HEARTBEAT_TIMEOUT_MS,
+    input_idle_timeout_ms: INPUT_IDLE_TIMEOUT_MS,
+    limits: {
+      max_control_bytes: MAX_CONTROL_BYTES,
+      max_binary_bytes: MAX_BINARY_BYTES,
+      max_recording_ms: MAX_RECORDING_MS,
+    },
   };
-
-  sendNext();
 }
 
-function createOutputAudioFrame(requestId, sequence, timestampUs, pcm) {
-  const frame = Buffer.alloc(48 + pcm.length);
-  frame.write("MSVA", 0, "ascii");
-  frame.writeUInt8(1, 4);
-  frame.writeUInt8(2, 5);
-  frame.writeUInt16BE(48, 8);
-  frame.writeUInt32BE(sequence, 12);
-  frame.writeBigUInt64BE(BigInt(timestampUs), 16);
-  frame.writeUInt32BE(pcm.length, 24);
-  Buffer.from(requestId.replaceAll("-", ""), "hex").copy(frame, 32);
-  pcm.copy(frame, 48);
-  return frame;
+function usageFor(request, statistics, llmStarted) {
+  const inputAudioMs =
+    statistics?.duration_ms ??
+    Math.ceil((request.sampleCount * 1_000) / 16_000);
+  const asrCredits =
+    request.sampleCount > 0
+      ? Math.min(8, Math.max(1, Math.ceil(inputAudioMs / 1_000)))
+      : 0;
+  const llmCredits = request.options.mode === "asr_llm" && llmStarted ? 4 : 0;
+  return {
+    input_audio_ms: inputAudioMs,
+    llm_input_tokens: llmStarted ? 12 : 0,
+    llm_output_tokens: llmStarted ? 16 : 0,
+    asr_credits_charged: asrCredits,
+    llm_credits_charged: llmCredits,
+    credits_charged: asrCredits + llmCredits,
+  };
 }
 
-function loadMockAudio() {
-  const audioPath = join(
-    dirname(fileURLToPath(import.meta.url)),
-    "mock_audio.m4a",
-  );
-  const result = spawnSync(
-    "ffmpeg",
-    [
-      "-v",
-      "error",
-      "-i",
-      audioPath,
-      "-f",
-      "s16le",
-      "-acodec",
-      "pcm_s16le",
-      "-ac",
-      "1",
-      "-ar",
-      String(outputSampleRate),
-      "pipe:1",
-    ],
-    { encoding: null, maxBuffer: 16 * 1_024 * 1_024 },
-  );
-  if (result.error || result.status !== 0 || !result.stdout?.length) {
-    const detail = result.stderr?.toString("utf8").trim();
-    throw new Error(
-      `无法解码 mock_audio.m4a，请确认 ffmpeg 可用${detail ? `：${detail}` : ""}`,
-    );
-  }
-  if (result.stdout.length % 2 !== 0) {
-    throw new Error("mock_audio.m4a 解码后的 PCM 长度无效");
-  }
-  console.log(
-    `Loaded mock_audio.m4a (${(result.stdout.length / 2 / outputSampleRate).toFixed(2)} s).`,
-  );
-  return result.stdout;
+function zeroUsage() {
+  return {
+    input_audio_ms: 0,
+    llm_input_tokens: 0,
+    llm_output_tokens: 0,
+    asr_credits_charged: 0,
+    llm_credits_charged: 0,
+    credits_charged: 0,
+  };
 }
 
-function send(socket, type, requestId, payload, eventId = randomUUID()) {
-  if (socket.readyState !== WebSocket.OPEN) {
-    return;
-  }
+function quotaFor(state) {
+  const used = state.creditsUsed;
+  const reserved = state.creditsReserved;
+  const usage = state.usage.reduce(
+    (total, item) => ({
+      input_audio_ms: total.input_audio_ms + item.input_audio_ms,
+      llm_input_tokens: total.llm_input_tokens + item.llm_input_tokens,
+      llm_output_tokens: total.llm_output_tokens + item.llm_output_tokens,
+      asr_credits_charged: total.asr_credits_charged + item.asr_credits_charged,
+      llm_credits_charged: total.llm_credits_charged + item.llm_credits_charged,
+      credits_charged: total.credits_charged + item.credits_charged,
+    }),
+    zeroUsage(),
+  );
+  return {
+    plan: "mock",
+    pricing_revision: "mock-pricing-1",
+    period: { starts_at_ms: 1_786_723_200_000, ends_at_ms: 1_789_401_600_000 },
+    credits: {
+      limit: state.creditsLimit,
+      used,
+      reserved,
+      remaining: Math.max(0, state.creditsLimit - used - reserved),
+    },
+    usage,
+  };
+}
+
+function sendControl(socket, type, requestId, payload) {
+  if (socket.readyState !== WebSocket.OPEN) return;
   socket.send(
     JSON.stringify({
-      v: 1,
+      v: 2,
       type,
-      event_id: eventId,
+      event_id: randomUUID(),
       request_id: requestId,
       sent_at_ms: Date.now(),
       payload,
@@ -749,100 +1334,217 @@ function send(socket, type, requestId, payload, eventId = randomUUID()) {
   );
 }
 
-function sendError(socket, requestId, code, message, fatal) {
-  sendProtocolError(
-    socket,
-    requestId,
+function sendSessionError(socket, code, message, fatal) {
+  sendControl(socket, "error", null, {
     code,
     message,
-    requestId ? "input" : "protocol",
-    fatal,
-  );
-}
-
-function sendProtocolError(socket, requestId, code, message, stage, fatal) {
-  send(socket, "error", requestId, {
-    code,
-    message,
-    stage,
-    recoverable: !fatal,
+    stage: code === "session_revoked" ? "authorization" : "protocol",
+    terminal: false,
+    retryable: false,
     fatal,
     details: {},
   });
 }
 
-function sendRequestDone(
+function sendRequestError(
   socket,
   requestId,
-  inputDuration,
-  llmFirstToken = 350,
-  extra = {},
+  code,
+  message,
+  stage,
+  retryable,
+  usage,
+  details = {},
 ) {
-  send(socket, "request.done", requestId, {
-    result: "success",
-    timing_ms: {
-      input_duration: inputDuration,
-      asr_final_after_commit: 250,
-      llm_first_token_after_commit: llmFirstToken,
-      server_total_after_commit: Math.max(300, llmFirstToken + 300),
-      ...extra,
-    },
+  sendControl(socket, "error", requestId, {
+    code,
+    message,
+    stage,
+    terminal: true,
+    retryable,
+    fatal: false,
+    details,
+    usage,
   });
 }
 
-function injectProtocolFaults(socket, requestId) {
-  if (hasFault("duplicate_event_id")) {
-    const eventId = randomUUID();
-    send(
-      socket,
-      "asr.partial",
-      requestId,
-      { text: "重复事件", revision: 0 },
-      eventId,
-    );
-    send(
-      socket,
-      "asr.partial",
-      requestId,
-      { text: "重复事件", revision: 0 },
-      eventId,
-    );
-  }
-  if (hasFault("stale_request_id")) {
-    send(socket, "asr.partial", randomUUID(), {
-      text: "过期请求",
-      revision: 0,
-    });
-  }
-  if (hasFault("unknown_message_type")) {
-    send(socket, "mock.unknown", requestId, { injected: true });
-  }
-  if (hasFault("out_of_order_control")) {
-    send(socket, "output.audio.done", requestId, {
-      last_sequence: 0,
-      chunk_count: 1,
-      sample_count: 1,
-      duration_ms: 1,
-    });
-  }
+function sameStatistics(left, right) {
+  return (
+    left &&
+    typeof left === "object" &&
+    !Array.isArray(left) &&
+    Object.keys(left).sort().join(",") ===
+      "chunk_count,duration_ms,last_sequence,sample_count" &&
+    left.last_sequence === right.last_sequence &&
+    left.chunk_count === right.chunk_count &&
+    left.sample_count === right.sample_count &&
+    left.duration_ms === right.duration_ms
+  );
 }
 
 function bytesToUuid(bytes) {
-  const hex = Array.from(bytes, (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    hex.slice(12, 16),
-    hex.slice(16, 20),
-    hex.slice(20),
-  ].join("-");
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function shutdown() {
-  server.close(() => process.exit(0));
+function idempotencyHeader(request, response) {
+  const key = request.headers["idempotency-key"];
+  if (typeof key !== "string" || !isUuid(key)) {
+    sendHttpError(
+      response,
+      400,
+      "invalid_request",
+      "A UUID Idempotency-Key is required",
+      false,
+    );
+    return null;
+  }
+  return key;
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+function idempotentReplay(state, key, operation, body, response) {
+  const entry = state.idempotency.get(key);
+  if (!entry) return false;
+  if (entry.operation !== operation || entry.body !== stableJson(body)) {
+    sendHttpError(
+      response,
+      409,
+      "idempotency_conflict",
+      "Idempotency key conflict",
+      false,
+    );
+  } else sendData(response, entry.data);
+  return true;
+}
+
+function rememberIdempotency(state, key, operation, body, data) {
+  state.idempotency.set(key, { operation, body: stableJson(body), data });
+}
+
+async function readJson(request, response) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > 64 * 1_024) {
+      sendHttpError(
+        response,
+        400,
+        "invalid_request",
+        "Request body is too large",
+        false,
+      );
+      return null;
+    }
+    chunks.push(chunk);
+  }
+  try {
+    const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error();
+    return value;
+  } catch {
+    sendHttpError(
+      response,
+      400,
+      "invalid_request",
+      "Request body must be a JSON object",
+      false,
+    );
+    return null;
+  }
+}
+
+function sendData(response, data, status = 200) {
+  sendJson(response, status, { request_id: randomUUID(), data });
+}
+
+function sendHttpError(response, status, code, message, retryable) {
+  sendJson(response, status, errorEnvelope(code, message, retryable));
+}
+
+function errorEnvelope(code, message, retryable) {
+  return {
+    request_id: randomUUID(),
+    error: { code, message, retryable, details: {} },
+  };
+}
+
+function sendJson(response, status, body) {
+  const json = JSON.stringify(body);
+  response.writeHead(status, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(json),
+    "Cache-Control": "no-store",
+  });
+  response.end(json);
+}
+
+function sha256Base64Url(value) {
+  return createHash("sha256").update(value).digest("base64url");
+}
+
+function safeEqual(left, right) {
+  const leftBytes = Buffer.from(left);
+  const rightBytes = Buffer.from(right);
+  return (
+    leftBytes.length === rightBytes.length &&
+    timingSafeEqual(leftBytes, rightBytes)
+  );
+}
+
+function opaqueToken(bytes) {
+  return randomBytes(bytes).toString("base64url");
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object")
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(",")}}`;
+  return JSON.stringify(value);
+}
+
+function isUuid(value) {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  );
+}
+
+function hasFault(state, name) {
+  return state.faults.names.has(name);
+}
+
+function safeErrorName(error) {
+  return error instanceof Error ? error.name : "UnknownError";
+}
+
+async function runCli() {
+  if (process.argv.includes("--help")) {
+    console.log(printFaultHelp());
+    return;
+  }
+  const port = Number.parseInt(process.env.PORT ?? "8000", 10);
+  const mock = createMockServer({ port });
+  await mock.start();
+  console.log(
+    `MindSurf Voice API v2 mock listening on http://127.0.0.1:${port}`,
+  );
+  if (mock.state.faults.names.size)
+    console.log(`Enabled faults: ${[...mock.state.faults.names].join(", ")}`);
+  const stop = async () => {
+    await mock.close();
+    process.exit(0);
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+}
+
+if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+  await runCli();
+}

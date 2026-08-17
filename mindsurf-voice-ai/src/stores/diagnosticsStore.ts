@@ -14,7 +14,7 @@ import type {
   TimelineStage,
 } from "../types/diagnostics";
 import type { RequestLifecycleState, RequestTransition } from "../types/request";
-import type { VoiceInteractionMode } from "../types/voice";
+import type { VoiceModeV2 } from "../types/httpApi";
 
 const MAX_VISIBLE_TRANSITIONS = 100;
 const MAX_TIMELINES = 20;
@@ -40,7 +40,7 @@ function currentTimeline() {
 }
 
 export const diagnosticsStoreActions = {
-  beginTimeline(mode: VoiceInteractionMode) {
+  beginTimeline(mode: VoiceModeV2) {
     const requestId = `pending-${crypto.randomUUID()}`;
     const timeline: RequestTimeline = {
       requestId,
@@ -50,8 +50,6 @@ export const diagnosticsStoreActions = {
       recordingDurationMs: null,
       audioFramesSent: 0,
       audioBytesSent: 0,
-      audioChunksReceived: 0,
-      underrunCount: 0,
       reconnectCount: 0,
       events: [],
     };
@@ -108,22 +106,11 @@ export const diagnosticsStoreActions = {
     }
     return true;
   },
-  noteOutputAudioChunk(requestId: string) {
-    const timeline = state.timelines.find((item) => item.requestId === requestId);
-    if (timeline) timeline.audioChunksReceived += 1;
-  },
-  updateRuntimeMetrics(input: {
-    requestId?: string | null;
-    underrunCount?: number;
-    reconnectCount?: number;
-  }) {
+  updateRuntimeMetrics(input: { requestId?: string | null; reconnectCount?: number }) {
     const timeline = input.requestId
       ? state.timelines.find((item) => item.requestId === input.requestId)
       : currentTimeline();
     if (!timeline) return;
-    if (typeof input.underrunCount === "number") {
-      timeline.underrunCount = Math.max(timeline.underrunCount, input.underrunCount);
-    }
     if (typeof input.reconnectCount === "number") {
       timeline.reconnectCount = Math.max(timeline.reconnectCount, input.reconnectCount);
     }

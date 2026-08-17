@@ -7,7 +7,7 @@ import {
   printFaultHelp,
 } from "./faults.mjs";
 
-test("exposes every Phase 2 fault through stable startup names", () => {
+test("exposes every Voice API v2 fault through stable startup names", () => {
   const config = parseFaultConfiguration(
     ["--fault", MOCK_FAULTS.join(","), "--fault-delay-ms", "2500"],
     {},
@@ -20,12 +20,12 @@ test("exposes every Phase 2 fault through stable startup names", () => {
 
 test("accepts environment configuration and rejects unknown faults", () => {
   const config = parseFaultConfiguration([], {
-    MOCK_FAULTS: "asr_final_missing,request_done_missing",
+    MOCK_FAULTS: "capabilities_stale,request_done_missing",
     MOCK_FAULT_DELAY_MS: "500",
   });
   assert.deepEqual(
     [...config.names],
-    ["asr_final_missing", "request_done_missing"],
+    ["capabilities_stale", "request_done_missing"],
   );
   assert.equal(config.delayMs, 500);
   assert.throws(

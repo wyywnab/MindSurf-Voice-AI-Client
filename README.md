@@ -1,108 +1,81 @@
 # MindSurf Voice AI Client
 
-This is the Windows and macOS client for the MindSurf Voice AI project.
+MindSurf Voice AI 的 Windows/macOS 桌面客户端与 Voice API v2 本地联调服务。客户端基于
+Tauri 2、Vue 3 和 TypeScript，提供录音、`asr_only` / `asr_llm` 单轮文本处理、临时文本展示、
+一次性文本注入、全局按住说话快捷键、悬浮窗、系统托盘和脱敏诊断。
 
-本仓库包含客户端及联调用 Mock 服务。客户端基于 Tauri 2、Vue 3 和 TypeScript，负责录音、服务通信、交互展示、文本注入和音频播放。
-
-## 主要功能
-
-- 听写、助手和混合模式
-- 全局按住说话快捷键
-- 可实际按键录入并校验冲突、失败自动回滚的全局快捷键配置
-- ASR 与 LLM 文本流式展示
-- TTS 音频流式播放
-- Windows SendInput / macOS Accessibility API 光标位置 Unicode 文本注入
-- 可新建、复制、切换和删除的 WebSocket 服务档案、自动连接和连通性测试
-- Bearer Token AES-256-GCM 加密存储与应用层鉴权
-- Windows/macOS 多麦克风输入、识别语言、语音回复、音色和播放音量设置
-- 请求关键节点时间线、完整运行摘要和可按时间/级别/模块筛选的结构化运行日志
-- 默认排除正文、音频和凭据的脱敏诊断 ZIP 导出
-- 请求状态机、协议事件路由和 Controller 编排的架构重构
-- Mock 故障注入与集成测试覆盖 19 类异常场景
-- 用于开发联调的本地 WebSocket Mock 服务
+当前协议只提供文本结果，不包含多轮对话或下行音频。系统浏览器登录、HTTP 账户/额度/能力、
+一次性 realtime ticket 和长期 WebSocket 均遵循冻结的 [Voice API v2](./docs/v2/README.md)。
 
 ## 目录
 
 ```text
 mindsurf-voice-ai/       Tauri 桌面客户端
-mindsurf-voice-mock/     本地 WebSocket Mock 服务
-docs/DELIVERY.md         客户端交付说明
-docs/WS_PROTOCOL.md      WebSocket v1 级联协议
-docs/v2/                 v2 协议文档、OpenAPI 与 JSON Schema
-docs/MACOS.md            macOS 适配说明
-docs/PHASE1_IMPLEMENTATION.md
-docs/PHASE2_IMPLEMENTATION.md
+mindsurf-voice-mock/     HTTP + ticket + WebSocket v2 本地 Mock
+docs/v2/                 冻结的 OpenAPI、JSON Schema、协议和测试向量
+docs/DELIVERY.md         当前交付状态与待人工验收项
+docs/MACOS.md            macOS 权限、构建和发布说明
 ```
 
-## 本地运行
+## 环境要求
 
-需要准备 Node.js 22+、Rust stable 和 `ffmpeg`。Windows 还需要 WebView2；
-macOS 需要 Xcode Command Line Tools 及 macOS 10.15 或更高版本。
+- Node.js 22+
+- Rust stable
+- Windows 10/11 + WebView2，或 macOS 10.15+
+- macOS 构建需要 Xcode Command Line Tools
 
-客户端不会自动启动 Mock 服务。请按照当前平台分别启动 Mock 和客户端。
+Mock 不再依赖 FFmpeg。
 
-### Windows
+## 本地联调
 
-在仓库根目录启动 Mock 服务：
-
-```powershell
-Set-Location .\mindsurf-voice-mock
-npm install
-npm start
-```
-
-再打开一个 PowerShell 窗口，在仓库根目录启动客户端：
-
-```powershell
-Set-Location .\mindsurf-voice-ai
-npm install
-npm run tauri dev
-```
-
-### macOS
-
-在仓库根目录启动 Mock 服务：
+先启动 Mock：
 
 ```bash
 cd mindsurf-voice-mock
-npm install
+npm ci
 npm start
 ```
 
-再打开一个终端窗口，在仓库根目录启动客户端：
+Mock 默认监听 `http://127.0.0.1:8000`，提供：
+
+- `/v2/auth/*` PKCE、token 交换/轮换和登出；
+- `/v2/users/me`、`/v2/quota`、`/v2/usage`、`/v2/capabilities`；
+- `/v2/realtime/tickets` 与 ticket 指定的 `/v2/voice/ws`；
+- `mindsurf.voice.v2` 长连接、心跳和两种请求模式。
+
+另开终端启动客户端：
 
 ```bash
 cd mindsurf-voice-ai
-npm install
+npm ci
 npm run tauri dev
 ```
 
-Mock 服务默认地址：
+在客户端账户页把 Voice API origin 设置为 `http://127.0.0.1:8000`，然后点击登录。本地 Mock
+会立即完成浏览器授权并回跳应用，无需输入真实账户或密码。
 
-```text
-ws://127.0.0.1:8000/v1/voice/ws
-```
+Windows 默认按住 `Ctrl + Win`，macOS 默认按住 `Control + Command + Space` 录音；松开提交，
+按 `Escape` 取消。macOS 首次使用需授予麦克风和辅助功能权限。
 
-开发环境可为 Mock 启用 Token 鉴权：
+故障注入和接口说明见 [Mock README](./mindsurf-voice-mock/README.md)。
 
-```powershell
-$env:MOCK_AUTH_TOKEN = "dev-token"
-npm start
-```
+## 质量检查
 
 ```bash
-MOCK_AUTH_TOKEN=dev-token npm start
+npm run validate:protocol-v2
+
+cd mindsurf-voice-mock
+npm test
+
+cd ../mindsurf-voice-ai
+npm run check
+npm run build
+
+cd src-tauri
+cargo fmt --all -- --check
+cargo check
+cargo test
 ```
 
-客户端可在设置中保存同一 Token。Token 不写入明文配置，远程服务地址必须使用 `wss://`；`ws://` 仅允许本机回环地址。
-
-Windows 默认按住 `Ctrl + Win`，macOS 默认按住
-`Control + Command + Space` 录音；松开后提交，按 `Escape` 取消。
-
-macOS 首次使用时需要授予麦克风和辅助功能权限。辅助功能用于文本注入；全
-局按住说话快捷键使用系统 Carbon 热键 API，不依赖"输入监控"权限。可以在
-客户端权限页检查并打开对应的"隐私与安全性"面板。启动时如有核心权限未
-授权或快捷键未就绪，客户端会默认进入权限页；点击"初始化系统权限"即可
-按顺序完成授权和实际录音能力检查。
-
-交付情况见 [`docs/DELIVERY.md`](./docs/DELIVERY.md)。
+跨平台系统浏览器回跳、Keychain、原生录音、快捷键、悬浮窗和文本注入仍需在对应操作系统上
+按 [交付清单](./docs/DELIVERY.md) 人工签收。

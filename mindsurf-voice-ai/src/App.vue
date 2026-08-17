@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import ConnectionBadge from "./components/ConnectionBadge.vue";
+import AccountPanel from "./components/AccountPanel.vue";
 import ConnectionPanel from "./components/ConnectionPanel.vue";
 import PermissionsPanel from "./components/PermissionsPanel.vue";
 import RecorderPanel from "./components/RecorderPanel.vue";
@@ -9,7 +10,7 @@ import SettingsPanel from "./components/SettingsPanel.vue";
 import SystemDialogHost from "./components/SystemDialogHost.vue";
 import TopTabs from "./components/TopTabs.vue";
 import { settingsController } from "./controllers/settingsController";
-import { voiceRequestController } from "./controllers/voiceRequestController";
+import { authController } from "./controllers/authController";
 import { getAppInfo } from "./services/appInfo";
 import { syncMacOSAppMenu } from "./services/appMenu";
 import { useI18n } from "./services/i18n";
@@ -20,7 +21,8 @@ import {
   syncTrayConfiguration,
   syncTrayMode,
 } from "./services/tray";
-import { useConnectionStore } from "./stores/connectionStore";
+import { useAuthStore } from "./stores/authStore";
+import { useRealtimeConnectionStore } from "./stores/realtimeConnectionStore";
 import { diagnosticsStoreActions } from "./stores/diagnosticsStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import type { AppInfo } from "./types/app";
@@ -32,7 +34,13 @@ const macPermissions: readonly SystemPermission[] = ["microphone", "accessibilit
 const activeTab = ref<MainTabId>("record");
 const appInfo = ref<AppInfo | null>(null);
 const appInfoError = ref("");
-const connection = useConnectionStore();
+const auth = useAuthStore();
+const realtimeConnection = useRealtimeConnectionStore();
+const visibleConnectionStatus = computed(() =>
+  auth.state.status === "authenticated"
+    ? realtimeConnection.state.status
+    : "disconnected",
+);
 const { t } = useI18n();
 const settings = useSettingsStore();
 const diagnosticsPageVisible = computed(
@@ -41,6 +49,7 @@ const diagnosticsPageVisible = computed(
 );
 const tabs = computed<readonly MainTab[]>(() => [
   { id: "record", label: t("录音") },
+  { id: "account", label: t("账户") },
   ...(diagnosticsPageVisible.value
     ? ([{ id: "connection", label: t("诊断") }] satisfies MainTab[])
     : []),
@@ -152,28 +161,19 @@ onMounted(async () => {
 
   if (result.ok) {
     appInfo.value = result.data;
+    await authController.initialize(result.data);
     await configureStartupPermissions(result.data.platform);
-    voiceRequestController.setIdentity({
-      version: result.data.version,
-      platform: result.data.platform,
-      arch: result.data.arch,
-    });
-    if (settings.state.autoConnect) {
-      voiceRequestController.connectConfiguredService();
-    }
   } else {
     appInfoError.value = result.error.message;
     await configureStartupPermissions(
       globalThis.navigator.userAgent.includes("Mac OS") ? "macos" : "unknown",
     );
-    voiceRequestController.setIdentity({
+    await authController.initialize({
       version: "0.1.0",
       platform: globalThis.navigator.userAgent.includes("Mac OS") ? "macos" : "unknown",
       arch: "unknown",
+      buildProfile: "unknown",
     });
-    if (settings.state.autoConnect) {
-      voiceRequestController.connectConfiguredService();
-    }
   }
 });
 
@@ -181,7 +181,7 @@ onBeforeUnmount(() => {
   trayDisposed = true;
   unlistenTray?.();
   unlistenTray = null;
-  voiceRequestController.disconnect();
+  authController.dispose();
 });
 </script>
 
@@ -196,11 +196,12 @@ onBeforeUnmount(() => {
 
       <TopTabs v-model="activeTab" :tabs="tabs" />
 
-      <ConnectionBadge :status="connection.state.status" />
+      <ConnectionBadge :status="visibleConnectionStatus" />
     </header>
 
     <main class="app-content">
       <RecorderPanel v-show="activeTab === 'record'" />
+      <AccountPanel v-show="activeTab === 'account'" />
       <ConnectionPanel v-if="diagnosticsPageVisible && activeTab === 'connection'" />
       <PermissionsPanel v-show="activeTab === 'permissions'" :app-info="appInfo" />
       <SettingsPanel
@@ -211,7 +212,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="app-footer">
-      <span>{{ t("Phase 2 · 服务档案与诊断增强") }}</span>
+      <span>{{ t("Phase 3 · Voice API v2 迁移") }}</span>
       <span v-if="appInfo">v{{ appInfo.version }} · {{ appInfo.buildProfile }}</span>
     </footer>
   </div>

@@ -2,94 +2,56 @@ import { reactive, readonly } from "vue";
 
 import { createRequestTransition } from "../controllers/requestStateMachine";
 import type { TextInjectionReport, TextInjectionStatus } from "../types/injection";
-import type { RequestLifecycleState, RequestOptionsSnapshot } from "../types/request";
-import type { PlaybackMetrics, PlaybackStatus } from "../types/voice";
+import type { V2TextStage } from "../types/realtimeV2";
+import type { RequestLifecycleState, V2RequestOptionsSnapshot } from "../types/request";
 import { diagnosticsStoreActions } from "./diagnosticsStore";
-
-function emptyPlaybackMetrics(): PlaybackMetrics {
-  return {
-    firstChunkAt: null,
-    playbackStartedAt: null,
-    playbackCompletedAt: null,
-    receivedChunks: 0,
-    receivedSamples: 0,
-    underrunCount: 0,
-  };
-}
 
 const state = reactive({
   activeRequestId: null as string | null,
-  optionsSnapshot: null as RequestOptionsSnapshot | null,
+  v2OptionsSnapshot: null as V2RequestOptionsSnapshot | null,
   status: "idle" as RequestLifecycleState,
-  asrFinal: "",
-  asrLanguage: "",
-  asrPartial: "",
-  asrRevision: -1,
-  assistantFinal: "",
-  assistantLastSequence: -1,
-  assistantStreaming: "",
-  assistantWarning: "",
   lastError: "",
   networkCongested: false,
-  playbackError: "",
-  playbackMetrics: emptyPlaybackMetrics(),
-  playbackStatus: "idle" as PlaybackStatus,
   injectionError: "",
   injectionRemainingText: "",
   injectionReport: null as TextInjectionReport | null,
   injectionStatus: "idle" as TextInjectionStatus,
+  temporaryText: "",
+  stage: null as V2TextStage | null,
+  asrNextSequence: 0,
+  llmNextSequence: 0,
+  finalSnapshotText: null as string | null,
+  commitEligible: false,
+  cancelRequested: false,
+  acceptedMaxRecordingMs: null as number | null,
 });
 
 export const requestStoreActions = {
   beginPreparation() {
     requestStoreActions.resetResult();
-    state.optionsSnapshot = null;
     requestStoreActions.transition("preparing", "request_started");
   },
-  begin(snapshot: RequestOptionsSnapshot) {
-    requestStoreActions.beginPreparation();
-    state.optionsSnapshot = snapshot;
+  beginV2(snapshot: V2RequestOptionsSnapshot, requestId: string) {
+    requestStoreActions.resetResult();
+    state.v2OptionsSnapshot = snapshot;
+    state.activeRequestId = requestId;
+    state.commitEligible = true;
+    requestStoreActions.transition("starting", "request_start_sent");
   },
   clearActiveRequest() {
     state.activeRequestId = null;
   },
   resetResult() {
-    state.asrFinal = "";
-    state.asrLanguage = "";
-    state.asrPartial = "";
-    state.asrRevision = -1;
-    state.assistantFinal = "";
-    state.assistantLastSequence = -1;
-    state.assistantStreaming = "";
-    state.assistantWarning = "";
     state.lastError = "";
     state.networkCongested = false;
-    state.playbackError = "";
-    state.playbackMetrics = emptyPlaybackMetrics();
-    state.playbackStatus = "idle";
-  },
-  setActiveRequest(requestId: string | null) {
-    state.activeRequestId = requestId;
-  },
-  setAsrFinal(text: string, language: string) {
-    state.asrFinal = text;
-    state.asrPartial = "";
-    state.asrLanguage = language;
-  },
-  setAsrPartial(text: string, revision: number) {
-    state.asrPartial = text;
-    state.asrRevision = revision;
-  },
-  setAssistantDelta(text: string, sequence: number) {
-    state.assistantStreaming += text;
-    state.assistantLastSequence = sequence;
-  },
-  setAssistantFinal(text: string) {
-    state.assistantFinal = text;
-    state.assistantStreaming = text;
-  },
-  setAssistantWarning(message: string) {
-    state.assistantWarning = message;
+    state.temporaryText = "";
+    state.stage = null;
+    state.asrNextSequence = 0;
+    state.llmNextSequence = 0;
+    state.finalSnapshotText = null;
+    state.commitEligible = false;
+    state.cancelRequested = false;
+    state.acceptedMaxRecordingMs = null;
   },
   setError(message: string) {
     state.lastError = message;
@@ -102,30 +64,35 @@ export const requestStoreActions = {
   }) {
     state.injectionStatus = input.status;
     if (input.error !== undefined) state.injectionError = input.error;
-    if (input.remainingText !== undefined) {
+    if (input.remainingText !== undefined)
       state.injectionRemainingText = input.remainingText;
-    }
     if (input.report !== undefined) state.injectionReport = input.report;
   },
   setNetworkCongested(congested: boolean) {
     state.networkCongested = congested;
   },
-  setOptionsSnapshot(snapshot: RequestOptionsSnapshot) {
-    state.optionsSnapshot = snapshot;
+  setAcceptedMaxRecordingMs(value: number) {
+    state.acceptedMaxRecordingMs = value;
   },
-  setPlaybackError(message: string) {
-    state.playbackError = message;
+  appendTemporaryText(stage: V2TextStage, delta: string, sequence: number) {
+    state.stage = stage;
+    state.temporaryText += delta;
+    if (stage === "asr") state.asrNextSequence = sequence + 1;
+    else state.llmNextSequence = sequence + 1;
   },
-  setPlaybackMetrics(metrics: PlaybackMetrics) {
-    state.playbackMetrics = metrics;
+  replaceTemporaryText(stage: V2TextStage, text: string) {
+    state.stage = stage;
+    state.temporaryText = text;
   },
-  setPlaybackStatus(status: PlaybackStatus) {
-    state.playbackStatus = status;
+  setFinalSnapshot(text: string) {
+    state.finalSnapshotText = text;
+  },
+  revokeCommit(cancelRequested = false) {
+    state.commitEligible = false;
+    if (cancelRequested) state.cancelRequested = true;
   },
   transition(to: RequestLifecycleState, reason: string) {
-    if (state.status === to) {
-      return true;
-    }
+    if (state.status === to) return true;
     try {
       const transition = createRequestTransition(state.status, to, reason);
       state.status = to;
@@ -133,9 +100,7 @@ export const requestStoreActions = {
       return true;
     } catch (error) {
       state.lastError = error instanceof Error ? error.message : "请求状态异常";
-      if (import.meta.env.DEV) {
-        throw error;
-      }
+      if (import.meta.env.DEV) throw error;
       const transition = {
         from: state.status,
         to: "failed" as const,

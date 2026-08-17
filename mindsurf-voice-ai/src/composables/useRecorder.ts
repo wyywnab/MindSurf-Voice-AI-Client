@@ -31,7 +31,7 @@ const browserRecorder = new MicrophoneRecorder();
 let recorder: NativeMicrophoneRecorder | MicrophoneRecorder = isMacOSClient
   ? nativeRecorder
   : browserRecorder;
-const MAX_RECORDING_MS = 60_000;
+const DEFAULT_MAX_RECORDING_MS = 60_000;
 
 export function useRecorder() {
   const activeTrackCount = ref(0);
@@ -119,10 +119,7 @@ export function useRecorder() {
       await recorder.start({
         onDuration: (value) => {
           durationMs.value = value;
-          const maxDurationMs = Math.min(
-            MAX_RECORDING_MS,
-            options.maxDurationMs ?? MAX_RECORDING_MS,
-          );
+          const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_RECORDING_MS;
           if (value >= maxDurationMs && state.value === "recording") {
             if (options.onAutoStop) {
               options.onAutoStop();

@@ -6,9 +6,8 @@ use tauri::{
 
 use crate::error::{AppError, CommandResult};
 
-const MODE_DICTATION: &str = "dictation";
-const MODE_ASSISTANT: &str = "assistant";
-const MODE_MIXED: &str = "mixed";
+const MODE_ASR_ONLY: &str = "asr_only";
+const MODE_ASR_LLM: &str = "asr_llm";
 
 pub struct TrayMenuState<R: Runtime> {
     open: MenuItem<R>,
@@ -18,17 +17,15 @@ pub struct TrayMenuState<R: Runtime> {
     page_permissions: MenuItem<R>,
     page_settings: MenuItem<R>,
     modes: Submenu<R>,
-    dictation: CheckMenuItem<R>,
-    assistant: CheckMenuItem<R>,
-    mixed: CheckMenuItem<R>,
+    asr_only: CheckMenuItem<R>,
+    asr_llm: CheckMenuItem<R>,
     quit: MenuItem<R>,
 }
 
 impl<R: Runtime> TrayMenuState<R> {
     fn set_mode(&self, mode: &str) -> tauri::Result<()> {
-        self.dictation.set_checked(mode == MODE_DICTATION)?;
-        self.assistant.set_checked(mode == MODE_ASSISTANT)?;
-        self.mixed.set_checked(mode == MODE_MIXED)?;
+        self.asr_only.set_checked(mode == MODE_ASR_ONLY)?;
+        self.asr_llm.set_checked(mode == MODE_ASR_LLM)?;
         Ok(())
     }
 
@@ -42,9 +39,8 @@ impl<R: Runtime> TrayMenuState<R> {
         self.page_permissions.set_text(labels.permissions)?;
         self.page_settings.set_text(labels.settings)?;
         self.modes.set_text(labels.modes)?;
-        self.dictation.set_text(labels.dictation)?;
-        self.assistant.set_text(labels.assistant)?;
-        self.mixed.set_text(labels.mixed)?;
+        self.asr_only.set_text(labels.asr_only)?;
+        self.asr_llm.set_text(labels.asr_llm)?;
         self.quit.set_text(labels.quit)?;
         Ok(())
     }
@@ -58,9 +54,8 @@ struct TrayLabels {
     permissions: &'static str,
     settings: &'static str,
     modes: &'static str,
-    dictation: &'static str,
-    assistant: &'static str,
-    mixed: &'static str,
+    asr_only: &'static str,
+    asr_llm: &'static str,
     quit: &'static str,
 }
 
@@ -75,9 +70,8 @@ impl TrayLabels {
                 permissions: "Permissions",
                 settings: "Settings",
                 modes: "Interaction Mode",
-                dictation: "Dictation",
-                assistant: "Assistant",
-                mixed: "Mixed",
+                asr_only: "Recognition only",
+                asr_llm: "ASR + LLM text processing",
                 quit: "Quit MindSurf Voice AI",
             }
         } else {
@@ -89,9 +83,8 @@ impl TrayLabels {
                 permissions: "权限",
                 settings: "设置",
                 modes: "交互模式",
-                dictation: "听写",
-                assistant: "助手",
-                mixed: "混合",
+                asr_only: "仅识别",
+                asr_llm: "ASR + LLM 文本处理",
                 quit: "退出 MindSurf Voice AI",
             }
         }
@@ -119,16 +112,13 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
         ],
     )?;
 
-    let dictation = CheckMenuItemBuilder::with_id("mode_dictation", "听写")
+    let asr_only = CheckMenuItemBuilder::with_id("mode_asr_only", "仅识别")
         .checked(true)
         .build(handle)?;
-    let assistant = CheckMenuItemBuilder::with_id("mode_assistant", "助手")
+    let asr_llm = CheckMenuItemBuilder::with_id("mode_asr_llm", "ASR + LLM 文本处理")
         .checked(false)
         .build(handle)?;
-    let mixed = CheckMenuItemBuilder::with_id("mode_mixed", "混合")
-        .checked(false)
-        .build(handle)?;
-    let modes = Submenu::with_items(handle, "交互模式", true, &[&dictation, &assistant, &mixed])?;
+    let modes = Submenu::with_items(handle, "交互模式", true, &[&asr_only, &asr_llm])?;
 
     let separator = PredefinedMenuItem::separator(handle)?;
     let quit = MenuItem::with_id(handle, "quit", "退出 MindSurf Voice AI", true, None::<&str>)?;
@@ -142,9 +132,8 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
         page_permissions,
         page_settings,
         modes,
-        dictation,
-        assistant,
-        mixed,
+        asr_only,
+        asr_llm,
         quit,
     });
 
@@ -177,9 +166,8 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
         "page_connection" => navigate(app, "connection"),
         "page_permissions" => navigate(app, "permissions"),
         "page_settings" => navigate(app, "settings"),
-        "mode_dictation" => request_mode(app, MODE_DICTATION),
-        "mode_assistant" => request_mode(app, MODE_ASSISTANT),
-        "mode_mixed" => request_mode(app, MODE_MIXED),
+        "mode_asr_only" => request_mode(app, MODE_ASR_ONLY),
+        "mode_asr_llm" => request_mode(app, MODE_ASR_LLM),
         "quit" => quit_application(app),
         _ => {}
     })
@@ -216,7 +204,7 @@ pub fn set_tray_mode(
     mode: String,
     tray: State<'_, TrayMenuState<tauri::Wry>>,
 ) -> CommandResult<()> {
-    if !matches!(mode.as_str(), MODE_DICTATION | MODE_ASSISTANT | MODE_MIXED) {
+    if !matches!(mode.as_str(), MODE_ASR_ONLY | MODE_ASR_LLM) {
         return CommandResult::failure(AppError::new(
             "invalid_voice_mode",
             "tray mode is invalid",

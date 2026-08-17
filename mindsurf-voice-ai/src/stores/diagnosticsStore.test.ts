@@ -4,7 +4,7 @@ import { diagnosticsStoreActions, useDiagnosticsStore } from "./diagnosticsStore
 
 describe("diagnosticsStore timeline", () => {
   it("records each semantic event only once", () => {
-    diagnosticsStoreActions.beginTimeline("dictation");
+    diagnosticsStoreActions.beginTimeline("asr_only");
     expect(
       diagnosticsStoreActions.recordTimeline("asr.final", "asr", "收到最终识别结果"),
     ).toBe(true);

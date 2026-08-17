@@ -1,23 +1,21 @@
 export const MOCK_FAULTS = Object.freeze([
-  "handshake_delay",
-  "handshake_timeout",
-  "auth_missing",
-  "auth_invalid",
-  "auth_expired",
-  "request_accepted_timeout",
-  "input_committed_timeout",
-  "asr_final_missing",
-  "llm_first_token_delay",
-  "tts_midstream_failure",
-  "disconnect_during_request",
-  "duplicate_event_id",
-  "stale_request_id",
-  "unknown_message_type",
-  "out_of_order_control",
-  "corrupt_audio_frame",
-  "request_done_early",
+  "authorize_rejected",
+  "token_response_uncertain",
+  "refresh_response_uncertain",
+  "refresh_token_reused",
+  "capabilities_stale",
+  "ticket_expired",
+  "ticket_consumed",
+  "hello_timeout",
+  "heartbeat_timeout",
+  "accepted_timeout",
+  "input_statistics_mismatch",
+  "asr_failed",
+  "llm_failed",
+  "final_done_mismatch",
+  "cancel_race",
   "request_done_missing",
-  "cancellation_timeout",
+  "disconnect_processing",
 ]);
 
 const KNOWN_FAULTS = new Set(MOCK_FAULTS);
@@ -36,7 +34,7 @@ export function parseFaultConfiguration(
     throw new Error(`未知 Mock 故障场景：${unknown.join(", ")}`);
   }
   const delayText =
-    optionValue(argv, "--fault-delay-ms") ?? env.MOCK_FAULT_DELAY_MS ?? "2000";
+    optionValue(argv, "--fault-delay-ms") ?? env.MOCK_FAULT_DELAY_MS ?? "250";
   const delayMs = Number.parseInt(delayText, 10);
   if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > 120_000) {
     throw new Error("Mock 故障延迟必须是 0 到 120000 毫秒之间的整数");
@@ -46,8 +44,8 @@ export function parseFaultConfiguration(
 
 export function printFaultHelp() {
   return [
-    "用法：node server.mjs [--fault name[,name...]] [--fault-delay-ms 2000]",
-    "可用故障场景：",
+    "用法：node server.mjs [--fault name[,name...]] [--fault-delay-ms 250]",
+    "可用 Voice API v2 故障场景：",
     ...MOCK_FAULTS.map((name) => `  - ${name}`),
   ].join("\n");
 }

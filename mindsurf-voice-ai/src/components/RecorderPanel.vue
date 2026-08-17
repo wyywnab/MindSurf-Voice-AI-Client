@@ -5,26 +5,29 @@ import { useRecorder } from "../composables/useRecorder";
 import { useI18n } from "../services/i18n";
 import { RecordingController } from "../controllers/recordingController";
 import { OverlaySyncController } from "../controllers/overlaySyncController";
+import { voiceRequestControllerV2 } from "../controllers/voiceRequestControllerV2";
 import { settingsController } from "../controllers/settingsController";
-import { voiceRequestController } from "../controllers/voiceRequestController";
 import {
   reportShortcutEventHandled,
   subscribeShortcutEvents,
 } from "../services/shortcuts";
-import { useConnectionStore } from "../stores/connectionStore";
+import { useRealtimeConnectionStore } from "../stores/realtimeConnectionStore";
+import { useCapabilitiesStore } from "../stores/capabilitiesStore";
 import { useRequestStore } from "../stores/requestStore";
 import { settingsStoreActions, useSettingsStore } from "../stores/settingsStore";
 import type { OverlaySnapshot } from "../types/overlay";
-import { VOICE_MODE_LABELS, type VoiceInteractionMode } from "../types/voice";
+import type { VoiceModeV2 } from "../types/httpApi";
+import { VOICE_MODE_LABELS } from "../types/voice";
 import AudioMeter from "./AudioMeter.vue";
 
 const { t } = useI18n();
 
 const recorder = useRecorder();
 const recordingController = new RecordingController(recorder);
-const connectionState = useConnectionStore().state;
+const connectionState = useRealtimeConnectionStore().state;
 const requestState = useRequestStore().state;
 const settingsState = useSettingsStore().state;
+const capabilitiesState = useCapabilitiesStore().state;
 let shortcutAction = Promise.resolve();
 let shortcutDisposed = false;
 let shortcutHeld = false;
@@ -34,6 +37,8 @@ let recordingAttempt = 0;
 const canStart = computed(
   () =>
     connectionState.status === "connected" &&
+    Boolean(capabilitiesState.capabilities) &&
+    !capabilitiesState.selectionConfirmationRequired &&
     !requestState.activeRequestId &&
     recordingController.canStart(),
 );
@@ -65,14 +70,14 @@ const stateLabel = computed(() => {
     if (requestState.status === "committing") {
       return t("正在提交录音");
     }
-    if (requestState.status === "recognizing") {
+    if (requestState.status === "processing_asr_final") {
       return t("正在等待最终识别");
     }
-    if (requestState.status === "generating") {
-      return t("正在生成回复");
+    if (requestState.status === "processing_llm") {
+      return t("正在处理文本");
     }
-    if (requestState.status === "playing") {
-      return t("正在播放回复");
+    if (requestState.status === "ready_to_commit") {
+      return t("正在确认最终结果");
     }
     if (requestState.status === "completed") {
       return t("识别完成");
@@ -92,31 +97,7 @@ const stateLabel = computed(() => {
   );
 });
 
-const transcript = computed(() => requestState.asrFinal || requestState.asrPartial);
-const assistantText = computed(
-  () => requestState.assistantFinal || requestState.assistantStreaming,
-);
-const playbackActive = computed(() =>
-  ["buffering", "playing"].includes(requestState.playbackStatus),
-);
-const playbackStatusLabel = computed(() =>
-  t(
-    {
-      idle: "等待语音",
-      buffering: "正在缓冲",
-      playing: "正在播放",
-      done: "播放完成",
-      stopped: "已停止",
-      error: "播放失败",
-    }[requestState.playbackStatus],
-  ),
-);
-const firstPlaybackDelay = computed(() => {
-  const { firstChunkAt, playbackStartedAt } = requestState.playbackMetrics;
-  return firstChunkAt !== null && playbackStartedAt !== null
-    ? `${playbackStartedAt - firstChunkAt} ms`
-    : "—";
-});
+const transcript = computed(() => requestState.temporaryText);
 const injectionStatusLabel = computed(() =>
   t(
     {
@@ -132,27 +113,19 @@ const injectionStatusLabel = computed(() =>
 const overlayActive = computed(
   () =>
     settingsState.overlayEnabled &&
-    (recorder.isBusy.value ||
-      Boolean(requestState.activeRequestId) ||
-      playbackActive.value),
+    (recorder.isBusy.value || Boolean(requestState.activeRequestId)),
 );
 
 function createOverlaySnapshot(): OverlaySnapshot {
   return {
-    assistantText: assistantText.value,
     cancellable: recorder.isBusy.value || Boolean(requestState.activeRequestId),
     duration: formattedDuration.value,
     durationMs: recorder.durationMs.value,
     level: recorder.level.value,
     locale: settingsState.interfaceLocale,
-    mode: settingsState.selectedMode,
+    mode: capabilitiesState.selectedMode,
     recording: recorder.isRecording.value,
-    status:
-      requestState.status === "failed"
-        ? t("处理失败")
-        : playbackActive.value
-          ? playbackStatusLabel.value
-          : stateLabel.value,
+    status: requestState.status === "failed" ? t("处理失败") : stateLabel.value,
     transcript: transcript.value,
     updatedAtMs: Date.now(),
   };
@@ -184,12 +157,8 @@ async function startNetworkRecording(
   }
 }
 
-function selectMode(mode: VoiceInteractionMode) {
+function selectMode(mode: VoiceModeV2) {
   settingsController.setMode(mode);
-}
-
-function injectManually(text: string) {
-  void voiceRequestController.textOutput.output(text, 1_500);
 }
 
 async function stopNetworkRecording() {
@@ -220,9 +189,6 @@ function handleShortcutPressed(timestampMs: number) {
   }
   shortcutHeld = true;
   enqueueShortcutAction(async () => {
-    if (playbackActive.value) {
-      await recordingController.interruptPlayback();
-    }
     if (!canStart.value) {
       return;
     }
@@ -298,10 +264,8 @@ watch(
 watch(
   [
     transcript,
-    assistantText,
-    () => settingsState.selectedMode,
+    () => capabilitiesState.selectedMode,
     () => settingsState.interfaceLocale,
-    () => requestState.playbackStatus,
   ],
   () => overlaySync.publish(),
 );
@@ -333,7 +297,7 @@ onBeforeUnmount(() => {
           v-for="(label, mode) in VOICE_MODE_LABELS"
           :key="mode"
           type="button"
-          :class="{ 'is-active': settingsState.selectedMode === mode }"
+          :class="{ 'is-active': capabilitiesState.selectedMode === mode }"
           :disabled="Boolean(requestState.activeRequestId)"
           @click="selectMode(mode)"
         >
@@ -409,29 +373,13 @@ onBeforeUnmount(() => {
             </span>
             <span v-else>
               {{
-                requestState.asrFinal
-                  ? requestState.asrLanguage || t("已完成")
-                  : requestState.asrPartial
-                    ? `revision ${requestState.asrRevision}`
-                    : t("等待录音")
+                requestState.stage ? requestState.stage.toUpperCase() : t("等待录音")
               }}
             </span>
           </header>
-          <p :class="{ 'is-partial': !requestState.asrFinal }">
+          <p :class="{ 'is-partial': requestState.status !== 'completed' }">
             {{ transcript || t("录音过程中将在这里显示临时识别结果。") }}
           </p>
-          <div v-if="requestState.asrFinal" class="transcript-actions">
-            <button
-              class="button button-secondary button-compact"
-              type="button"
-              :disabled="
-                ['waiting', 'injecting'].includes(requestState.injectionStatus)
-              "
-              @click="injectManually(requestState.asrFinal)"
-            >
-              {{ t("切换窗口后注入") }}
-            </button>
-          </div>
         </section>
       </div>
 
@@ -451,79 +399,13 @@ onBeforeUnmount(() => {
         {{ t(requestState.lastError) }}
       </p>
 
-      <section
-        v-if="settingsState.selectedMode !== 'dictation'"
-        class="transcript-card assistant-card"
-        aria-labelledby="assistant-title"
+      <p
+        v-if="capabilitiesState.selectionConfirmationRequired"
+        class="inline-error"
+        role="status"
       >
-        <header>
-          <strong id="assistant-title">{{ t("助手回复") }}</strong>
-          <span>
-            {{
-              requestState.assistantFinal
-                ? t("已完成")
-                : requestState.assistantStreaming
-                  ? t("片段 {count}", { count: requestState.assistantLastSequence + 1 })
-                  : requestState.status === "generating"
-                    ? t("正在思考")
-                    : t("等待识别")
-            }}
-          </span>
-        </header>
-        <p :class="{ 'is-partial': !requestState.assistantFinal }">
-          {{ assistantText || t("识别完成后将在这里流式显示回复。") }}
-        </p>
-        <small v-if="requestState.assistantWarning" class="warning-text">
-          {{ t(requestState.assistantWarning) }}
-        </small>
-        <div v-if="requestState.assistantFinal" class="transcript-actions">
-          <button
-            class="button button-secondary button-compact"
-            type="button"
-            :disabled="['waiting', 'injecting'].includes(requestState.injectionStatus)"
-            @click="injectManually(requestState.assistantFinal)"
-          >
-            {{ t("切换窗口后注入") }}
-          </button>
-        </div>
-      </section>
-
-      <section
-        v-if="
-          settingsState.selectedMode !== 'dictation' &&
-          requestState.playbackStatus !== 'idle'
-        "
-        class="playback-card"
-        :data-status="requestState.playbackStatus"
-        aria-live="polite"
-      >
-        <div>
-          <strong>{{ t("语音播放") }}</strong>
-          <span>{{ playbackStatusLabel }}</span>
-        </div>
-        <dl>
-          <div>
-            <dt>{{ t("首包至首播") }}</dt>
-            <dd>{{ firstPlaybackDelay }}</dd>
-          </div>
-          <div>
-            <dt>{{ t("分片") }}</dt>
-            <dd>{{ requestState.playbackMetrics.receivedChunks }}</dd>
-          </div>
-          <div>
-            <dt>{{ t("欠载") }}</dt>
-            <dd>{{ requestState.playbackMetrics.underrunCount }}</dd>
-          </div>
-        </dl>
-        <button
-          v-if="playbackActive"
-          class="button button-secondary button-compact"
-          type="button"
-          @click="recordingController.interruptPlayback"
-        >
-          {{ t("停止播放") }}
-        </button>
-      </section>
+        {{ t("服务能力已更新，请重新选择并确认上方请求模式。") }}
+      </p>
 
       <section
         v-if="requestState.injectionStatus !== 'idle'"
@@ -562,7 +444,7 @@ onBeforeUnmount(() => {
             "
             class="button button-primary button-compact"
             type="button"
-            @click="voiceRequestController.textOutput.retry()"
+            @click="voiceRequestControllerV2.textOutput.retry()"
           >
             {{ t("切换窗口后重试剩余文本") }}
           </button>
@@ -570,7 +452,7 @@ onBeforeUnmount(() => {
             v-if="!['waiting', 'injecting'].includes(requestState.injectionStatus)"
             class="button button-secondary button-compact"
             type="button"
-            @click="voiceRequestController.textOutput.dismiss"
+            @click="voiceRequestControllerV2.textOutput.dismiss"
           >
             {{ requestState.injectionRemainingText ? t("放弃待注入文本") : t("关闭") }}
           </button>

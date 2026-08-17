@@ -1,44 +1,69 @@
-# MindSurf Voice Mock
+# MindSurf Voice API v2 Mock
 
-MindSurf Voice AI Phase 1 的独立本地 WebSocket mock 服务。它不执行真实 ASR、LLM 或 TTS 推理，只用于验证客户端协议和状态机。M4 使用同目录的 `mock_audio.m4a`，服务启动时通过 `ffmpeg` 解码为 24 kHz 单声道 PCM16，再按 80 ms 分片流式发送。测试文件以 40 ms 间隔下发，模拟 TTS 持续产生前置播放缓冲，避免本机定时器抖动造成假性欠载。
+用于桌面客户端本地开发和契约联调的内存 Mock。它实现冻结的 HTTP、一次性 realtime ticket 和
+`mindsurf.voice.v2` WebSocket 文本协议，不执行真实 ASR/LLM 推理，也不生成下行音频。
 
 ## 启动
 
-```powershell
-npm install
+```bash
+npm ci
 npm start
 ```
 
-运行环境需要能从 `PATH` 调用 `ffmpeg`。
-
-默认监听：
+默认 HTTP origin：
 
 ```text
-ws://127.0.0.1:8000/v1/voice/ws
+http://127.0.0.1:8000
 ```
 
-可以通过 `PORT` 环境变量修改端口。
+可使用 `PORT` 修改端口。客户端账户页应填写 HTTP origin，不填写 WebSocket URL或长期 Token。
 
-设置 `MOCK_AUTH_TOKEN` 后，Mock 要求 `client.hello.auth` 携带对应 Bearer Token。`MOCK_EXPIRED_TOKEN` 可指定用于触发 `token_expired` 的测试 Token。
+本地授权页会直接签发短时 Authorization Code，并重定向至 `mindsurf://auth/callback`。所有用户、
+token、ticket、额度和用量数据仅存在于 Mock 进程内存，重启后重置。
 
-## M4 故障注入
+## 已实现接口
 
-默认启动保持正常协议路径：
+- `GET /v2/auth/authorize`
+- `POST /v2/auth/token`
+- `POST /v2/auth/refresh`
+- `POST /v2/auth/logout`
+- `GET /v2/users/me`
+- `GET /v2/quota`
+- `GET /v2/usage`
+- `GET /v2/capabilities`
+- `POST /v2/realtime/tickets`
+- ticket 指定的 `GET /v2/voice/ws` WebSocket Upgrade
+
+WebSocket 支持 hello、心跳、单活跃请求、严格 v2 INPUT_PCM 帧、commit 统计、取消、额度结算、
+`asr_only` 和 `asr_llm` 的完整文本生命周期。ticket 30 秒过期且只能消费一次。
+
+## 故障注入
 
 ```bash
-npm start
-```
-
-M4 故障注入通过 `--fault`（逗号分隔）或 `MOCK_FAULTS` 选择，延迟类场景通过 `--fault-delay-ms` 或 `MOCK_FAULT_DELAY_MS` 设置毫秒数：
-
-```bash
-node server.mjs --fault asr_final_missing,request_done_missing
-node server.mjs --fault llm_first_token_delay --fault-delay-ms 20000
+node server.mjs --fault capabilities_stale
+node server.mjs --fault cancel_race --fault-delay-ms 1000
+node server.mjs --fault asr_failed,request_done_missing
 node server.mjs --help
 ```
 
-稳定场景名包括握手延迟/超时、三类鉴权错误、请求接受/提交超时、ASR final 缺失、LLM 首 Token 延迟、TTS 中途失败、处理中断线、重复事件、过期请求、未知消息、乱序控制消息、损坏音频、`request.done` 提前/缺失和取消确认超时。测试命令同时运行配置契约测试与正常协议集成测试：
+也可设置 `MOCK_FAULTS` 和 `MOCK_FAULT_DELAY_MS`。稳定故障名包括：
+
+- 浏览器拒绝、token/refresh 响应不确定和 refresh token 重放；
+- capabilities stale、ticket 过期/已消费；
+- hello/heartbeat/accepted 超时；
+- 输入统计不一致、ASR/LLM 失败、处理中断线；
+- final/done 不一致、取消输给成功竞态和 done 缺失。
+
+`token_response_uncertain` 与 `refresh_response_uncertain` 会在服务端提交结果后断开第一次 HTTP
+响应；客户端必须使用相同 Idempotency-Key 和完全相同的 body 恢复结果。
+
+## 测试
 
 ```bash
 npm test
 ```
+
+测试覆盖 PKCE、token 幂等与轮换、受保护 HTTP 接口、用量分页、ticket 单次消费、同一长连接的
+两种模式、取消后继续复用连接，以及 capabilities stale/final-done mismatch 故障路径。
+
+权威规范见 [docs/v2](../docs/v2/README.md)。

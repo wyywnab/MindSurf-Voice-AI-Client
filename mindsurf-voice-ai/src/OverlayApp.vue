@@ -15,13 +15,12 @@ import { VOICE_MODE_LABELS } from "./types/voice";
 const { t } = useI18n();
 
 const snapshot = reactive<OverlaySnapshot>({
-  assistantText: "",
   cancellable: false,
   duration: "00:00.0",
   durationMs: 0,
   level: 0,
   locale: "zh-CN",
-  mode: "dictation",
+  mode: "asr_only",
   recording: false,
   status: "准备录音",
   transcript: "",
@@ -41,9 +40,7 @@ let levelPollTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
 let targetLevel = 0;
 let unlisten: (() => void) | null = null;
 
-const displayText = computed(
-  () => snapshot.assistantText || snapshot.transcript || t("正在等待语音输入…"),
-);
+const displayText = computed(() => snapshot.transcript || t("正在等待语音输入…"));
 const displayedDuration = computed(() => formatDuration(displayedDurationMs.value));
 const meterWidth = computed(() => `${Math.max(4, displayedLevel.value * 100)}%`);
 

@@ -1,25 +1,27 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
-import { voiceRequestController } from "../controllers/voiceRequestController";
+import { realtimeConnectionController } from "../controllers/realtimeConnectionController";
 import { calculateTimelineMetrics } from "../services/diagnostics/timeline";
 import { useI18n } from "../services/i18n";
 import { showConfirm } from "../services/systemDialog";
-import { useConnectionStore } from "../stores/connectionStore";
+import { useRealtimeConnectionStore } from "../stores/realtimeConnectionStore";
 import {
   diagnosticsStoreActions,
   useDiagnosticsStore,
 } from "../stores/diagnosticsStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import type { LogLevel } from "../types/diagnostics";
-import { VOICE_MODE_LABELS } from "../types/voice";
+import { CONNECTION_STATUS_LABELS, VOICE_MODE_LABELS } from "../types/voice";
 import ConnectionBadge from "./ConnectionBadge.vue";
 
-const connection = useConnectionStore();
+const connection = useRealtimeConnectionStore();
 const { t } = useI18n();
 const diagnostics = useDiagnosticsStore();
 const settings = useSettingsStore();
-const connectionLabel = computed(() => t(connection.connectionLabel.value));
+const connectionLabel = computed(() =>
+  t(CONNECTION_STATUS_LABELS[connection.state.status]),
+);
 const selectedRequestId = ref("");
 const logLevel = ref<LogLevel | "all">("all");
 const logModule = ref("all");
@@ -69,33 +71,18 @@ function formatFields(fields: Record<string, unknown> | undefined) {
   return fields ? JSON.stringify(fields) : "";
 }
 
-function serviceOrigin(value: string) {
-  try {
-    return new globalThis.URL(value).origin;
-  } catch {
-    return "<invalid-url>";
-  }
-}
-
 async function confirmExport() {
   const confirmed = await showConfirm(
     t(
-      "诊断包将包含应用信息、脱敏后的服务地址、请求时间线和轮转日志；不会包含 Token、完整转录、完整回复或音频。确认导出？",
+      "诊断包将包含应用信息、脱敏后的服务地址、请求时间线和轮转日志；不会包含凭据、完整文本或音频。确认导出？",
     ),
     { title: t("导出诊断包"), kind: "warning", confirmLabel: t("导出") },
   );
   if (confirmed) {
     await diagnosticsStoreActions.export({
-      activeServiceProfileId: settings.state.activeServiceProfileId,
-      serviceProfiles: settings.state.serviceProfiles.map((profile) => ({
-        ...profile,
-        websocketUrl: serviceOrigin(profile.websocketUrl),
-      })),
+      voiceApiOrigin: settings.state.voiceApiOrigin,
       audio: {
         inputDeviceConfigured: Boolean(settings.state.inputDeviceId),
-        language: settings.state.language,
-        audioResponseEnabled: settings.state.audioResponseEnabled,
-        playbackVolume: settings.state.playbackVolume,
       },
     });
   }
@@ -143,7 +130,7 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
             "
             class="button button-secondary"
             type="button"
-            @click="voiceRequestController.connectConfiguredService()"
+            @click="realtimeConnectionController.connect()"
           >
             {{ t("连接服务") }}
           </button>
@@ -151,13 +138,12 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
         <div class="connection-grid">
           <article class="detail-card">
             <span class="detail-label">{{ t("服务地址") }}</span>
-            <code>{{ settings.state.serviceUrl }}</code>
+            <code>{{ settings.state.voiceApiOrigin }}</code>
           </article>
           <article class="detail-card">
             <span class="detail-label">{{ t("协议状态") }}</span>
             <strong v-if="connection.state.serverHello">
-              v{{ connection.state.serverHello.protocol_version }} ·
-              {{ connection.state.serverHello.pipeline }}
+              Voice API v{{ connection.state.serverHello.protocol_version }}
             </strong>
             <strong v-else>{{ connectionLabel }}</strong>
           </article>
@@ -179,8 +165,8 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
             type="button"
             @click="
               connection.state.status === 'disconnected'
-                ? voiceRequestController.connectConfiguredService()
-                : voiceRequestController.retryConnection()
+                ? realtimeConnectionController.connect()
+                : realtimeConnectionController.retryNow()
             "
           >
             {{ t("立即重试") }}
@@ -223,11 +209,6 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
             ><b>{{ t("上行") }}</b> {{ timeline.audioFramesSent }} {{ t("帧") }} /
             {{ timeline.audioBytesSent }} B</span
           >
-          <span
-            ><b>{{ t("下行") }}</b> {{ timeline.audioChunksReceived }}
-            {{ t("分片") }}</span
-          >
-          <span><b>Underrun</b> {{ timeline.underrunCount }}</span>
           <span
             ><b>{{ t("重连") }}</b> {{ timeline.reconnectCount }}</span
           >

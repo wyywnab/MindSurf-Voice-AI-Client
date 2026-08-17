@@ -1,37 +1,20 @@
-import type { VoiceInteractionMode } from "./voice";
+import type { V2RequestStartPayload, V2TextStage } from "./realtimeV2";
 
 export type RequestLifecycleState =
   | "idle"
   | "preparing"
+  | "starting"
   | "recording"
   | "committing"
-  | "recognizing"
-  | "generating"
-  | "playing"
+  | "processing_asr_final"
+  | "processing_llm"
+  | "ready_to_commit"
   | "completed"
   | "cancelling"
   | "cancelled"
   | "failed";
 
 export type RequestTerminalState = "completed" | "cancelled" | "failed";
-
-export interface RequestOptionsSnapshot {
-  autoInjectionEnabled: boolean;
-  injectionMaxCodePoints: number;
-  inputDeviceId: string | null;
-  mode: VoiceInteractionMode;
-  protocolMode: "dictation" | "assistant";
-  language: string;
-  wantsAudio: boolean;
-  voice: string;
-  playbackVolume: number;
-  selection: {
-    asr: string;
-    llm: string | null;
-    tts: string | null;
-    outputAudio: string | null;
-  };
-}
 
 export interface RequestTransition {
   from: RequestLifecycleState;
@@ -40,10 +23,17 @@ export interface RequestTransition {
   atMonotonicMs: number;
 }
 
-export type CancelReason =
-  | "audio_backpressure"
-  | "client_timeout"
-  | "connection_lost"
-  | "protocol_error"
-  | "user_cancelled"
-  | "user_interrupted";
+export interface V2RequestOptionsSnapshot extends V2RequestStartPayload {
+  autoInjectionEnabled: boolean;
+  injectionMaxCodePoints: number;
+}
+
+export interface V2TemporaryTextState {
+  temporaryText: string;
+  stage: V2TextStage | null;
+  asrNextSequence: number;
+  llmNextSequence: number;
+  finalSnapshotText: string | null;
+  commitEligible: boolean;
+  cancelRequested: boolean;
+}
