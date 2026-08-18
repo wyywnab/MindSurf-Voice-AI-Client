@@ -80,6 +80,12 @@ cd mindsurf-voice-ai
 npm run build:macos:debug
 ```
 
+系统浏览器登录回跳必须使用重新生成并启动过的 `.app` 验证。应用包的 `Info.plist` 声明
+`mindsurf` URL Scheme；macOS 在应用包启动后将其注册为 `mindsurf://` 的处理程序。浏览器授权页
+点击“登录并授权”时，应提示打开 MindSurf Voice AI。若没有提示，先完全退出旧进程，重新执行上述
+构建脚本并启动 `src-tauri/target/debug/bundle/macos/MindSurf Voice AI.app`。裸二进制或旧应用包
+不会获得新 Scheme 声明。
+
 不要使用 `tauri dev` 或未经 bundle 签名的裸二进制验证 TCC 权限。本地没有
 Apple Development 签名证书时，脚本会使用标识为 `org.sast.mindsurf` 的 ad-hoc
 签名；每次重新构建都会产生新的代码哈希，因此必须先完全退出旧进程，再执行

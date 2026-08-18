@@ -49,13 +49,17 @@ export class AuthController {
   async initialize(appInfo: AppInfo) {
     this.appInfo = appInfo;
     this.configureApi();
-    this.unsubscribeDeepLinks ??= await subscribeAuthCallbacks((url) => {
-      void this.handleCallback(url);
-    });
-    this.initializationInFlight ??= this.restoreSession().finally(() => {
+    this.initializationInFlight ??= this.initializeAuthState().finally(() => {
       this.initializationInFlight = null;
     });
     return this.initializationInFlight;
+  }
+
+  private async initializeAuthState() {
+    await this.restoreSession();
+    this.unsubscribeDeepLinks ??= await subscribeAuthCallbacks((url) => {
+      void this.handleCallback(url);
+    });
   }
 
   async startAuthorization(prompt?: "login" | "select_account") {
@@ -72,6 +76,15 @@ export class AuthController {
       this.accountRefreshInFlight = null;
     });
     return this.accountRefreshInFlight;
+  }
+
+  async listUsage(fromMs: number, toMs: number) {
+    const { api, tokens } = this.requireConfigured();
+    if (!tokens.hasUsableAccessToken()) {
+      const restored = await tokens.refresh();
+      if (!restored) throw new ReauthenticationRequiredError("登录已过期，请重新登录");
+    }
+    return api.listAllUsage({ fromMs, toMs, limit: 100 });
   }
 
   private async performAccountRefresh() {
@@ -184,12 +197,20 @@ export class AuthController {
   private async handleCallback(value: string) {
     const callback = parseAuthCallback(value);
     const attempt = this.attempt;
-    if (!callback || !attempt || Date.now() - attempt.createdAt > AUTH_TIMEOUT_MS) {
+    const ignoredReason = !callback
+      ? "invalid_callback"
+      : !attempt
+        ? "no_active_attempt"
+        : Date.now() - attempt.createdAt > AUTH_TIMEOUT_MS
+          ? "attempt_expired"
+          : null;
+    if (!callback || !attempt || ignoredReason) {
       diagnosticsStoreActions.log(
         "warn",
         "auth",
         "auth.callback_ignored",
         "已忽略无效或过期的登录回跳",
+        { fields: { reason: ignoredReason } },
       );
       return;
     }
@@ -361,7 +382,13 @@ async function retryUncertain<T>(operation: () => Promise<T>, windowMs: number) 
 }
 
 function describeError(error: unknown) {
-  return error instanceof Error ? error.message : "登录操作失败";
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object") {
+    const message = Reflect.get(error, "message");
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return "登录操作失败，请检查服务地址与网络连接";
 }
 
 export const authController = new AuthController();

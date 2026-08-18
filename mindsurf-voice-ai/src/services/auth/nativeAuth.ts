@@ -1,20 +1,65 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 export async function openSystemBrowser(url: string) {
   if (!isTauri()) {
-    globalThis.open(url, "_blank", "noopener,noreferrer");
+    const opened = globalThis.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) throw new Error("浏览器窗口被拦截，请允许弹出窗口后重试");
     return;
   }
-  await openUrl(url);
+  try {
+    await openUrl(url);
+  } catch (error) {
+    const browserError = new Error(`无法打开系统浏览器：${describeNativeError(error)}`);
+    (browserError as Error & { cause: unknown }).cause = error;
+    throw browserError;
+  }
+}
+
+function describeNativeError(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object") {
+    const message = Reflect.get(error, "message");
+    if (typeof message === "string" && message.trim()) return message;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      // Fall through to the stable message below.
+    }
+  }
+  return "系统未返回具体错误";
 }
 
 export async function subscribeAuthCallbacks(handler: (url: string) => void) {
   if (!isTauri()) return () => undefined;
-  const initial = await getCurrent();
-  initial?.forEach(handler);
-  return onOpenUrl((urls) => urls.forEach(handler));
+  const delivered = new Set<string>();
+  const deliver = (urls: string[] | null) => {
+    urls?.forEach((url) => {
+      if (delivered.has(url)) return;
+      delivered.add(url);
+      handler(url);
+    });
+  };
+  const drainNativeQueue = async () => {
+    deliver(await invoke<string[]>("take_pending_auth_callbacks"));
+  };
+
+  // Install both listeners before reading startup URLs. This closes the gap where
+  // macOS can deliver an URL while the WebView is still initializing.
+  const unlistenNative = await listen("auth://callback-received", () => {
+    void drainNativeQueue();
+  });
+  const unlistenPlugin = await onOpenUrl(deliver);
+  deliver(await getCurrent());
+  await drainNativeQueue();
+
+  return () => {
+    unlistenNative();
+    unlistenPlugin();
+  };
 }
 
 export function parseAuthCallback(value: string) {

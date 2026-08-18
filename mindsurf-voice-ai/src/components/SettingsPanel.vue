@@ -2,7 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { settingsController } from "../controllers/settingsController";
+import { authController } from "../controllers/authController";
 import { subscribeAudioDeviceChanges } from "../services/audioInputDevices";
+import { validateApiOrigin } from "../services/http/apiOrigin";
 import { useI18n } from "../services/i18n";
 import { runMicrophoneTest } from "../services/microphoneTest";
 import { formatShortcutBinding } from "../services/shortcutBinding";
@@ -30,6 +32,9 @@ const microphoneStatus = ref<"idle" | "testing" | "succeeded" | "failed">("idle"
 const microphoneLevel = ref(0);
 const microphoneError = ref("");
 const clearError = ref("");
+const apiOrigin = ref(settings.voiceApiOrigin);
+const apiOriginMessage = ref("");
+const apiOriginSaving = ref(false);
 let captureAbort: InstanceType<typeof globalThis.AbortController> | null = null;
 let unsubscribeDevices: (() => void) | null = null;
 
@@ -125,6 +130,22 @@ async function clearLocalData() {
   }
 }
 
+async function saveApiOrigin() {
+  apiOriginMessage.value = "";
+  apiOriginSaving.value = true;
+  try {
+    const validated = validateApiOrigin(apiOrigin.value);
+    await authController.changeApiOrigin(validated);
+    apiOrigin.value = validated;
+    apiOriginMessage.value = "API 地址已保存";
+  } catch (error) {
+    apiOriginMessage.value =
+      error instanceof Error ? error.message : "API 地址保存失败";
+  } finally {
+    apiOriginSaving.value = false;
+  }
+}
+
 onMounted(() => {
   void settingsController.refreshAudioInputDevices();
   unsubscribeDevices = subscribeAudioDeviceChanges(() =>
@@ -150,6 +171,28 @@ onBeforeUnmount(() => {
     </header>
 
     <div class="panel-body settings-grid">
+      <article class="settings-card">
+        <h2>{{ t("服务连接") }}</h2>
+        <label>
+          <span>Voice API origin</span>
+          <input v-model="apiOrigin" type="url" :disabled="apiOriginSaving" />
+        </label>
+        <p class="settings-hint">
+          生产环境仅允许 HTTPS；HTTP 仅限本机开发服务。修改地址会退出当前登录。
+        </p>
+        <button
+          class="button button-secondary"
+          type="button"
+          :disabled="apiOriginSaving"
+          @click="saveApiOrigin"
+        >
+          {{ apiOriginSaving ? "正在保存…" : "保存服务地址" }}
+        </button>
+        <p v-if="apiOriginMessage" class="settings-hint" aria-live="polite">
+          {{ apiOriginMessage }}
+        </p>
+      </article>
+
       <article class="settings-card">
         <h2>{{ t("请求") }}</h2>
         <label>

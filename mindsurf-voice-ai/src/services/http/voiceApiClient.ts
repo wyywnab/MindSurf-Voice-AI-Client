@@ -39,9 +39,10 @@ export class VoiceApiError extends Error {
 
 export class VoiceApiNetworkError extends Error {
   readonly uncertain = true;
-  constructor(message = "无法确认服务是否已处理请求") {
+  constructor(message = "无法确认服务是否已处理请求", cause?: unknown) {
     super(message);
     this.name = "VoiceApiNetworkError";
+    (this as Error & { cause?: unknown }).cause = cause;
   }
 }
 
@@ -217,8 +218,8 @@ export class VoiceApiClient {
         headers,
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
       });
-    } catch {
-      throw new VoiceApiNetworkError();
+    } catch (error) {
+      throw new VoiceApiNetworkError(describeNetworkFailure(error), error);
     }
     if (options.expectEmpty && response.status === 204) return undefined;
     let payload: unknown;
@@ -230,6 +231,16 @@ export class VoiceApiClient {
     if (!response.ok) throw parseApiError(response.status, payload);
     return payload;
   }
+}
+
+function describeNetworkFailure(error: unknown) {
+  const detail =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "系统未返回具体错误";
+  return `无法确认服务是否已处理请求：${detail.slice(0, 240)}`;
 }
 
 interface RequestOptions {

@@ -18,8 +18,10 @@ http://127.0.0.1:8000
 
 可使用 `PORT` 修改端口。客户端账户页应填写 HTTP origin，不填写 WebSocket URL或长期 Token。
 
-本地授权页会直接签发短时 Authorization Code，并重定向至 `mindsurf://auth/callback`。所有用户、
-token、ticket、额度和用量数据仅存在于 Mock 进程内存，重启后重置。
+本地授权页会展示固定测试账户。用户点击“登录并授权”后，Mock 签发短时 Authorization Code，并
+显示回到客户端的确认页；点击“打开 MindSurf Voice AI”后通过 `mindsurf://auth/callback` 回跳。
+点击“取消”则生成 `access_denied` 回跳。所有用户、token、ticket、额度和用量数据仅存在于 Mock
+进程内存，重启后重置。修改 Mock 源码后需要重启进程才会生效。
 
 ## 已实现接口
 

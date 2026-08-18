@@ -275,9 +275,19 @@ async function authenticate(origin) {
     code_challenge_method: "S256",
     state,
   }).toString();
+  const loginPage = await fetch(authorize, { redirect: "manual" });
+  assert.equal(loginPage.status, 200);
+  assert.match(await loginPage.text(), /登录并授权/);
+  authorize.searchParams.set("decision", "approve");
   const response = await fetch(authorize, { redirect: "manual" });
-  assert.equal(response.status, 302);
-  const callback = new URL(response.headers.get("location"));
+  assert.equal(response.status, 200);
+  const callbackPage = await response.text();
+  assert.match(callbackPage, /授权成功/);
+  const callbackHref = callbackPage
+    .match(/href="([^"]+)"/)?.[1]
+    .replaceAll("&amp;", "&");
+  assert.ok(callbackHref);
+  const callback = new URL(callbackHref);
   assert.equal(callback.searchParams.get("state"), state);
   const code = callback.searchParams.get("code");
   assert.ok(code);

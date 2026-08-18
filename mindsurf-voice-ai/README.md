@@ -29,7 +29,8 @@ npm run tauri dev
 http://127.0.0.1:8000
 ```
 
-随后点击登录。Mock 会通过系统浏览器自动签发本地 Authorization Code 并回跳应用。
+随后点击登录。Mock 会在系统浏览器显示本地测试账户；点击“登录并授权”，再从授权成功页点击
+“打开 MindSurf Voice AI”，即可签发 Authorization Code 并回跳应用。
 
 ## 质量检查
 

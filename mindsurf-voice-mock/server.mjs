@@ -206,9 +206,24 @@ function authorize(state, url, response) {
     );
     return;
   }
+  const decision = url.searchParams.get("decision");
+  if (!decision) {
+    sendAuthorizationPage(url, response);
+    return;
+  }
+  if (decision !== "approve" && decision !== "cancel") {
+    sendHttpError(
+      response,
+      400,
+      "invalid_request",
+      "Invalid authorization decision",
+      false,
+    );
+    return;
+  }
   const callback = new URL("mindsurf://auth/callback");
   callback.searchParams.set("state", stateValue);
-  if (hasFault(state, "authorize_rejected")) {
+  if (decision === "cancel" || hasFault(state, "authorize_rejected")) {
     callback.searchParams.set("error", "access_denied");
   } else {
     const code = opaqueToken(32);
@@ -218,11 +233,138 @@ function authorize(state, url, response) {
     });
     callback.searchParams.set("code", code);
   }
-  response.writeHead(302, {
-    Location: callback.toString(),
+  sendCallbackPage(callback, decision === "cancel", response);
+}
+
+function sendAuthorizationPage(url, response) {
+  const hiddenFields = [...url.searchParams.entries()]
+    .filter(([name]) => name !== "decision")
+    .map(
+      ([name, value]) =>
+        `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`,
+    )
+    .join("\n");
+  const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 MindSurf</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { display: grid; min-height: 100vh; margin: 0; place-items: center; padding: 24px; color: #172033; background: radial-gradient(circle at 50% 0%, #e8f1ff 0, #f5f7fb 42%, #eef1f6 100%); }
+    main { width: min(420px, 100%); padding: 34px; border: 1px solid #dfe5ee; border-radius: 18px; background: rgba(255,255,255,.94); box-shadow: 0 22px 70px rgba(43,63,94,.14); text-align: center; }
+    .logo { display: grid; width: 58px; height: 58px; margin: 0 auto 18px; place-items: center; border-radius: 16px; color: #fff; background: linear-gradient(145deg, #3478e5, #1959bd); font-size: 25px; font-weight: 750; box-shadow: 0 9px 24px rgba(37,99,201,.28); }
+    h1 { margin: 0; font-size: 24px; letter-spacing: -.02em; }
+    .lead { margin: 9px 0 25px; color: #667085; font-size: 14px; line-height: 1.6; }
+    .account { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid #e2e7ef; border-radius: 12px; background: #f8faff; text-align: left; }
+    .avatar { display: grid; width: 42px; height: 42px; flex: none; place-items: center; border-radius: 50%; color: #1d5fbe; background: #dfebff; font-size: 16px; font-weight: 700; }
+    .account strong, .account span { display: block; }
+    .account span { margin-top: 3px; color: #7a8495; font-size: 12px; }
+    .scope { margin: 19px 0; color: #566174; font-size: 13px; line-height: 1.55; text-align: left; }
+    .scope::before { content: "✓"; margin-right: 8px; color: #16855b; font-weight: 700; }
+    form { display: grid; grid-template-columns: 1fr 1.5fr; gap: 10px; }
+    button { min-height: 42px; border-radius: 9px; cursor: pointer; font: inherit; font-size: 14px; font-weight: 650; }
+    .cancel { border: 1px solid #d7dde7; color: #4c5668; background: #fff; }
+    .approve { border: 1px solid #2563c9; color: #fff; background: #2563c9; }
+    .approve:hover { background: #1f56b2; }
+    .hint { margin: 18px 0 0; color: #9098a6; font-size: 11px; line-height: 1.5; }
+    @media (prefers-color-scheme: dark) {
+      body { color: #f1f4f8; background: radial-gradient(circle at 50% 0%, #223553 0, #171a20 48%, #111318 100%); }
+      main { border-color: #353b45; background: rgba(35,39,46,.96); }
+      .lead, .scope { color: #b2bac7; }
+      .account { border-color: #3b424d; background: #292e36; }
+      .account span, .hint { color: #8e98a8; }
+      .cancel { border-color: #454d59; color: #dce1e8; background: #2d323a; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="logo" aria-hidden="true">M</div>
+    <h1>登录 MindSurf</h1>
+    <p class="lead">MindSurf Voice AI 桌面端正在请求访问你的本地 Mock 账户。</p>
+    <section class="account" aria-label="待登录账户">
+      <div class="avatar" aria-hidden="true">LM</div>
+      <div><strong>${escapeHtml(USER.display_name)}</strong><span>${escapeHtml(USER.login)} · ${escapeHtml(USER.plan)}</span></div>
+    </section>
+    <p class="scope">允许桌面端读取账户信息、额度，并建立 Voice API v2 连接</p>
+    <form method="get" action="/v2/auth/authorize">
+      ${hiddenFields}
+      <button class="cancel" type="submit" name="decision" value="cancel">取消</button>
+      <button class="approve" type="submit" name="decision" value="approve">登录并授权</button>
+    </form>
+    <p class="hint">这是仅用于本地开发的 Mock 登录页，不会收集密码。授权后浏览器将请求打开 MindSurf Voice AI。</p>
+  </main>
+</body>
+</html>`;
+  response.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": Buffer.byteLength(html),
     "Cache-Control": "no-store",
+    "Content-Security-Policy":
+      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
   });
-  response.end();
+  response.end(html);
+}
+
+function sendCallbackPage(callback, cancelled, response) {
+  const callbackUrl = escapeHtml(callback.toString());
+  const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${cancelled ? "已取消登录" : "授权成功"} · MindSurf</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { display: grid; min-height: 100vh; margin: 0; place-items: center; padding: 24px; color: #172033; background: radial-gradient(circle at 50% 0%, #e8f1ff 0, #f5f7fb 42%, #eef1f6 100%); }
+    main { width: min(420px, 100%); padding: 38px 34px; border: 1px solid #dfe5ee; border-radius: 18px; background: rgba(255,255,255,.94); box-shadow: 0 22px 70px rgba(43,63,94,.14); text-align: center; }
+    .status { display: grid; width: 58px; height: 58px; margin: 0 auto 18px; place-items: center; border-radius: 50%; color: #fff; background: ${cancelled ? "#7a8495" : "#16855b"}; font-size: 26px; font-weight: 750; }
+    h1 { margin: 0; font-size: 24px; letter-spacing: -.02em; }
+    p { margin: 10px 0 24px; color: #667085; font-size: 14px; line-height: 1.65; }
+    a { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; padding: 0 22px; border: 1px solid #2563c9; border-radius: 9px; color: #fff; background: #2563c9; font-size: 14px; font-weight: 650; text-decoration: none; }
+    a:hover { background: #1f56b2; }
+    .hint { margin: 18px 0 0; color: #9098a6; font-size: 11px; }
+    @media (prefers-color-scheme: dark) {
+      body { color: #f1f4f8; background: radial-gradient(circle at 50% 0%, #223553 0, #171a20 48%, #111318 100%); }
+      main { border-color: #353b45; background: rgba(35,39,46,.96); }
+      p { color: #b2bac7; }
+      .hint { color: #8e98a8; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="status" aria-hidden="true">${cancelled ? "×" : "✓"}</div>
+    <h1>${cancelled ? "登录已取消" : "授权成功"}</h1>
+    <p>${cancelled ? "返回 MindSurf Voice AI 完成本次取消操作。" : "本地 Mock 已完成授权。点击下方按钮返回桌面客户端并继续登录。"}</p>
+    <a href="${callbackUrl}">打开 MindSurf Voice AI</a>
+    <p class="hint">浏览器将请求使用 mindsurf:// 打开桌面应用；请在系统提示中确认。</p>
+  </main>
+</body>
+</html>`;
+  response.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": Buffer.byteLength(html),
+    "Cache-Control": "no-store",
+    "Content-Security-Policy":
+      "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(html);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 async function exchangeToken(state, request, response) {

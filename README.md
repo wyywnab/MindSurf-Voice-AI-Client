@@ -51,8 +51,9 @@ npm ci
 npm run tauri dev
 ```
 
-在客户端账户页把 Voice API origin 设置为 `http://127.0.0.1:8000`，然后点击登录。本地 Mock
-会立即完成浏览器授权并回跳应用，无需输入真实账户或密码。
+在客户端设置页把 Voice API origin 设置为 `http://127.0.0.1:8000`，然后点击登录。本地 Mock
+会显示测试账户授权页；点击“登录并授权”，再从授权成功页点击“打开 MindSurf Voice AI”，通过
+`mindsurf://auth/callback` 回跳应用，无需输入真实账户或密码。修改 Mock 源码后需要重启 Mock 进程。
 
 Windows 默认按住 `Ctrl + Win`，macOS 默认按住 `Control + Command + Space` 录音；松开提交，
 按 `Escape` 取消。macOS 首次使用需授予麦克风和辅助功能权限。
