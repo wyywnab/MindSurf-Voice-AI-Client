@@ -5,6 +5,7 @@ import { realtimeConnectionController } from "../controllers/realtimeConnectionC
 import { calculateTimelineMetrics } from "../services/diagnostics/timeline";
 import { useI18n } from "../services/i18n";
 import { showConfirm } from "../services/systemDialog";
+import { toast } from "../services/toast";
 import { useRealtimeConnectionStore } from "../stores/realtimeConnectionStore";
 import {
   diagnosticsStoreActions,
@@ -102,6 +103,31 @@ async function clearLogs() {
     })
   ) {
     await diagnosticsStoreActions.clearLogs();
+  }
+}
+
+async function refreshLogs() {
+  const succeeded = await diagnosticsStoreActions.refreshLogs();
+  if (!succeeded) {
+    toast.error(diagnostics.state.storageWarning, {
+      title: "刷新日志失败",
+      durationMs: 0,
+    });
+  } else {
+    toast.success("运行日志已刷新");
+  }
+}
+
+async function loadOlderLogs() {
+  const count = diagnostics.state.logs.length;
+  const succeeded = await diagnosticsStoreActions.loadOlderLogs();
+  if (!succeeded) {
+    toast.error(diagnostics.state.storageWarning, {
+      title: "加载日志失败",
+      durationMs: 0,
+    });
+  } else {
+    toast.info(`已加载 ${diagnostics.state.logs.length - count} 条更早日志`);
   }
 }
 
@@ -278,11 +304,7 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
             type="datetime-local"
             :aria-label="t('日志结束时间')"
           />
-          <button
-            class="button button-ghost"
-            type="button"
-            @click="diagnosticsStoreActions.refreshLogs()"
-          >
+          <button class="button button-ghost" type="button" @click="refreshLogs">
             {{ t("刷新") }}
           </button>
           <button
@@ -332,7 +354,7 @@ onMounted(() => void diagnosticsStoreActions.refreshLogs());
           class="button button-ghost"
           type="button"
           :disabled="diagnostics.state.logsLoading"
-          @click="diagnosticsStoreActions.loadOlderLogs()"
+          @click="loadOlderLogs"
         >
           {{ t("加载更早日志") }}
         </button>

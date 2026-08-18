@@ -11,6 +11,7 @@ import { formatShortcutBinding } from "../services/shortcutBinding";
 import { recordShortcutBinding } from "../services/shortcutRecorder";
 import { clearLocalApplicationData } from "../services/settings/privacy";
 import { showConfirm } from "../services/systemDialog";
+import { toast } from "../services/toast";
 import {
   capabilitiesStoreActions,
   useCapabilitiesStore,
@@ -35,7 +36,6 @@ const microphoneLevel = ref(0);
 const microphoneError = ref("");
 const clearError = ref("");
 const apiOrigin = ref(settings.voiceApiOrigin);
-const apiOriginMessage = ref("");
 const apiOriginSaving = ref(false);
 let captureAbort: InstanceType<typeof globalThis.AbortController> | null = null;
 let unsubscribeDevices: (() => void) | null = null;
@@ -90,9 +90,13 @@ async function captureShortcut() {
       binding,
       props.appInfo?.platform ?? "unknown",
     );
+    toast.success(`全局快捷键已设置为 ${shortcutPreview.value}`, {
+      title: "快捷键设置成功",
+    });
   } catch (error) {
     shortcutPreview.value =
       error instanceof Error ? error.message : t("快捷键配置失败");
+    toast.error(shortcutPreview.value, { title: "快捷键设置失败", durationMs: 0 });
   } finally {
     captureAbort = null;
     shortcutStatus.value = "idle";
@@ -107,10 +111,12 @@ async function testMicrophone() {
       microphoneLevel.value = level;
     });
     microphoneStatus.value = "succeeded";
+    toast.success("麦克风输入和音量检测正常", { title: "麦克风测试通过" });
   } catch (error) {
     microphoneStatus.value = "failed";
     microphoneError.value =
       error instanceof Error ? error.message : t("麦克风测试失败");
+    toast.error(microphoneError.value, { title: "麦克风测试失败", durationMs: 0 });
   } finally {
     microphoneLevel.value = 0;
   }
@@ -127,22 +133,57 @@ async function clearLocalData() {
     return;
   try {
     await clearLocalApplicationData();
+    clearError.value = "";
+    toast.success("本地设置、日志、识别历史和登录凭据已清除", {
+      title: "本地数据已清除",
+    });
   } catch (error) {
     clearError.value = error instanceof Error ? error.message : t("清除本地数据失败");
+    toast.error(clearError.value, { title: "清除本地数据失败", durationMs: 0 });
   }
 }
 
+async function setShortcutEnabled(enabled: boolean) {
+  const succeeded = await settingsController.setRecordShortcutEnabled(enabled);
+  if (succeeded) {
+    toast.success(enabled ? "全局快捷键已启用" : "全局快捷键已关闭");
+  } else {
+    toast.error(settings.shortcutError || t("快捷键配置失败"), {
+      title: enabled ? "无法启用全局快捷键" : "无法关闭全局快捷键",
+      durationMs: 0,
+    });
+  }
+}
+
+async function setOverlayEnabled(enabled: boolean) {
+  const succeeded = await settingsController.setOverlayEnabled(enabled);
+  if (succeeded) {
+    toast.success(enabled ? "悬浮窗已启用" : "悬浮窗已关闭");
+  } else {
+    toast.error(enabled ? "无法启用悬浮窗" : "无法关闭悬浮窗", {
+      durationMs: 0,
+    });
+  }
+}
+
+async function setOverlayPosition(position: OverlayPosition) {
+  const succeeded = await settingsController.setOverlayPosition(position);
+  if (succeeded) toast.success("悬浮窗位置已更新");
+  else toast.error("无法更新悬浮窗位置", { durationMs: 0 });
+}
+
 async function saveApiOrigin() {
-  apiOriginMessage.value = "";
   apiOriginSaving.value = true;
   try {
     const validated = validateApiOrigin(apiOrigin.value);
     await authController.changeApiOrigin(validated);
     apiOrigin.value = validated;
-    apiOriginMessage.value = "API 地址已保存";
+    toast.success(`服务地址已保存：${validated}`, { title: "保存成功" });
   } catch (error) {
-    apiOriginMessage.value =
-      error instanceof Error ? error.message : "API 地址保存失败";
+    toast.error(error instanceof Error ? error.message : "API 地址保存失败", {
+      title: "服务地址保存失败",
+      durationMs: 0,
+    });
   } finally {
     apiOriginSaving.value = false;
   }
@@ -190,9 +231,6 @@ onBeforeUnmount(() => {
         >
           {{ apiOriginSaving ? "正在保存…" : "保存服务地址" }}
         </button>
-        <p v-if="apiOriginMessage" class="settings-hint" aria-live="polite">
-          {{ apiOriginMessage }}
-        </p>
       </article>
 
       <article class="settings-card settings-card-request">
@@ -333,7 +371,12 @@ onBeforeUnmount(() => {
             </option>
           </select>
         </label>
-        <button class="button button-secondary" type="button" @click="testMicrophone">
+        <button
+          class="button button-secondary"
+          type="button"
+          :disabled="microphoneStatus === 'testing'"
+          @click="testMicrophone"
+        >
           {{ microphoneStatus === "testing" ? t("测试中…") : t("测试麦克风") }}
         </button>
         <div class="audio-meter">
@@ -344,7 +387,7 @@ onBeforeUnmount(() => {
           <input
             type="checkbox"
             :checked="settings.shortcutDesiredEnabled"
-            @change="settingsController.setRecordShortcutEnabled(checked($event))"
+            @change="setShortcutEnabled(checked($event))"
           />
         </label>
         <button class="button button-secondary" type="button" @click="captureShortcut">
@@ -404,7 +447,7 @@ onBeforeUnmount(() => {
           <input
             type="checkbox"
             :checked="settings.overlayEnabled"
-            @change="settingsController.setOverlayEnabled(checked($event))"
+            @change="setOverlayEnabled(checked($event))"
           />
         </label>
         <label>
@@ -412,7 +455,7 @@ onBeforeUnmount(() => {
           <select
             :value="settings.overlayPosition"
             @change="
-              settingsController.setOverlayPosition(
+              setOverlayPosition(
                 ($event.target as HTMLSelectElement).value as OverlayPosition,
               )
             "

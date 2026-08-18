@@ -7,6 +7,7 @@ import {
 } from "../services/shortcutBinding";
 import { settingsRepository } from "../services/settings/settingsRepository";
 import { applyInterfaceTheme } from "../services/theme";
+import { toast } from "../services/toast";
 import type { VoiceModeV2 } from "../types/httpApi";
 import type { ShortcutBinding, ShortcutStatus } from "../types/shortcut";
 import {
@@ -112,6 +113,7 @@ async function persist() {
     state.saveError = "";
   } catch (error) {
     state.saveError = error instanceof Error ? error.message : "设置保存失败";
+    toast.error(state.saveError, { title: "设置保存失败", durationMs: 0 });
     diagnosticsStoreActions.log(
       "error",
       "settings",
@@ -132,6 +134,7 @@ export const settingsStoreActions = {
       state.saveError = "";
     } catch (error) {
       state.saveError = error instanceof Error ? error.message : "设置读取失败";
+      toast.error(state.saveError, { title: "设置读取失败", durationMs: 0 });
     } finally {
       state.initialized = true;
     }

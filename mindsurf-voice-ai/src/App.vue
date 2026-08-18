@@ -10,6 +10,7 @@ import RecorderPanel from "./components/RecorderPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import UsagePanel from "./components/UsagePanel.vue";
 import SystemDialogHost from "./components/SystemDialogHost.vue";
+import ToastHost from "./components/ToastHost.vue";
 import TopTabs from "./components/TopTabs.vue";
 import { settingsController } from "./controllers/settingsController";
 import { authController } from "./controllers/authController";
@@ -27,8 +28,10 @@ import {
 import { useAuthStore } from "./stores/authStore";
 import { useAccountStore } from "./stores/accountStore";
 import { useRealtimeConnectionStore } from "./stores/realtimeConnectionStore";
+import { useRequestStore } from "./stores/requestStore";
 import { diagnosticsStoreActions } from "./stores/diagnosticsStore";
 import { useSettingsStore } from "./stores/settingsStore";
+import { toast } from "./services/toast";
 import type { AppInfo } from "./types/app";
 import type { MainTab, MainTabId } from "./types/navigation";
 import type { SystemPermission } from "./types/permissions";
@@ -44,6 +47,7 @@ const accountMenuOpen = ref(false);
 const accountUsageOpen = ref(false);
 const permissionsReturnTab = ref<"record" | "settings">("settings");
 const realtimeConnection = useRealtimeConnectionStore();
+const request = useRequestStore();
 const visibleConnectionStatus = computed(() =>
   auth.state.status === "authenticated"
     ? realtimeConnection.state.status
@@ -79,6 +83,56 @@ watch(diagnosticsPageVisible, (visible) => {
     activeTab.value = "record";
   }
 });
+
+watch(
+  () => auth.state.status,
+  (status, previous) => {
+    if (status === "authenticated" && previous !== "authenticated") {
+      toast.success("账户信息和服务能力已加载", { title: "登录成功" });
+    } else if (status === "error" && auth.state.error) {
+      toast.error(auth.state.error, { title: "登录失败", durationMs: 0 });
+    } else if (status === "signed_out" && auth.state.error) {
+      toast.warning(auth.state.error, { title: "登录状态已结束", durationMs: 0 });
+    }
+  },
+);
+
+watch(
+  () => request.state.status,
+  (status, previous) => {
+    if (status === previous) return;
+    if (status === "completed") {
+      toast.success("语音识别结果已完成", { title: "处理完成" });
+    } else if (status === "failed") {
+      toast.error(request.state.lastError || "语音请求处理失败", {
+        title: "处理失败",
+        durationMs: 0,
+      });
+    } else if (status === "cancelled") {
+      toast.info("当前录音和语音请求已取消");
+    }
+  },
+);
+
+watch(
+  () => request.state.injectionStatus,
+  (status, previous) => {
+    if (status === previous) return;
+    if (status === "succeeded") {
+      toast.success("识别文本已注入目标窗口", { title: "文本注入完成" });
+    } else if (status === "partial") {
+      toast.warning(request.state.injectionError || "部分文本未能注入", {
+        title: "文本仅部分注入",
+        durationMs: 0,
+      });
+    } else if (status === "failed") {
+      toast.error(request.state.injectionError || "文本注入失败，内容已保留", {
+        title: "文本注入失败",
+        durationMs: 0,
+      });
+    }
+  },
+);
 
 watch(
   [
@@ -223,6 +277,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="app-shell">
     <SystemDialogHost />
+    <ToastHost />
     <header class="app-header">
       <div class="account-anchor">
         <button

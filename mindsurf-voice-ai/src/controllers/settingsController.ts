@@ -76,14 +76,14 @@ export class SettingsController {
     }
   }
 
-  setOverlayPosition(position: OverlayPosition) {
+  async setOverlayPosition(position: OverlayPosition) {
     settingsStoreActions.setOverlayPosition(position);
-    void setOverlayWindowPosition(position);
+    return setOverlayWindowPosition(position);
   }
 
-  setOverlayEnabled(enabled: boolean) {
+  async setOverlayEnabled(enabled: boolean) {
     settingsStoreActions.setOverlayEnabled(enabled);
-    if (!enabled) void hideOverlayWindow();
+    return enabled ? true : hideOverlayWindow();
   }
 
   setDeveloperMode(enabled: boolean) {
@@ -200,9 +200,11 @@ export class SettingsController {
     if (result.ok) {
       settingsStoreActions.setShortcutDesiredEnabled(enabled);
       settingsStoreActions.applyShortcutStatus(result.data);
+      return true;
     } else {
       settingsStoreActions.setShortcutDesiredEnabled(previous);
       settingsStoreActions.setShortcutError(describeShortcutError(result.error.code));
+      return false;
     }
   }
 

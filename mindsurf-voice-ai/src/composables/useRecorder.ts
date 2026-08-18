@@ -11,6 +11,7 @@ import {
   getSystemPermissionStatus,
   openMicrophonePermissionSettings,
 } from "../services/permissions";
+import { toast } from "../services/toast";
 
 export type MicrophonePermissionState =
   "unknown" | "prompt" | "granted" | "denied" | "unsupported";
@@ -155,6 +156,7 @@ export function useRecorder() {
         errorMessage.value = describeRecorderError(error);
       }
       state.value = "error";
+      toast.error(errorMessage.value, { title: "录音启动失败", durationMs: 0 });
       return false;
     }
   }
@@ -226,6 +228,7 @@ export function useRecorder() {
         errorMessage.value = describeRecorderError(error);
       }
       state.value = "error";
+      toast.error(errorMessage.value, { title: "麦克风准备失败", durationMs: 0 });
       return false;
     }
   }
@@ -250,6 +253,7 @@ export function useRecorder() {
       activeTrackCount.value = 0;
       errorMessage.value = describeRecorderError(error);
       state.value = "error";
+      toast.error(errorMessage.value, { title: "录音停止失败", durationMs: 0 });
       return null;
     }
   }
@@ -267,24 +271,38 @@ export function useRecorder() {
 
   function downloadLatestRecording() {
     if (!latestRecording.value) {
+      toast.warning("当前没有可导出的录音");
       return;
     }
 
-    const bytes = latestRecording.value.wavBytes.slice();
-    const url = URL.createObjectURL(new Blob([bytes.buffer], { type: "audio/wav" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `mindsurf-recording-${new Date()
-      .toISOString()
-      .replace(/:/g, "-")}.wav`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    let url = "";
+    try {
+      const bytes = latestRecording.value.wavBytes.slice();
+      url = URL.createObjectURL(new Blob([bytes.buffer], { type: "audio/wav" }));
+      const filename = `mindsurf-recording-${new Date()
+        .toISOString()
+        .replace(/:/g, "-")}.wav`;
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      toast.success(`已发起导出：${filename}`, {
+        title: "WAV 导出成功",
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "无法导出 WAV 文件", {
+        title: "WAV 导出失败",
+      });
+    } finally {
+      if (url) globalThis.setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
   }
 
   async function openPermissionSettings() {
     const result = await openMicrophonePermissionSettings();
     if (!result.ok) {
       errorMessage.value = result.error.message;
+      toast.error(errorMessage.value, { title: "无法打开麦克风设置", durationMs: 0 });
     }
   }
 

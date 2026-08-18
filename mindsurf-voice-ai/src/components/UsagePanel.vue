@@ -10,6 +10,7 @@ import {
   type UsageView,
 } from "../services/usageAggregation";
 import { useQuotaStore } from "../stores/quotaStore";
+import { toast } from "../services/toast";
 import type { UsageEntry } from "../types/httpApi";
 
 const emit = defineEmits<{ close: [] }>();
@@ -50,14 +51,16 @@ const summary = computed(() => [
   { value: compact(tokenCount.value), label: "文本 Tokens" },
 ]);
 
-async function load() {
+async function load(notify = false) {
   loading.value = true;
   error.value = "";
   try {
     await authController.refreshAccount();
     entries.value = await authController.listUsage(range.fromMs, range.toMs);
+    if (notify) toast.success("额度和用量数据已刷新");
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : "用量数据加载失败";
+    if (notify) toast.error(error.value, { title: "用量刷新失败", durationMs: 0 });
   } finally {
     loading.value = false;
   }
@@ -92,7 +95,7 @@ onMounted(() => void load());
         <button
           class="button button-secondary button-compact"
           :disabled="loading"
-          @click="load"
+          @click="load(true)"
         >
           {{ loading ? "刷新中…" : "刷新" }}
         </button>

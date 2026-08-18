@@ -15,6 +15,7 @@ import type {
 } from "../types/diagnostics";
 import type { RequestLifecycleState, RequestTransition } from "../types/request";
 import type { VoiceModeV2 } from "../types/httpApi";
+import { toast } from "../services/toast";
 
 const MAX_VISIBLE_TRANSITIONS = 100;
 const MAX_TIMELINES = 20;
@@ -183,15 +184,17 @@ export const diagnosticsStoreActions = {
     try {
       state.logs = await readRecentLogEntries(200);
       state.logsExhausted = state.logs.length < 200;
+      return true;
     } catch (error) {
       state.storageWarning =
         error instanceof Error ? error.message : "无法读取运行日志";
+      return false;
     } finally {
       state.logsLoading = false;
     }
   },
   async loadOlderLogs() {
-    if (state.logsLoading || state.logsExhausted) return;
+    if (state.logsLoading || state.logsExhausted) return true;
     state.logsLoading = true;
     try {
       const oldest = state.logs[state.logs.length - 1]?.timestampMs;
@@ -199,9 +202,11 @@ export const diagnosticsStoreActions = {
       state.logs.push(...entries);
       state.logs.splice(MAX_VISIBLE_LOGS);
       state.logsExhausted = entries.length < 200;
+      return true;
     } catch (error) {
       state.storageWarning =
         error instanceof Error ? error.message : "无法读取更多日志";
+      return false;
     } finally {
       state.logsLoading = false;
     }
@@ -216,9 +221,11 @@ export const diagnosticsStoreActions = {
       });
       state.exportPath = result.path;
       state.exportStatus = "succeeded";
+      toast.success(`诊断包已导出到 ${result.path}`, { title: "导出成功" });
     } catch (error) {
       state.exportStatus = "failed";
       state.exportError = error instanceof Error ? error.message : "导出诊断包失败";
+      toast.error(state.exportError, { title: "诊断包导出失败", durationMs: 0 });
     }
   },
   async clearLogs() {
@@ -227,17 +234,22 @@ export const diagnosticsStoreActions = {
       state.logs = [];
       state.logsExhausted = true;
       state.storageWarning = "";
+      toast.success("本地运行日志已清空");
     } catch (error) {
       state.storageWarning =
         error instanceof Error ? error.message : "无法清空运行日志";
+      toast.error(state.storageWarning, { title: "清空日志失败", durationMs: 0 });
     }
   },
   async openLogDirectory() {
     try {
-      return await openDiagnosticLogDirectory();
+      const path = await openDiagnosticLogDirectory();
+      toast.success(path ? `已打开日志目录：${path}` : "已打开日志目录");
+      return path;
     } catch (error) {
       state.storageWarning =
         error instanceof Error ? error.message : "无法打开日志目录";
+      toast.error(state.storageWarning, { title: "打开日志目录失败", durationMs: 0 });
       return "";
     }
   },

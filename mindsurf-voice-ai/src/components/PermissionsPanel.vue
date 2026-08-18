@@ -10,6 +10,7 @@ import { describeRecorderError, prepareMicrophone } from "../services/recorder";
 import { useI18n } from "../services/i18n";
 import { settingsController } from "../controllers/settingsController";
 import { useSettingsStore } from "../stores/settingsStore";
+import { toast } from "../services/toast";
 import type { AppInfo } from "../types/app";
 import type { SystemPermission, SystemPermissionState } from "../types/permissions";
 
@@ -106,36 +107,55 @@ async function refreshPermissions() {
   await Promise.all(macPermissions.map(refreshPermission));
 }
 
-async function prepareWebViewMicrophone() {
+async function prepareWebViewMicrophone(notify = true) {
   microphoneProbeState.value = "checking";
   try {
     await prepareMicrophone();
     microphoneProbeState.value = "ready";
+    if (notify) toast.success(t("麦克风录音能力已就绪"));
     return true;
   } catch (error) {
     microphoneProbeState.value = "failed";
     permissionError.value = describeRecorderError(error, {
       nativePermissionGranted: permissionStates.microphone === "granted",
     });
+    if (notify) {
+      toast.error(permissionError.value, {
+        title: t("麦克风检查失败"),
+        durationMs: 0,
+      });
+    }
     return false;
   }
 }
 
-async function requestPermission(permission: SystemPermission) {
+async function requestPermission(permission: SystemPermission, notify = true) {
   permissionBusy.value = permission;
   permissionError.value = "";
   const result = await requestSystemPermission(permission);
   if (!result.ok) {
     permissionBusy.value = null;
     permissionError.value = result.error.message;
+    if (notify) {
+      toast.error(permissionError.value, { title: t("权限请求失败"), durationMs: 0 });
+    }
     return false;
   }
   permissionStates[permission] = result.data.status;
   if (permission === "microphone" && result.data.status === "granted") {
-    await prepareWebViewMicrophone();
+    await prepareWebViewMicrophone(false);
   }
   permissionBusy.value = null;
-  return result.data.status === "granted";
+  const granted = result.data.status === "granted";
+  if (notify) {
+    if (granted) toast.success(t("系统权限已授权"));
+    else {
+      toast.warning(t("系统权限仍未授权，请在系统设置中允许访问"), {
+        durationMs: 0,
+      });
+    }
+  }
+  return granted;
 }
 
 async function initializePermissions() {
@@ -152,18 +172,18 @@ async function initializePermissions() {
       for (const permission of macPermissions) {
         await refreshPermission(permission);
         if (permissionStates[permission] !== "granted") {
-          await requestPermission(permission);
+          await requestPermission(permission, false);
         } else if (
           permission === "microphone" &&
           microphoneProbeState.value !== "ready"
         ) {
-          await prepareWebViewMicrophone();
+          await prepareWebViewMicrophone(false);
         }
         firstError ||= permissionError.value;
       }
       await refreshPermissions();
     } else {
-      await prepareWebViewMicrophone();
+      await prepareWebViewMicrophone(false);
       firstError = permissionError.value;
     }
   } finally {
@@ -172,10 +192,19 @@ async function initializePermissions() {
 
   if (firstError) {
     permissionError.value = firstError;
+    toast.error(firstError, { title: t("权限初始化失败"), durationMs: 0 });
   } else if (!permissionsReady.value) {
     permissionError.value = t(
       "仍有权限未授权，请打开对应的系统设置；完成后返回应用会自动刷新状态。",
     );
+    toast.warning(permissionError.value, {
+      title: t("权限尚未就绪"),
+      durationMs: 0,
+    });
+  } else {
+    toast.success(t("录音、快捷键和文本注入均已就绪"), {
+      title: t("权限初始化完成"),
+    });
   }
 }
 
@@ -183,6 +212,26 @@ async function openPermissionSettings(permission: SystemPermission) {
   const result = await openSystemPermissionSettings(permission);
   if (!result.ok) {
     permissionError.value = result.error.message;
+    toast.error(permissionError.value, {
+      title: t("无法打开系统设置"),
+      durationMs: 0,
+    });
+  } else {
+    toast.info(t("已打开对应的系统权限设置"));
+  }
+}
+
+async function restartShortcutListener() {
+  await settingsController.initializeRecordShortcut();
+  if (
+    settings.state.shortcutRegistered &&
+    settings.state.shortcutListenerStatus === "running"
+  ) {
+    toast.success(t("全局快捷键监听器已启动"));
+  } else {
+    toast.error(settings.state.shortcutError || t("快捷键监听器启动失败"), {
+      durationMs: 0,
+    });
   }
 }
 
@@ -360,7 +409,7 @@ onBeforeUnmount(() => {
                   class="button button-primary button-compact"
                   type="button"
                   :disabled="permissionInitializationBusy"
-                  @click="settingsController.initializeRecordShortcut()"
+                  @click="restartShortcutListener"
                 >
                   {{ t("重新启动监听器") }}
                 </button>

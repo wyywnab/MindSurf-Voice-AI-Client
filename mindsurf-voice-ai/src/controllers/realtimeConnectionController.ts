@@ -7,9 +7,11 @@ import { diagnosticsStoreActions } from "../stores/diagnosticsStore";
 import { realtimeConnectionStoreActions } from "../stores/realtimeConnectionStore";
 import { RealtimeTicketProvider } from "../services/realtime/realtimeTicketProvider";
 import { VoiceTransportV2 } from "../services/realtime/voiceTransportV2";
+import { toast } from "../services/toast";
 
 export class RealtimeConnectionController {
   private transport: VoiceTransportV2 | null = null;
+  private lastNotifiedConnectionError = "";
   private onRequestTerminal: (() => void) | null = null;
   private requestListener: {
     onMessage(message: V2ControlEnvelope): void;
@@ -36,6 +38,8 @@ export class RealtimeConnectionController {
         if (status !== "connected") this.requestListener?.onConnectionLost();
       },
       onServerHello: (hello) => {
+        const recovered = Boolean(this.lastNotifiedConnectionError);
+        this.lastNotifiedConnectionError = "";
         realtimeConnectionStoreActions.setServerHello(hello);
         realtimeConnectionStoreActions.setReconnectAttempt(0);
         diagnosticsStoreActions.log(
@@ -51,6 +55,9 @@ export class RealtimeConnectionController {
             },
           },
         );
+        toast.success(recovered ? "实时服务连接已恢复" : "实时服务连接已建立", {
+          title: recovered ? "连接已恢复" : "连接成功",
+        });
       },
       onControlMessage: (message) => {
         if (message.type !== "session.ping") {
@@ -72,6 +79,14 @@ export class RealtimeConnectionController {
           error.code,
           error.message,
         );
+        if (error.message !== this.lastNotifiedConnectionError) {
+          this.lastNotifiedConnectionError = error.message;
+          const notify = error.recoverable ? toast.warning : toast.error;
+          notify(error.message, {
+            title: error.recoverable ? "连接异常，正在重试" : "连接失败",
+            durationMs: error.recoverable ? 6_000 : 0,
+          });
+        }
       },
       onReconnectAttempt: (attempt) => {
         realtimeConnectionStoreActions.setReconnectAttempt(attempt);
@@ -125,6 +140,7 @@ export class RealtimeConnectionController {
   disconnect() {
     this.transport?.disconnect();
     this.transport = null;
+    this.lastNotifiedConnectionError = "";
     realtimeConnectionStoreActions.reset();
   }
 }

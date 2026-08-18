@@ -1946,6 +1946,124 @@ h1 {
   }
 }
 
+.toast-viewport {
+  position: fixed;
+  z-index: 1200;
+  bottom: 20px;
+  left: 20px;
+  width: min(380px, calc(100vw - 40px));
+  pointer-events: none;
+}
+
+.toast-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.toast-item {
+  --toast-color: var(--accent);
+  display: grid;
+  position: relative;
+  grid-template-columns: 30px minmax(0, 1fr) 28px;
+  align-items: start;
+  overflow: hidden;
+  padding: 13px 10px 13px 13px;
+  border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--toast-color);
+  border-radius: 9px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 97%, transparent);
+  box-shadow: 0 8px 26px rgb(0 0 0 / 18%);
+  pointer-events: auto;
+}
+
+.toast-item[data-type="success"] {
+  --toast-color: var(--success);
+}
+
+.toast-item[data-type="warning"] {
+  --toast-color: var(--warning);
+}
+
+.toast-item[data-type="error"] {
+  --toast-color: var(--danger);
+}
+
+.toast-icon {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--toast-color);
+  background: color-mix(in srgb, var(--toast-color) 12%, transparent);
+}
+
+.toast-icon svg {
+  width: 15px;
+  height: 15px;
+  overflow: visible;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.toast-content {
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.toast-content strong {
+  display: block;
+  color: var(--toast-color);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.toast-content p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.toast-close {
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.toast-close:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.toast-enter-active,
+.toast-leave-active,
+.toast-move {
+  transition:
+    opacity 160ms ease,
+    transform 180ms ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(-18px);
+}
+
 @media (max-width: 680px) {
   .usage-summary {
     grid-template-columns: repeat(3, 1fr);
@@ -2011,6 +2129,13 @@ h1 {
 }
 
 @media (max-width: 460px) {
+  .toast-viewport {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+  }
+
   .usage-heading,
   .usage-period {
     align-items: stretch;

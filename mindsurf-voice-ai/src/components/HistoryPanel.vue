@@ -4,6 +4,7 @@ import { computed, ref, watch } from "vue";
 import { voiceRequestControllerV2 } from "../controllers/voiceRequestControllerV2";
 import { useI18n } from "../services/i18n";
 import { showConfirm } from "../services/systemDialog";
+import { toast } from "../services/toast";
 import { useAccountStore } from "../stores/accountStore";
 import { historyStoreActions, useHistoryStore } from "../stores/historyStore";
 import { useRequestStore } from "../stores/requestStore";
@@ -106,8 +107,10 @@ async function copyEntry(entry: RecognitionHistoryEntry) {
   try {
     await globalThis.navigator.clipboard.writeText(entry.resultText);
     feedback.value = t("已复制到剪贴板");
+    toast.success(feedback.value);
   } catch {
     feedback.value = t("复制失败");
+    toast.error(feedback.value, { durationMs: 0 });
   }
 }
 
@@ -128,6 +131,7 @@ async function injectEntry(entry: RecognitionHistoryEntry) {
         : request.injectionError || t("文本注入失败");
   } catch (error) {
     feedback.value = error instanceof Error ? error.message : t("文本注入失败");
+    toast.error(feedback.value, { title: t("文本注入失败"), durationMs: 0 });
   } finally {
     actionBusy.value = false;
   }
@@ -149,6 +153,10 @@ async function removeEntry(entry: RecognitionHistoryEntry) {
   if (await historyStoreActions.remove(userId, entry.id)) {
     selectedId.value = "";
     feedback.value = t("识别历史已删除");
+    toast.success(feedback.value);
+  } else {
+    feedback.value = history.error || t("无法读写识别历史");
+    toast.error(feedback.value, { title: t("删除失败"), durationMs: 0 });
   }
   actionBusy.value = false;
 }
@@ -169,6 +177,10 @@ async function clearHistory() {
   if (await historyStoreActions.clearUser(userId)) {
     selectedId.value = "";
     feedback.value = t("识别历史已清空");
+    toast.success(feedback.value);
+  } else {
+    feedback.value = history.error || t("无法读写识别历史");
+    toast.error(feedback.value, { title: t("清空失败"), durationMs: 0 });
   }
   actionBusy.value = false;
 }

@@ -25,6 +25,7 @@ import {
 import { getRefreshTokenStatus } from "../services/settings/credentials";
 import { VoiceApiClient, VoiceApiNetworkError } from "../services/http/voiceApiClient";
 import { RealtimeTicketProvider } from "../services/realtime/realtimeTicketProvider";
+import { toast } from "../services/toast";
 import { realtimeConnectionController } from "./realtimeConnectionController";
 
 const AUTH_TIMEOUT_MS = 15 * 60_000;
@@ -40,7 +41,7 @@ export class AuthController {
   private authorizeInFlight: Promise<void> | null = null;
   private exchangeInFlight: Promise<void> | null = null;
   private initializationInFlight: Promise<void> | null = null;
-  private logoutInFlight: Promise<void> | null = null;
+  private logoutInFlight: Promise<boolean> | null = null;
   private accountRefreshInFlight: Promise<void> | null = null;
   private unsubscribeDeepLinks: (() => void) | null = null;
   private readonly settings = useSettingsStore();
@@ -102,11 +103,22 @@ export class AuthController {
   }
 
   async logout() {
-    if (this.logoutInFlight) return this.logoutInFlight;
+    if (this.logoutInFlight) {
+      await this.logoutInFlight;
+      return;
+    }
     this.logoutInFlight = this.performLogout().finally(() => {
       this.logoutInFlight = null;
     });
-    return this.logoutInFlight;
+    const serverConfirmed = await this.logoutInFlight;
+    if (serverConfirmed) {
+      toast.success("已安全退出当前账户", { title: "退出成功" });
+    } else {
+      toast.warning("本地登录信息已清除，但服务端未确认登出结果", {
+        title: "已退出本地登录",
+        durationMs: 0,
+      });
+    }
   }
 
   async changeApiOrigin(origin: string) {
@@ -306,10 +318,12 @@ export class AuthController {
 
   private async performLogout(callServer = true) {
     const { api, tokens } = this.requireConfigured();
+    let serverConfirmed = true;
     authStoreActions.setStatus("signing_out");
     try {
       if (callServer && tokens.getAccessToken()) await api.logout();
     } catch (error) {
+      serverConfirmed = false;
       diagnosticsStoreActions.log(
         "warn",
         "auth",
@@ -327,6 +341,7 @@ export class AuthController {
       authStoreActions.setRefreshTokenConfigured(false);
       authStoreActions.setStatus("signed_out");
     }
+    return serverConfirmed;
   }
 
   private async handleSessionRevoked() {
