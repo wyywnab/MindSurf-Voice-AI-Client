@@ -1,4 +1,8 @@
 import { hideOverlayWindow, setOverlayWindowPosition } from "../services/overlay";
+import {
+  isAutostartEnabled,
+  setAutostartEnabled as setSystemAutostartEnabled,
+} from "../services/autostart";
 import { listAudioInputDevices } from "../services/audioInputDevices";
 import {
   ShortcutBindingError,
@@ -104,6 +108,32 @@ export class SettingsController {
 
   setInterfaceTheme(theme: AppSettings["interface"]["theme"]) {
     settingsStoreActions.setInterfaceTheme(theme);
+  }
+
+  async refreshAutostart() {
+    settingsStoreActions.setAutostartLoading();
+    try {
+      settingsStoreActions.setAutostartState(await isAutostartEnabled());
+    } catch (error) {
+      settingsStoreActions.setAutostartUnavailable(describeAutostartError(error));
+    }
+  }
+
+  async setAutostartEnabled(enabled: boolean) {
+    settingsStoreActions.setAutostartSaving();
+    try {
+      await setSystemAutostartEnabled(enabled);
+      const registered = await isAutostartEnabled();
+      settingsStoreActions.setAutostartState(registered);
+      if (registered !== enabled) {
+        settingsStoreActions.setAutostartUnavailable("系统未能保存自动启动设置");
+        return false;
+      }
+      return true;
+    } catch (error) {
+      settingsStoreActions.setAutostartUnavailable(describeAutostartError(error));
+      return false;
+    }
   }
 
   async initializeRecordShortcut() {
@@ -239,6 +269,11 @@ function describeShortcutError(code: string) {
     shortcut_system_reserved: "该组合由系统保留，请选择其他组合",
   };
   return messages[code] ?? "快捷键配置失败";
+}
+
+function describeAutostartError(error: unknown) {
+  const detail = error instanceof Error ? error.message : String(error || "");
+  return detail ? `无法访问系统自动启动设置：${detail}` : "无法访问系统自动启动设置";
 }
 
 export const settingsController = new SettingsController();

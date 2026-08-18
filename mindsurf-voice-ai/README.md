@@ -10,7 +10,7 @@
 - `mindsurf.voice.v2` 长连接、心跳、关闭码分类和新 ticket 重连；
 - `asr_only` 与 `asr_llm` 两种单轮文本模式；
 - 16 kHz 单声道 PCM16 上行、final snapshot + `request.done` 双确认；
-- Windows/macOS 原生文本注入、麦克风选择、快捷键、悬浮窗、托盘和脱敏诊断。
+- Windows/macOS 原生文本注入、麦克风选择、登录自启动、快捷键、悬浮窗、托盘和脱敏诊断。
 
 协议不包含多轮对话或服务端下行音频。
 

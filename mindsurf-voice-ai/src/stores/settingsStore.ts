@@ -47,6 +47,9 @@ const state = reactive({
   developerShowDiagnosticsPage: defaults.developer.showDiagnosticsPage,
   interfaceLocale: defaults.interface.locale,
   interfaceTheme: defaults.interface.theme,
+  autostartEnabled: false,
+  autostartStatus: "loading" as "loading" | "ready" | "saving" | "unavailable",
+  autostartError: "",
 });
 
 function platformDefaultShortcut(binding: ShortcutBinding): ShortcutBinding {
@@ -200,6 +203,23 @@ export const settingsStoreActions = {
     state.interfaceTheme = theme;
     applyInterfaceTheme(theme);
     persistSoon();
+  },
+  setAutostartLoading() {
+    state.autostartStatus = "loading";
+    state.autostartError = "";
+  },
+  setAutostartSaving() {
+    state.autostartStatus = "saving";
+    state.autostartError = "";
+  },
+  setAutostartState(enabled: boolean) {
+    state.autostartEnabled = enabled;
+    state.autostartStatus = "ready";
+    state.autostartError = "";
+  },
+  setAutostartUnavailable(message: string) {
+    state.autostartStatus = "unavailable";
+    state.autostartError = message;
   },
   setInjectionMaxCodePoints(value: number) {
     state.injectionMaxCodePoints = value;

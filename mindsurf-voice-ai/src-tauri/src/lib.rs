@@ -1,9 +1,10 @@
 mod commands;
 mod error;
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-use tauri::Manager;
+use std::ffi::OsStr;
 #[cfg(all(debug_assertions, any(target_os = "windows", target_os = "linux")))]
 use tauri_plugin_deep_link::DeepLinkExt;
+
+const AUTOSTART_ARGUMENT: &str = "--autostart";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,12 +12,13 @@ pub fn run() {
         // Must be registered first so secondary-instance deep links are forwarded
         // to the primary process before the secondary process exits.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
+            commands::tray::show_main_window(app);
         }))
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .arg(AUTOSTART_ARGUMENT)
+                .build(),
+        )
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
@@ -30,6 +32,8 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            let launched_by_autostart = is_autostart_launch(std::env::args_os());
+
             // `tauri dev` does not run an installer, so Windows and Linux do not
             // otherwise know which executable should handle the configured schemes.
             #[cfg(all(debug_assertions, any(target_os = "windows", target_os = "linux")))]
@@ -40,6 +44,12 @@ pub fn run() {
             commands::shortcuts::initialize(app.handle().clone());
             commands::overlay::initialize(app)?;
             commands::tray::initialize(app)?;
+            if launched_by_autostart {
+                #[cfg(target_os = "macos")]
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            } else {
+                commands::tray::show_main_window(app.handle());
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -85,4 +95,26 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build MindSurf Voice AI")
         .run(|_, _| {});
+}
+
+fn is_autostart_launch<I, S>(arguments: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    arguments
+        .into_iter()
+        .any(|argument| argument.as_ref() == OsStr::new(AUTOSTART_ARGUMENT))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_autostart_launch;
+
+    #[test]
+    fn detects_only_the_dedicated_autostart_argument() {
+        assert!(is_autostart_launch(["mindsurf", "--autostart"]));
+        assert!(!is_autostart_launch(["mindsurf", "--autostart=false"]));
+        assert!(!is_autostart_launch(["mindsurf"]));
+    }
 }

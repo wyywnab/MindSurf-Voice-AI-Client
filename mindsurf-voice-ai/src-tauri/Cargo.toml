@@ -31,6 +31,7 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-autostart = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [

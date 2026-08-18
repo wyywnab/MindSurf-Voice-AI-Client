@@ -287,6 +287,9 @@ const enUS: Record<string, string> = {
   "输入 {rate} Hz · {count} samples": "Input {rate} Hz · {count} samples",
   设置保存失败: "Failed to save settings",
   设置读取失败: "Failed to load settings",
+  常规与快捷键: "General & Shortcuts",
+  登录时自动启动: "Launch at Login",
+  自动启动设置失败: "Failed to configure launch at login",
   "已选择的麦克风不可用，已回退到系统默认设备":
     "The selected microphone is unavailable; using the system default",
   系统全局键盘监听器启动失败: "Failed to start the global keyboard listener",

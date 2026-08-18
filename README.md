@@ -2,7 +2,7 @@
 
 MindSurf Voice AI 的 Windows/macOS 桌面客户端与 Voice API v2 本地联调服务。客户端基于
 Tauri 2、Vue 3 和 TypeScript，提供录音、`asr_only` / `asr_llm` 单轮文本处理、临时文本展示、
-一次性文本注入、全局按住说话快捷键、悬浮窗、系统托盘和脱敏诊断。
+一次性文本注入、全局按住说话快捷键、登录自启动、悬浮窗、系统托盘和脱敏诊断。
 
 当前协议只提供文本结果，不包含多轮对话或下行音频。系统浏览器登录、HTTP 账户/额度/能力、
 一次性 realtime ticket 和长期 WebSocket 均遵循冻结的 [Voice API v2](./docs/v2/README.md)。
@@ -78,5 +78,5 @@ cargo check
 cargo test
 ```
 
-跨平台系统浏览器回跳、Keychain、原生录音、快捷键、悬浮窗和文本注入仍需在对应操作系统上
+跨平台系统浏览器回跳、Keychain、登录自启动、原生录音、快捷键、悬浮窗和文本注入仍需在对应操作系统上
 按 [交付清单](./docs/DELIVERY.md) 人工签收。

@@ -15,7 +15,7 @@
 - `mindsurf.voice.v2` 长连接、hello、心跳、关闭码策略和新 ticket 重连；
 - `asr_only` / `asr_llm` 单轮文本请求与 48 字节 INPUT_PCM 上行帧；
 - accepted 回显校验、commit 统计、文本 stage/sequence、final/done 双确认和取消竞态；
-- Windows/macOS 录音、麦克风选择、全局快捷键、悬浮窗、系统托盘与 Unicode 文本注入；
+- Windows/macOS 录音、麦克风选择、登录自启动、全局快捷键、悬浮窗、系统托盘与 Unicode 文本注入；
 - 设置 schema v2、脱敏诊断、日志轮转和清理本地数据；
 - HTTP + ticket + WebSocket v2 本地 Mock 与可配置故障注入；
 - 前端、Rust、Mock 和冻结协议自动化质量门。
@@ -60,6 +60,7 @@ Rust 原生命令和生产构建。
 - Keychain/Windows Credential Manager 的 token 写入、轮换、登出和旧凭据清理；
 - 麦克风权限、设备切换、长录音、取消和原生录音回退；
 - 全局按住说话快捷键、冲突提示和权限恢复；
+- 登录自启动开关、重启后的系统状态同步，以及静默托盘启动和手动唤醒；
 - 多显示器/全屏 Space 悬浮窗与托盘模式切换；
 - 两种模式的 final/done 一次性文本注入，以及取消、失败、断线时零注入；
 - 睡眠/唤醒、网络切换和连续请求下的长期连接恢复；

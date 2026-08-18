@@ -155,6 +155,18 @@ async function setShortcutEnabled(enabled: boolean) {
   }
 }
 
+async function setAutostartEnabled(enabled: boolean) {
+  const succeeded = await settingsController.setAutostartEnabled(enabled);
+  if (succeeded) {
+    toast.success(enabled ? "登录时自动启动已启用" : "登录时自动启动已关闭");
+  } else {
+    toast.error(settings.autostartError || t("自动启动设置失败"), {
+      title: t("自动启动设置失败"),
+      durationMs: 0,
+    });
+  }
+}
+
 async function setOverlayEnabled(enabled: boolean) {
   const succeeded = await settingsController.setOverlayEnabled(enabled);
   if (succeeded) {
@@ -190,6 +202,7 @@ async function saveApiOrigin() {
 }
 
 onMounted(() => {
+  void settingsController.refreshAutostart();
   void settingsController.refreshAudioInputDevices();
   unsubscribeDevices = subscribeAudioDeviceChanges(() =>
     settingsController.refreshAudioInputDevices(),
@@ -349,7 +362,7 @@ onBeforeUnmount(() => {
       </article>
 
       <article class="settings-card settings-card-recording">
-        <h2>{{ t("录音与快捷键") }}</h2>
+        <h2>{{ t("常规与快捷键") }}</h2>
         <label>
           <span>{{ t("输入设备") }}</span>
           <select
@@ -395,6 +408,21 @@ onBeforeUnmount(() => {
             shortcutStatus === "recording" ? shortcutPreview : settings.shortcutDisplay
           }}
         </button>
+        <label class="toggle-row">
+          <span>{{ t("登录时自动启动") }}</span>
+          <input
+            type="checkbox"
+            :checked="settings.autostartEnabled"
+            :disabled="
+              settings.autostartStatus === 'loading' ||
+              settings.autostartStatus === 'saving'
+            "
+            @change="setAutostartEnabled(checked($event))"
+          />
+        </label>
+        <p v-if="settings.autostartError" class="inline-error">
+          {{ t(settings.autostartError) }}
+        </p>
       </article>
 
       <article class="settings-card settings-card-permissions">
