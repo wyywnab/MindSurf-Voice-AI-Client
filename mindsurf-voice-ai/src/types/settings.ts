@@ -2,6 +2,8 @@ import type { VoiceModeV2 } from "./httpApi";
 import type { ShortcutBinding } from "./shortcut";
 import type { OverlayPosition } from "./voice";
 
+export type InterfaceTheme = "system" | "light" | "dark";
+
 export interface AppSettings {
   schemaVersion: 2;
   voiceApiOrigin: string;
@@ -18,7 +20,7 @@ export interface AppSettings {
     useWebViewContextMenu: boolean;
     showDiagnosticsPage: boolean;
   };
-  interface: { locale: "zh-CN" | "en-US" };
+  interface: { locale: "zh-CN" | "en-US"; theme: InterfaceTheme };
 }
 
 export interface AudioInputDevice {
@@ -44,5 +46,5 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
     useWebViewContextMenu: false,
     showDiagnosticsPage: false,
   },
-  interface: { locale: "zh-CN" },
+  interface: { locale: "zh-CN", theme: "system" },
 };

@@ -102,6 +102,10 @@ export class SettingsController {
     settingsStoreActions.setInterfaceLocale(locale);
   }
 
+  setInterfaceTheme(theme: AppSettings["interface"]["theme"]) {
+    settingsStoreActions.setInterfaceTheme(theme);
+  }
+
   async initializeRecordShortcut() {
     if (!this.settings.state.shortcutDesiredEnabled) {
       const result = await unregisterRecordShortcut();

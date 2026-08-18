@@ -37,11 +37,11 @@ describe("tray", () => {
     });
   });
 
-  it("accepts all four application pages from tray events", async () => {
+  it("accepts all top-level application pages from tray events", async () => {
     const onNavigate = vi.fn();
     await subscribeTrayActions({ onNavigate, onMode: vi.fn() });
 
-    for (const page of ["record", "connection", "permissions", "settings"]) {
+    for (const page of ["record", "connection", "settings"]) {
       listeners.get("tray://navigate")?.({ payload: page });
     }
     listeners.get("tray://navigate")?.({ payload: "unknown" });
@@ -49,7 +49,6 @@ describe("tray", () => {
     expect(onNavigate.mock.calls.map(([page]) => page)).toEqual([
       "record",
       "connection",
-      "permissions",
       "settings",
     ]);
   });

@@ -86,6 +86,9 @@ export function parseSettings(value: unknown): AppSettings {
     interface: {
       locale:
         interfaceSettings.locale === "en-US" ? "en-US" : defaults.interface.locale,
+      theme: isInterfaceTheme(interfaceSettings.theme)
+        ? interfaceSettings.theme
+        : defaults.interface.theme,
     },
   };
 }
@@ -133,6 +136,10 @@ function isOverlayPosition(
   value: unknown,
 ): value is AppSettings["overlay"]["position"] {
   return value === "left" || value === "center" || value === "right";
+}
+
+function isInterfaceTheme(value: unknown): value is AppSettings["interface"]["theme"] {
+  return value === "system" || value === "light" || value === "dark";
 }
 
 export const settingsRepository: SettingsRepository = new TauriSettingsRepository();

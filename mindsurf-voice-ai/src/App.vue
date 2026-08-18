@@ -12,6 +12,7 @@ import SystemDialogHost from "./components/SystemDialogHost.vue";
 import TopTabs from "./components/TopTabs.vue";
 import { settingsController } from "./controllers/settingsController";
 import { authController } from "./controllers/authController";
+import { realtimeConnectionController } from "./controllers/realtimeConnectionController";
 import { getAppInfo } from "./services/appInfo";
 import { syncMacOSAppMenu } from "./services/appMenu";
 import { useI18n } from "./services/i18n";
@@ -40,11 +41,17 @@ const auth = useAuthStore();
 const account = useAccountStore();
 const accountMenuOpen = ref(false);
 const accountUsageOpen = ref(false);
+const permissionsReturnTab = ref<"record" | "settings">("settings");
 const realtimeConnection = useRealtimeConnectionStore();
 const visibleConnectionStatus = computed(() =>
   auth.state.status === "authenticated"
     ? realtimeConnection.state.status
     : "disconnected",
+);
+const connectionBadgeInteractive = computed(
+  () =>
+    auth.state.status === "authenticated" &&
+    realtimeConnection.state.status !== "connected",
 );
 const { t } = useI18n();
 const settings = useSettingsStore();
@@ -57,9 +64,11 @@ const tabs = computed<readonly MainTab[]>(() => [
   ...(diagnosticsPageVisible.value
     ? ([{ id: "connection", label: t("诊断") }] satisfies MainTab[])
     : []),
-  { id: "permissions", label: t("权限") },
   { id: "settings", label: t("设置") },
 ]);
+const visibleActiveTab = computed<MainTabId>(() =>
+  activeTab.value === "permissions" ? "settings" : activeTab.value,
+);
 let trayDisposed = false;
 let unlistenTray: (() => void) | null = null;
 
@@ -103,6 +112,17 @@ function navigateTo(page: MainTabId) {
   activeTab.value = page;
 }
 
+function openPermissions(returnTab: "record" | "settings") {
+  accountUsageOpen.value = false;
+  permissionsReturnTab.value = returnTab;
+  activeTab.value = "permissions";
+}
+
+function retryRealtimeConnection() {
+  if (!connectionBadgeInteractive.value) return;
+  void realtimeConnectionController.retryNow();
+}
+
 async function logout() {
   accountMenuOpen.value = false;
   accountUsageOpen.value = false;
@@ -137,6 +157,7 @@ async function configureStartupPermissions(platform: string) {
     }
   }
   if (hasMissingPermission && account.state.user) {
+    permissionsReturnTab.value = "record";
     activeTab.value = "permissions";
   }
   await settingsController.initializeRecordShortcut();
@@ -259,9 +280,17 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <TopTabs :model-value="activeTab" :tabs="tabs" @update:model-value="navigateTo" />
+      <TopTabs
+        :model-value="visibleActiveTab"
+        :tabs="tabs"
+        @update:model-value="navigateTo"
+      />
 
-      <ConnectionBadge :status="visibleConnectionStatus" />
+      <ConnectionBadge
+        :status="visibleConnectionStatus"
+        :interactive="connectionBadgeInteractive"
+        @retry="retryRealtimeConnection"
+      />
     </header>
 
     <main class="app-content">
@@ -270,15 +299,23 @@ onBeforeUnmount(() => {
         @close="accountUsageOpen = false"
       />
       <LoginPanel v-else-if="activeTab === 'record' && !account.state.user" />
-      <RecorderPanel v-else-if="activeTab === 'record'" />
+      <RecorderPanel
+        v-else-if="activeTab === 'record'"
+        @open-permissions="openPermissions('record')"
+      />
       <ConnectionPanel
         v-else-if="diagnosticsPageVisible && activeTab === 'connection'"
       />
-      <PermissionsPanel v-else-if="activeTab === 'permissions'" :app-info="appInfo" />
+      <PermissionsPanel
+        v-else-if="activeTab === 'permissions'"
+        :app-info="appInfo"
+        @close="activeTab = permissionsReturnTab"
+      />
       <SettingsPanel
         v-else-if="activeTab === 'settings'"
         :app-info="appInfo"
         :app-info-error="appInfoError"
+        @open-permissions="openPermissions('settings')"
       />
     </main>
 

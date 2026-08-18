@@ -14,7 +14,6 @@ pub struct TrayMenuState<R: Runtime> {
     pages: Submenu<R>,
     page_record: MenuItem<R>,
     page_connection: MenuItem<R>,
-    page_permissions: MenuItem<R>,
     page_settings: MenuItem<R>,
     modes: Submenu<R>,
     asr_only: CheckMenuItem<R>,
@@ -36,7 +35,6 @@ impl<R: Runtime> TrayMenuState<R> {
         self.page_record.set_text(labels.record)?;
         self.page_connection.set_text(labels.diagnostics)?;
         self.page_connection.set_enabled(diagnostics_enabled)?;
-        self.page_permissions.set_text(labels.permissions)?;
         self.page_settings.set_text(labels.settings)?;
         self.modes.set_text(labels.modes)?;
         self.asr_only.set_text(labels.asr_only)?;
@@ -51,7 +49,6 @@ struct TrayLabels {
     pages: &'static str,
     record: &'static str,
     diagnostics: &'static str,
-    permissions: &'static str,
     settings: &'static str,
     modes: &'static str,
     asr_only: &'static str,
@@ -67,11 +64,10 @@ impl TrayLabels {
                 pages: "Open Page",
                 record: "Record",
                 diagnostics: "Diagnostics",
-                permissions: "Permissions",
                 settings: "Settings",
                 modes: "Interaction Mode",
-                asr_only: "Recognition only",
-                asr_llm: "ASR + LLM text processing",
+                asr_only: "Transcribe",
+                asr_llm: "Polish",
                 quit: "Quit MindSurf Voice AI",
             }
         } else {
@@ -80,11 +76,10 @@ impl TrayLabels {
                 pages: "打开页面",
                 record: "录音",
                 diagnostics: "诊断",
-                permissions: "权限",
                 settings: "设置",
                 modes: "交互模式",
-                asr_only: "仅识别",
-                asr_llm: "ASR + LLM 文本处理",
+                asr_only: "识别",
+                asr_llm: "润色",
                 quit: "退出 MindSurf Voice AI",
             }
         }
@@ -97,25 +92,18 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
     let page_record = MenuItem::with_id(handle, "page_record", "录音", true, None::<&str>)?;
     let page_connection =
         MenuItem::with_id(handle, "page_connection", "诊断", false, None::<&str>)?;
-    let page_permissions =
-        MenuItem::with_id(handle, "page_permissions", "权限", true, None::<&str>)?;
     let page_settings = MenuItem::with_id(handle, "page_settings", "设置", true, None::<&str>)?;
     let pages = Submenu::with_items(
         handle,
         "打开页面",
         true,
-        &[
-            &page_record,
-            &page_permissions,
-            &page_connection,
-            &page_settings,
-        ],
+        &[&page_record, &page_connection, &page_settings],
     )?;
 
-    let asr_only = CheckMenuItemBuilder::with_id("mode_asr_only", "仅识别")
+    let asr_only = CheckMenuItemBuilder::with_id("mode_asr_only", "识别")
         .checked(true)
         .build(handle)?;
-    let asr_llm = CheckMenuItemBuilder::with_id("mode_asr_llm", "ASR + LLM 文本处理")
+    let asr_llm = CheckMenuItemBuilder::with_id("mode_asr_llm", "润色")
         .checked(false)
         .build(handle)?;
     let modes = Submenu::with_items(handle, "交互模式", true, &[&asr_only, &asr_llm])?;
@@ -129,7 +117,6 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
         pages,
         page_record,
         page_connection,
-        page_permissions,
         page_settings,
         modes,
         asr_only,
@@ -164,7 +151,6 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
         "open" => show_main_window(app),
         "page_record" => navigate(app, "record"),
         "page_connection" => navigate(app, "connection"),
-        "page_permissions" => navigate(app, "permissions"),
         "page_settings" => navigate(app, "settings"),
         "mode_asr_only" => request_mode(app, MODE_ASR_ONLY),
         "mode_asr_llm" => request_mode(app, MODE_ASR_LLM),
@@ -260,13 +246,11 @@ mod tests {
     fn localizes_every_tray_page() {
         let chinese = TrayLabels::for_locale("zh-CN");
         assert_eq!(chinese.record, "录音");
-        assert_eq!(chinese.permissions, "权限");
         assert_eq!(chinese.diagnostics, "诊断");
         assert_eq!(chinese.settings, "设置");
 
         let english = TrayLabels::for_locale("en-US");
         assert_eq!(english.record, "Record");
-        assert_eq!(english.permissions, "Permissions");
         assert_eq!(english.diagnostics, "Diagnostics");
         assert_eq!(english.settings, "Settings");
     }

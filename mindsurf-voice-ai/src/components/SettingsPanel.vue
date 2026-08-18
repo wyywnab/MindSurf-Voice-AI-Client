@@ -19,9 +19,11 @@ import { useRequestStore } from "../stores/requestStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import type { AppInfo } from "../types/app";
 import type { VoiceModeV2 } from "../types/httpApi";
+import type { InterfaceTheme } from "../types/settings";
 import { VOICE_MODE_LABELS, type OverlayPosition } from "../types/voice";
 
 const props = defineProps<{ appInfo: AppInfo | null; appInfoError: string }>();
+const emit = defineEmits<{ openPermissions: [] }>();
 const { t } = useI18n();
 const capabilities = useCapabilitiesStore().state;
 const request = useRequestStore().state;
@@ -171,7 +173,7 @@ onBeforeUnmount(() => {
     </header>
 
     <div class="panel-body settings-grid">
-      <article class="settings-card">
+      <article class="settings-card settings-card-connection">
         <h2>{{ t("服务连接") }}</h2>
         <label>
           <span>Voice API origin</span>
@@ -193,7 +195,7 @@ onBeforeUnmount(() => {
         </p>
       </article>
 
-      <article class="settings-card">
+      <article class="settings-card settings-card-request">
         <h2>{{ t("请求") }}</h2>
         <label>
           <span>{{ t("模式") }}</span>
@@ -308,7 +310,7 @@ onBeforeUnmount(() => {
         </label>
       </article>
 
-      <article class="settings-card">
+      <article class="settings-card settings-card-recording">
         <h2>{{ t("录音与快捷键") }}</h2>
         <label>
           <span>{{ t("输入设备") }}</span>
@@ -352,7 +354,21 @@ onBeforeUnmount(() => {
         </button>
       </article>
 
-      <article class="settings-card">
+      <article class="settings-card settings-card-permissions">
+        <h2>{{ t("系统权限") }}</h2>
+        <p class="settings-hint">
+          {{ t("集中检查和配置录音、全局快捷键及文本注入所需权限。") }}
+        </p>
+        <button
+          class="button button-secondary"
+          type="button"
+          @click="emit('openPermissions')"
+        >
+          {{ t("管理系统权限") }}
+        </button>
+      </article>
+
+      <article class="settings-card settings-card-interface">
         <h2>{{ t("界面") }}</h2>
         <label>
           <span>{{ t("界面语言") }}</span>
@@ -366,6 +382,21 @@ onBeforeUnmount(() => {
           >
             <option value="zh-CN">简体中文</option>
             <option value="en-US">English</option>
+          </select>
+        </label>
+        <label>
+          <span>{{ t("界面主题") }}</span>
+          <select
+            :value="settings.interfaceTheme"
+            @change="
+              settingsController.setInterfaceTheme(
+                ($event.target as HTMLSelectElement).value as InterfaceTheme,
+              )
+            "
+          >
+            <option value="system">{{ t("跟随系统") }}</option>
+            <option value="light">{{ t("浅色") }}</option>
+            <option value="dark">{{ t("深色") }}</option>
           </select>
         </label>
         <label class="toggle-row">
@@ -393,7 +424,7 @@ onBeforeUnmount(() => {
         </label>
       </article>
 
-      <article class="settings-card">
+      <article class="settings-card settings-card-developer">
         <h2>{{ t("开发与隐私") }}</h2>
         <label class="toggle-row">
           <span>{{ t("开发者模式") }}</span>

@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 
 import { getNativeAudioRecordingMeter } from "./services/nativeRecorder";
 import { setLocale, useI18n } from "./services/i18n";
+import { applyInterfaceTheme } from "./services/theme";
 import {
   notifyOverlayReady,
   requestOverlayCancel,
@@ -20,6 +21,7 @@ const snapshot = reactive<OverlaySnapshot>({
   durationMs: 0,
   level: 0,
   locale: "zh-CN",
+  theme: "system",
   mode: "asr_only",
   recording: false,
   status: "准备录音",
@@ -56,6 +58,7 @@ function formatDuration(durationMs: number) {
 
 function updateLocalSnapshot(next: OverlaySnapshot) {
   setLocale(next.locale);
+  applyInterfaceTheme(next.theme);
   Object.assign(snapshot, next);
   if (!usesNativeMeter || !nativeRecordingActive.value) {
     const deliveryDelayMs = next.recording

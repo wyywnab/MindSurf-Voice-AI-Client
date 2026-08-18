@@ -7,9 +7,15 @@ const locale = ref<AppLocale>("zh-CN");
 
 const enUS: Record<string, string> = {
   录音: "Record",
+  识别: "Transcribe",
+  润色: "Polish",
   诊断: "Diagnostics",
   权限: "Permissions",
   设置: "Settings",
+  界面主题: "Theme",
+  跟随系统: "Use System Setting",
+  浅色: "Light",
+  深色: "Dark",
   未连接: "Disconnected",
   连接中: "Connecting",
   已连接: "Connected",
@@ -97,6 +103,7 @@ const enUS: Record<string, string> = {
   "仍有权限未授权，请打开对应的系统设置；完成后返回应用会自动刷新状态。":
     "Some permissions are still missing. Open the relevant System Settings page; the app refreshes automatically when you return.",
   系统权限: "System Permissions",
+  管理系统权限: "Manage System Permissions",
   "集中检查和配置录音、全局快捷键及文本注入所需权限。":
     "Review and configure permissions required for recording, global shortcuts, and text injection.",
   权限状态: "Permission Status",

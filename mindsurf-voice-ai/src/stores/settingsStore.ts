@@ -6,6 +6,7 @@ import {
   formatShortcutBinding,
 } from "../services/shortcutBinding";
 import { settingsRepository } from "../services/settings/settingsRepository";
+import { applyInterfaceTheme } from "../services/theme";
 import type { VoiceModeV2 } from "../types/httpApi";
 import type { ShortcutBinding, ShortcutStatus } from "../types/shortcut";
 import {
@@ -44,6 +45,7 @@ const state = reactive({
   developerUseWebViewContextMenu: defaults.developer.useWebViewContextMenu,
   developerShowDiagnosticsPage: defaults.developer.showDiagnosticsPage,
   interfaceLocale: defaults.interface.locale,
+  interfaceTheme: defaults.interface.theme,
 });
 
 function platformDefaultShortcut(binding: ShortcutBinding): ShortcutBinding {
@@ -78,7 +80,9 @@ function applySettings(settings: AppSettings) {
   state.developerUseWebViewContextMenu = settings.developer.useWebViewContextMenu;
   state.developerShowDiagnosticsPage = settings.developer.showDiagnosticsPage;
   state.interfaceLocale = settings.interface.locale;
+  state.interfaceTheme = settings.interface.theme;
   setLocale(settings.interface.locale);
+  applyInterfaceTheme(settings.interface.theme);
 }
 
 function snapshot(): AppSettings {
@@ -98,7 +102,7 @@ function snapshot(): AppSettings {
       useWebViewContextMenu: state.developerUseWebViewContextMenu,
       showDiagnosticsPage: state.developerShowDiagnosticsPage,
     },
-    interface: { locale: state.interfaceLocale },
+    interface: { locale: state.interfaceLocale, theme: state.interfaceTheme },
   };
 }
 
@@ -187,6 +191,11 @@ export const settingsStoreActions = {
   setInterfaceLocale(locale: AppSettings["interface"]["locale"]) {
     state.interfaceLocale = locale;
     setLocale(locale);
+    persistSoon();
+  },
+  setInterfaceTheme(theme: AppSettings["interface"]["theme"]) {
+    state.interfaceTheme = theme;
+    applyInterfaceTheme(theme);
     persistSoon();
   },
   setInjectionMaxCodePoints(value: number) {

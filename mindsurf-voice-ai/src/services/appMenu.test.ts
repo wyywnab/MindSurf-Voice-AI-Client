@@ -25,7 +25,7 @@ describe("appMenu", () => {
     vi.unstubAllGlobals();
   });
 
-  it("builds a localized macOS menu with every application page", async () => {
+  it("builds a localized macOS menu with every top-level application page", async () => {
     vi.stubGlobal("navigator", { userAgent: "Mac OS X" });
     submenuNew.mockResolvedValueOnce(windowMenu).mockResolvedValueOnce(helpMenu);
     setAsAppMenu.mockResolvedValue({ close: closePrevious });
@@ -53,16 +53,15 @@ describe("appMenu", () => {
     const pagesMenu = menuOptions.items.find((item) => item.id === "pages-menu");
     expect(pagesMenu?.items?.map((item) => item.id)).toEqual([
       "app-page-record",
-      "app-page-permissions",
       "app-page-diagnostics",
       "app-page-settings",
     ]);
-    expect(pagesMenu?.items?.[2]).toMatchObject({
+    expect(pagesMenu?.items?.[1]).toMatchObject({
       text: "Diagnostics",
       enabled: false,
     });
-    (pagesMenu?.items?.[1]?.action as () => void)();
-    expect(onNavigate).toHaveBeenCalledWith("permissions");
+    (pagesMenu?.items?.[2]?.action as () => void)();
+    expect(onNavigate).toHaveBeenCalledWith("settings");
     expect(windowMenu.setAsWindowsMenuForNSApp).toHaveBeenCalledOnce();
     expect(helpMenu.setAsHelpMenuForNSApp).toHaveBeenCalledOnce();
     expect(closePrevious).toHaveBeenCalledOnce();

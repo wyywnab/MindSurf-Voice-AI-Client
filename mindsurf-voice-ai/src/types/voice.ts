@@ -6,8 +6,8 @@ export type ServiceConnectionStatus =
 export type OverlayPosition = "left" | "center" | "right";
 
 export const VOICE_MODE_LABELS: Record<VoiceModeV2, string> = {
-  asr_only: "仅识别",
-  asr_llm: "ASR + LLM 文本处理",
+  asr_only: "识别",
+  asr_llm: "润色",
 };
 
 export const CONNECTION_STATUS_LABELS: Record<ServiceConnectionStatus, string> = {

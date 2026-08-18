@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, watch } from "vue";
 
 import { useRecorder } from "../composables/useRecorder";
 import { useI18n } from "../services/i18n";
+import { getSystemPermissionStatus } from "../services/permissions";
 import { RecordingController } from "../controllers/recordingController";
 import { OverlaySyncController } from "../controllers/overlaySyncController";
 import { voiceRequestControllerV2 } from "../controllers/voiceRequestControllerV2";
@@ -17,10 +18,12 @@ import { useRequestStore } from "../stores/requestStore";
 import { settingsStoreActions, useSettingsStore } from "../stores/settingsStore";
 import type { OverlaySnapshot } from "../types/overlay";
 import type { VoiceModeV2 } from "../types/httpApi";
+import type { SystemPermission, SystemPermissionState } from "../types/permissions";
 import { VOICE_MODE_LABELS } from "../types/voice";
 import AudioMeter from "./AudioMeter.vue";
 
 const { t } = useI18n();
+const emit = defineEmits<{ openPermissions: [] }>();
 
 const recorder = useRecorder();
 const recordingController = new RecordingController(recorder);
@@ -32,7 +35,55 @@ let shortcutAction = Promise.resolve();
 let shortcutDisposed = false;
 let shortcutHeld = false;
 let unlistenShortcuts: (() => void) | null = null;
+const isMacOS = globalThis.navigator.userAgent.includes("Mac OS");
+const requiredSystemPermissions: readonly SystemPermission[] = [
+  "microphone",
+  "accessibility",
+];
+const systemPermissionStates = reactive<
+  Record<SystemPermission, SystemPermissionState>
+>({
+  microphone: "unknown",
+  accessibility: "unknown",
+  input_monitoring: "unknown",
+});
 let recordingAttempt = 0;
+
+const requiredPermissionsState = computed(() => {
+  if (!isMacOS) return recorder.permissionState.value;
+  const states = requiredSystemPermissions.map(
+    (permission) => systemPermissionStates[permission],
+  );
+  if (states.every((state) => state === "granted")) return "granted";
+  if (states.some((state) => state === "denied" || state === "restricted")) {
+    return "denied";
+  }
+  if (states.some((state) => state === "not_determined")) return "prompt";
+  return "unknown";
+});
+
+const requiredPermissionsLabel = computed(() =>
+  t(
+    {
+      granted: "已授权",
+      denied: "未授权",
+      prompt: "等待授权",
+      unknown: "检查中",
+      unsupported: "不支持",
+    }[requiredPermissionsState.value],
+  ),
+);
+
+async function refreshRequiredPermissions() {
+  await recorder.refreshPermissionState();
+  if (!isMacOS) return;
+  await Promise.all(
+    requiredSystemPermissions.map(async (permission) => {
+      const result = await getSystemPermissionStatus(permission);
+      systemPermissionStates[permission] = result.ok ? result.data.status : "unknown";
+    }),
+  );
+}
 
 const canStart = computed(
   () =>
@@ -52,18 +103,6 @@ const formattedDuration = computed(() => {
     .toString()
     .padStart(2, "0")}.${tenths}`;
 });
-
-const permissionLabel = computed(() =>
-  t(
-    {
-      unknown: "检查中",
-      prompt: "等待授权",
-      granted: "已授权",
-      denied: "已拒绝",
-      unsupported: "不支持",
-    }[recorder.permissionState.value],
-  ),
-);
 
 const stateLabel = computed(() => {
   if (recorder.state.value === "ready") {
@@ -123,6 +162,7 @@ function createOverlaySnapshot(): OverlaySnapshot {
     durationMs: recorder.durationMs.value,
     level: recorder.level.value,
     locale: settingsState.interfaceLocale,
+    theme: settingsState.interfaceTheme,
     mode: capabilitiesState.selectedMode,
     recording: recorder.isRecording.value,
     status: requestState.status === "failed" ? t("处理失败") : stateLabel.value,
@@ -228,7 +268,8 @@ function handleShortcutCancel(timestampMs: number) {
 }
 
 onMounted(() => {
-  void recorder.refreshPermissionState();
+  void refreshRequiredPermissions();
+  globalThis.addEventListener("focus", refreshRequiredPermissions);
   overlaySync.start();
   void subscribeShortcutEvents({
     onCancel: (event) => {
@@ -266,6 +307,7 @@ watch(
     transcript,
     () => capabilitiesState.selectedMode,
     () => settingsState.interfaceLocale,
+    () => settingsState.interfaceTheme,
   ],
   () => overlaySync.publish(),
 );
@@ -276,6 +318,7 @@ onBeforeUnmount(() => {
   overlaySync.dispose();
   unlistenShortcuts?.();
   unlistenShortcuts = null;
+  globalThis.removeEventListener("focus", refreshRequiredPermissions);
 });
 </script>
 
@@ -304,10 +347,15 @@ onBeforeUnmount(() => {
           {{ t(label) }}
         </button>
       </div>
-      <div class="permission-chip" :data-state="recorder.permissionState.value">
-        <span class="status-dot"></span>
-        {{ t("麦克风") }} {{ permissionLabel }}
-      </div>
+      <button
+        class="permission-chip permission-chip-button"
+        type="button"
+        :data-state="requiredPermissionsState"
+        @click="emit('openPermissions')"
+      >
+        <span class="status-dot" aria-hidden="true"></span>
+        {{ t("权限") }} {{ requiredPermissionsLabel }}
+      </button>
     </header>
 
     <div class="panel-body">

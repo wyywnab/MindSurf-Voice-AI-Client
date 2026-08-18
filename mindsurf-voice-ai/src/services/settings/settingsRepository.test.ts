@@ -18,6 +18,18 @@ describe("parseSettings", () => {
     expect(parsed.interaction.defaultMode).toBe("asr_llm");
   });
 
+  it("accepts supported themes and falls back to the system theme", () => {
+    const settings = structuredClone(DEFAULT_APP_SETTINGS);
+    settings.interface.theme = "dark";
+    expect(parseSettings(settings).interface.theme).toBe("dark");
+
+    const invalid = structuredClone(settings) as unknown as {
+      interface: { theme: string };
+    };
+    invalid.interface.theme = "sepia";
+    expect(parseSettings(invalid).interface.theme).toBe("system");
+  });
+
   it("migrates safe common fields from schema 1 without preserving removed fields", () => {
     const parsed = parseSettings({
       schemaVersion: 1,
@@ -34,7 +46,7 @@ describe("parseSettings", () => {
       audio: { inputDeviceId: "microphone" },
       interaction: { defaultMode: "asr_only", injectionMaxCodePoints: 512 },
       overlay: { enabled: false, position: "left" },
-      interface: { locale: "en-US" },
+      interface: { locale: "en-US", theme: "system" },
     });
     expect(parsed).not.toHaveProperty("serviceProfiles");
     expect(parsed.audio).toEqual({ inputDeviceId: "microphone" });

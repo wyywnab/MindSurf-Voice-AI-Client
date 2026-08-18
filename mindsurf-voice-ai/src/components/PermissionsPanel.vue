@@ -16,6 +16,7 @@ import type { SystemPermission, SystemPermissionState } from "../types/permissio
 const props = defineProps<{
   appInfo: AppInfo | null;
 }>();
+const emit = defineEmits<{ close: [] }>();
 const { t } = useI18n();
 
 const settings = useSettingsStore();
@@ -213,6 +214,13 @@ onBeforeUnmount(() => {
           {{ t("集中检查和配置录音、全局快捷键及文本注入所需权限。") }}
         </p>
       </div>
+      <button
+        class="button button-secondary button-compact"
+        type="button"
+        @click="emit('close')"
+      >
+        {{ t("返回") }}
+      </button>
     </header>
 
     <div class="panel-body">

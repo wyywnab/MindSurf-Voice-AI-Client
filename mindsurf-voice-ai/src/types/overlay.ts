@@ -7,6 +7,7 @@ export interface OverlaySnapshot {
   durationMs: number;
   level: number;
   locale: AppSettings["interface"]["locale"];
+  theme: AppSettings["interface"]["theme"];
   mode: VoiceModeV2;
   recording: boolean;
   status: string;
