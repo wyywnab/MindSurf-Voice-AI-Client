@@ -1,55 +1,20 @@
 mod commands;
 mod error;
-#[cfg(target_os = "macos")]
-mod mac_instance;
-
-use std::sync::Mutex;
-
-#[cfg(target_os = "macos")]
-use tauri::Emitter;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 use tauri::Manager;
 
-#[derive(Default)]
-pub(crate) struct PendingAuthCallbacks(Mutex<Vec<String>>);
-
-#[cfg(target_os = "macos")]
-pub(crate) fn enqueue_auth_callbacks(app: &tauri::AppHandle, callbacks: Vec<String>) {
-    if callbacks.is_empty() {
-        return;
-    }
-    if let Ok(mut pending) = app.state::<PendingAuthCallbacks>().0.lock() {
-        pending.extend(callbacks);
-    }
-    let _ = app.emit("auth://callback-received", ());
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-    }
-}
-
-#[tauri::command]
-fn take_pending_auth_callbacks(state: tauri::State<'_, PendingAuthCallbacks>) -> Vec<String> {
-    let Ok(mut callbacks) = state.0.lock() else {
-        return Vec::new();
-    };
-    std::mem::take(&mut *callbacks)
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
-    }));
-
-    builder
-        .manage(PendingAuthCallbacks::default())
+    tauri::Builder::default()
+        // Must be registered first so secondary-instance deep links are forwarded
+        // to the primary process before the secondary process exits.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
@@ -63,8 +28,6 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            #[cfg(target_os = "macos")]
-            mac_instance::initialize(app.handle());
             let _ = commands::credentials::purge_obsolete_credentials(app.handle());
             let _ = commands::diagnostics::initialize(app.handle());
             commands::shortcuts::initialize(app.handle().clone());
@@ -111,25 +74,8 @@ pub fn run() {
             commands::overlay::show_overlay,
             commands::tray::configure_tray_menu,
             commands::tray::set_tray_mode,
-            take_pending_auth_callbacks
         ])
         .build(tauri::generate_context!())
         .expect("failed to build MindSurf Voice AI")
-        .run(|app, event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Opened { urls } = event {
-                let callbacks = urls
-                    .into_iter()
-                    .map(|url| url.to_string())
-                    .filter(|url| url.starts_with("mindsurf://auth/callback"))
-                    .collect::<Vec<_>>();
-                let broker = app.state::<mac_instance::MacInstanceBroker>();
-                if broker.is_primary() {
-                    enqueue_auth_callbacks(app, callbacks);
-                } else {
-                    broker.forward(&callbacks);
-                    app.exit(0);
-                }
-            }
-        });
+        .run(|_, _| {});
 }

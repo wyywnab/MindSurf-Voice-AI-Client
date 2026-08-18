@@ -20,6 +20,7 @@ import {
 } from "./validators";
 
 type Fetch = typeof globalThis.fetch;
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 const desktopFetch: Fetch = (input, init) =>
   isTauri() ? tauriFetch(input, init) : globalThis.fetch(input, init);
@@ -53,6 +54,7 @@ export class VoiceApiClient {
     origin: string,
     private readonly accessToken: () => string | null,
     private readonly fetchImpl: Fetch = desktopFetch,
+    private readonly requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   ) {
     this.origin = validateApiOrigin(origin);
   }
@@ -212,14 +214,25 @@ export class VoiceApiClient {
       headers.set("Authorization", `Bearer ${token}`);
     }
     let response: Response;
+    const controller = new AbortController();
+    const timeout = globalThis.setTimeout(
+      () => controller.abort(),
+      this.requestTimeoutMs,
+    );
     try {
       response = await this.fetchImpl(new URL(path, this.origin), {
         method: options.method,
         headers,
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        signal: controller.signal,
       });
     } catch (error) {
+      if (controller.signal.aborted) {
+        throw new VoiceApiNetworkError("服务请求超时，请检查网络后重试", error);
+      }
       throw new VoiceApiNetworkError(describeNetworkFailure(error), error);
+    } finally {
+      globalThis.clearTimeout(timeout);
     }
     if (options.expectEmpty && response.status === 204) return undefined;
     let payload: unknown;

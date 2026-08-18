@@ -126,16 +126,19 @@ export class VoiceTransportV2 {
     this.clearReconnectTimer();
     const generation = ++this.generation;
     this.setStatus(this.reconnectAttempt ? "reconnecting" : "connecting");
-    this.connectInFlight = this.openWithFreshTicket(generation).finally(() => {
-      this.connectInFlight = null;
+    const attempt = this.openWithFreshTicket(generation);
+    this.connectInFlight = attempt;
+    void attempt.finally(() => {
+      if (this.connectInFlight === attempt) this.connectInFlight = null;
     });
-    return this.connectInFlight;
+    return attempt;
   }
 
   disconnect(reason = "client disconnect") {
     this.userClosed = true;
     this.generation += 1;
     this.clearTimers();
+    this.connectInFlight = null;
     this.eventIds.clear();
     this.serverHello = null;
     const socket = this.socket;
@@ -147,10 +150,21 @@ export class VoiceTransportV2 {
   }
 
   retryNow() {
-    if (this.status === "connected" || this.status === "connecting") {
-      return Promise.resolve();
+    if (this.status === "connected") return Promise.resolve();
+    this.generation += 1;
+    this.clearTimers();
+    this.connectInFlight = null;
+    this.eventIds.clear();
+    this.serverHello = null;
+    this.forceReconnectAfterClose = false;
+    this.closeErrorAlreadyReported = false;
+    const socket = this.socket;
+    this.socket = null;
+    if (socket?.readyState === WS_OPEN || socket?.readyState === WS_CONNECTING) {
+      socket.close(1_000, "manual retry");
     }
     this.reconnectAttempt = 0;
+    this.setStatus("disconnected");
     return this.connect();
   }
 
@@ -167,8 +181,12 @@ export class VoiceTransportV2 {
       let socket: WebSocket;
       try {
         socket = this.socketFactory(ticket.url, ticket.subprotocol);
-      } catch {
-        throw new VoiceTransportV2Error("connection_failed", "无法创建实时连接", true);
+      } catch (error) {
+        throw new VoiceTransportV2Error(
+          "connection_failed",
+          describeWebSocketCreationFailure(error),
+          true,
+        );
       }
       this.socket = socket;
       this.closeErrorAlreadyReported = false;
@@ -481,4 +499,15 @@ function safeServerErrorMessage(payload: V2ProtocolError) {
     pipeline_unavailable: "所选 Pipeline 暂时不可用",
   };
   return messages[payload.code] ?? `实时服务返回错误（${payload.code}）`;
+}
+
+function describeWebSocketCreationFailure(error: unknown) {
+  const name =
+    error instanceof Error && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(error.name)
+      ? error.name
+      : "unknown";
+  if (name === "SecurityError") return "浏览器安全策略阻止创建实时连接";
+  if (name === "SyntaxError") return "实时连接地址或子协议无效";
+  if (name === "InvalidStateError") return "当前 WebView 状态无法创建实时连接";
+  return name === "unknown" ? "无法创建实时连接" : `无法创建实时连接（${name}）`;
 }

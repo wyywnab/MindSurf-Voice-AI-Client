@@ -164,10 +164,17 @@ export class AuthController {
         authStoreActions.setStatus("signed_out");
         return;
       }
-      accountStoreActions.setUser(restored.user);
       authStoreActions.setRefreshTokenConfigured(true);
+      diagnosticsStoreActions.log(
+        "info",
+        "auth",
+        "auth.session_restored",
+        "登录凭据已恢复，开始连接实时服务",
+      );
+      void realtimeConnectionController.connect();
       await this.loadAccountData(api);
     } catch (error) {
+      realtimeConnectionController.disconnect();
       if (error instanceof ReauthenticationRequiredError) {
         this.clearAccountState();
         authStoreActions.setStatus("signed_out", error.message);
@@ -271,16 +278,29 @@ export class AuthController {
     };
     const idempotencyKey = globalThis.crypto.randomUUID();
     authStoreActions.setStatus("exchanging");
+    diagnosticsStoreActions.log(
+      "info",
+      "auth",
+      "auth.exchange_started",
+      "开始交换登录授权码",
+    );
     try {
       const data = await retryUncertain(
         () => api.exchangeAuthorizationCode(body, idempotencyKey),
         TOKEN_RECOVERY_WINDOW_MS,
       );
       await tokens.acceptAuthData(data);
-      accountStoreActions.setUser(data.user);
       authStoreActions.setRefreshTokenConfigured(true);
+      diagnosticsStoreActions.log(
+        "info",
+        "auth",
+        "auth.exchange_succeeded",
+        "登录凭据交换成功，开始连接实时服务",
+      );
+      void realtimeConnectionController.connect();
       await this.loadAccountData(api);
     } catch (error) {
+      realtimeConnectionController.disconnect();
       await tokens.clear();
       this.clearAccountState();
       authStoreActions.setStatus("error", describeError(error));
@@ -289,6 +309,12 @@ export class AuthController {
 
   private async loadAccountData(api: VoiceApiClient) {
     authStoreActions.setStatus("loading_account");
+    diagnosticsStoreActions.log(
+      "info",
+      "auth",
+      "auth.account_loading",
+      "开始加载账户、额度和服务能力",
+    );
     quotaStoreActions.setLoading();
     capabilitiesStoreActions.setLoading();
     try {
@@ -306,7 +332,12 @@ export class AuthController {
         );
       }
       authStoreActions.setStatus("authenticated");
-      void realtimeConnectionController.connect();
+      diagnosticsStoreActions.log(
+        "info",
+        "auth",
+        "auth.account_loaded",
+        "账户、额度和服务能力加载完成",
+      );
     } catch (error) {
       const message = describeError(error);
       quotaStoreActions.setError(message);

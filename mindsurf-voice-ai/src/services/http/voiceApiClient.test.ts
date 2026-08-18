@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { VoiceApiClient, VoiceApiError } from "./voiceApiClient";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { VoiceApiClient, VoiceApiError, VoiceApiNetworkError } from "./voiceApiClient";
 
 const requestId = "019d643e-1550-761a-b7a0-471791bcaf20";
 const user = {
@@ -12,6 +12,8 @@ const user = {
 };
 
 describe("VoiceApiClient", () => {
+  afterEach(() => vi.useRealTimers());
+
   it("adds the in-memory bearer token only to protected requests", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(new Headers(init?.headers).get("Authorization")).toBe(
@@ -82,5 +84,32 @@ describe("VoiceApiClient", () => {
     expect(error).toBeInstanceOf(VoiceApiError);
     expect(error.message).toBe("登录凭据无效，请重新登录");
     expect(JSON.stringify(error)).not.toContain("secret");
+  });
+
+  it("aborts a request that exceeds the configured timeout", async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        }),
+    );
+    const api = new VoiceApiClient(
+      "https://api.example.com",
+      () => "access-secret",
+      fetcher,
+      1_000,
+    );
+
+    const request = api.getCurrentUser();
+    const rejection = expect(request).rejects.toMatchObject({
+      name: "VoiceApiNetworkError",
+      message: "服务请求超时，请检查网络后重试",
+    } satisfies Partial<VoiceApiNetworkError>);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await rejection;
   });
 });

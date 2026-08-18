@@ -208,6 +208,59 @@ describe("VoiceTransportV2", () => {
     expect(transport.connectionStatus).toBe("error");
   });
 
+  it("hard-resets a socket that is still connecting when manually retried", async () => {
+    const { transport, acquire, sockets } = setup();
+    await transport.connect();
+    expect(transport.connectionStatus).toBe("connecting");
+
+    await transport.retryNow();
+
+    expect(sockets[0]!.closeCalls).toEqual([{ code: 1_000, reason: "manual retry" }]);
+    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(sockets).toHaveLength(2);
+    expect(transport.connectionStatus).toBe("connecting");
+  });
+
+  it("reports a safe reason when WebSocket construction is blocked", async () => {
+    const acquire = vi.fn(async () => ({
+      url: "wss://api.example.com/socket?ticket=must-not-appear",
+      subprotocol: "mindsurf.voice.v2" as const,
+      expiresAtMs: Date.now() + 30_000,
+    }));
+    const callbacks = {
+      onStatusChange: vi.fn(),
+      onServerHello: vi.fn(),
+      onControlMessage: vi.fn(),
+      onError: vi.fn(),
+      onReconnectAttempt: vi.fn(),
+    };
+    const transport = new VoiceTransportV2(
+      { acquire } as unknown as RealtimeTicketProvider,
+      { version: "2.0.0", platform: "macos", arch: "aarch64" },
+      callbacks,
+      () => {
+        throw new DOMException(
+          "Blocked URL wss://api.example.com/socket?ticket=must-not-appear",
+          "SecurityError",
+        );
+      },
+      () => 0,
+    );
+
+    await transport.connect();
+
+    expect(callbacks.onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "connection_failed",
+        message: "浏览器安全策略阻止创建实时连接",
+        recoverable: true,
+      }),
+    );
+    expect(JSON.stringify(callbacks.onError.mock.calls)).not.toContain(
+      "must-not-appear",
+    );
+  });
+
   it("silently ignores duplicate event IDs", async () => {
     const { transport, sockets, callbacks } = setup();
     await transport.connect();

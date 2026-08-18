@@ -1,5 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { isTauri } from "@tauri-apps/api/core";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -43,21 +42,10 @@ export async function subscribeAuthCallbacks(handler: (url: string) => void) {
       handler(url);
     });
   };
-  const drainNativeQueue = async () => {
-    deliver(await invoke<string[]>("take_pending_auth_callbacks"));
-  };
-
-  // Install both listeners before reading startup URLs. This closes the gap where
-  // macOS can deliver an URL while the WebView is still initializing.
-  const unlistenNative = await listen("auth://callback-received", () => {
-    void drainNativeQueue();
-  });
   const unlistenPlugin = await onOpenUrl(deliver);
   deliver(await getCurrent());
-  await drainNativeQueue();
 
   return () => {
-    unlistenNative();
     unlistenPlugin();
   };
 }

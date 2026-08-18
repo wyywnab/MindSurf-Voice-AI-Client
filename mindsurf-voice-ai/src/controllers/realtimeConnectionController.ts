@@ -139,7 +139,6 @@ export class RealtimeConnectionController {
 
   disconnect() {
     this.transport?.disconnect();
-    this.transport = null;
     this.lastNotifiedConnectionError = "";
     realtimeConnectionStoreActions.reset();
   }
