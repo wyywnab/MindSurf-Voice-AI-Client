@@ -4,6 +4,7 @@ import { accountStoreActions } from "../stores/accountStore";
 import { authStoreActions } from "../stores/authStore";
 import { capabilitiesStoreActions } from "../stores/capabilitiesStore";
 import { quotaStoreActions } from "../stores/quotaStore";
+import { historyStoreActions } from "../stores/historyStore";
 import { settingsStoreActions, useSettingsStore } from "../stores/settingsStore";
 import { diagnosticsStoreActions } from "../stores/diagnosticsStore";
 import { getOrCreateDeviceId } from "../services/auth/deviceIdentity";
@@ -340,6 +341,7 @@ export class AuthController {
   }
 
   private clearAccountState() {
+    historyStoreActions.reset();
     accountStoreActions.setUser(null);
     quotaStoreActions.setQuota(null);
     capabilitiesStoreActions.setCapabilities(null);

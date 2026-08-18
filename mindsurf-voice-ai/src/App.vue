@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import ConnectionBadge from "./components/ConnectionBadge.vue";
 import ConnectionPanel from "./components/ConnectionPanel.vue";
+import HistoryPanel from "./components/HistoryPanel.vue";
 import LoginPanel from "./components/LoginPanel.vue";
 import PermissionsPanel from "./components/PermissionsPanel.vue";
 import RecorderPanel from "./components/RecorderPanel.vue";
@@ -64,6 +65,7 @@ const tabs = computed<readonly MainTab[]>(() => [
   ...(diagnosticsPageVisible.value
     ? ([{ id: "connection", label: t("诊断") }] satisfies MainTab[])
     : []),
+  { id: "history", label: t("历史") },
   { id: "settings", label: t("设置") },
 ]);
 const visibleActiveTab = computed<MainTabId>(() =>
@@ -306,6 +308,7 @@ onBeforeUnmount(() => {
       <ConnectionPanel
         v-else-if="diagnosticsPageVisible && activeTab === 'connection'"
       />
+      <HistoryPanel v-else-if="activeTab === 'history'" />
       <PermissionsPanel
         v-else-if="activeTab === 'permissions'"
         :app-info="appInfo"

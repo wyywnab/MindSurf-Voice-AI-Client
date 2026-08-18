@@ -53,14 +53,15 @@ describe("appMenu", () => {
     const pagesMenu = menuOptions.items.find((item) => item.id === "pages-menu");
     expect(pagesMenu?.items?.map((item) => item.id)).toEqual([
       "app-page-record",
+      "app-page-history",
       "app-page-diagnostics",
       "app-page-settings",
     ]);
-    expect(pagesMenu?.items?.[1]).toMatchObject({
+    expect(pagesMenu?.items?.[2]).toMatchObject({
       text: "Diagnostics",
       enabled: false,
     });
-    (pagesMenu?.items?.[2]?.action as () => void)();
+    (pagesMenu?.items?.[3]?.action as () => void)();
     expect(onNavigate).toHaveBeenCalledWith("settings");
     expect(windowMenu.setAsWindowsMenuForNSApp).toHaveBeenCalledOnce();
     expect(helpMenu.setAsHelpMenuForNSApp).toHaveBeenCalledOnce();

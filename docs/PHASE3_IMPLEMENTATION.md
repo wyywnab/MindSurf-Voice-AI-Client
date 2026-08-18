@@ -17,6 +17,7 @@
 | M3     | 客户端实现完成，待真实服务与双平台人工签收 | 2026-08-17 | 已实现 v2 单活跃请求、accepted 回显、48 字节 INPUT_PCM、成功发送统计、commit、两阶段临时文本、final/done 双确认、取消竞态和断线撤权；自动化质量门通过    |
 | M4     | 客户端实现完成，待 M5 全链路与双平台签收   | 2026-08-17 | 已删除 v1 Transport/Controller/协议类型、下行播放、旧模式、手工服务凭据和相关设置/UI；设置迁移到 schema v2，自动化质量门通过                             |
 | M5     | 客户端与 Mock 完成，待跨平台人工签收       | 2026-08-17 | 已实现 HTTP + ticket + WebSocket v2 Mock、故障注入、全链路自动化测试和当前文档清理；Windows/macOS 系统能力与正式服务验收待完成                           |
+| M6     | 客户端实现完成，待双平台人工签收           | 2026-08-18 | 已实现按账户隔离的本地识别历史、成功结果落库、搜索筛选、详情操作和隐私清理；自动化质量门与 macOS 调试包构建通过，不改变冻结 Voice API v2 契约            |
 
 M1 实施期间保留现有 v1 WebSocket 服务档案与请求链路，以维持可构建基线；新增的
 `voiceApiOrigin`、账户页和 v2 登录态与其隔离。该过渡面将在 M2-M4 按依赖顺序替换和删除，
@@ -52,6 +53,12 @@ ticket 异常、各阶段超时/失败、final/done 不一致、取消竞态和�
 Windows/macOS 的系统浏览器回跳、系统凭据库、原生录音、快捷键、悬浮窗、文本注入和正式签名发布
 仍需按交付清单人工签收，因此 Phase 3 尚不标记为跨平台最终完成。
 
+M6 是 v2 迁移完成后的本地产品能力扩展。历史只消费客户端已经通过 final snapshot 与
+`request.done` 双确认的成功结果，不新增服务端接口、不改变请求生命周期，也不允许从历史恢复或
+复用 request ID。该能力的正文仅保存在当前设备，必须与诊断日志、诊断 ZIP 和服务端用量记录隔离。
+客户端实现使用独立 Store、账户级容量与清理策略，并已覆盖成功、取消、断线、损坏数据、幂等、
+账户隔离和容量淘汰测试；Windows 与 macOS 的实际交互、文本重新注入和系统级清除仍按人工清单签收。
+
 ## 1. 结论与实施原则
 
 当前客户端实现的是 `mindsurf.voice.v1`：直连 WebSocket，在 `client.hello` 中传 Bearer Token，支持
@@ -72,6 +79,7 @@ HTTP 账户与能力接口、一次性 ticket、`mindsurf.voice.v2` 长连接，
 - 保留 Phase 2 已完成的录音、快捷键、权限、悬浮窗、诊断、设置仓库和直接文本注入架构，
   但删除其上的 v1 协议、Assistant/TTS 和手工 Bearer 配置；
 - 协议迁移完成前不增加多轮会话、输入法模式、TTS 或原生音频模型等新产品形态。
+- 本地识别历史属于协议终态之后的客户端派生数据，不得反向影响请求成功、结算或文本注入资格。
 
 ## 2. Phase 3 范围
 
@@ -85,6 +93,7 @@ HTTP 账户与能力接口、一次性 ticket、`mindsurf.voice.v2` 长连接，
 6. 删除 v2 明确排除的 Assistant、Conversation、TTS、下行音频、音色和情绪相关能力。
 7. 将本地 Mock 和自动化测试迁移到冻结协议及其测试向量。
 8. 更新设置、界面、日志、README 和交付文档，使其不再暴露 v1 概念。
+9. 提供按登录账户隔离的本地识别历史，支持查看、搜索、复制、重新注入、单条删除和清空。
 
 ### 2.2 非目标
 
@@ -95,6 +104,7 @@ HTTP 账户与能力接口、一次性 ticket、`mindsurf.voice.v2` 长连接，
 - 断线恢复或重放活跃请求；
 - 注册、邮箱验证、找回密码、MFA 等认证页面；这些由系统浏览器中的认证站点处理；
 - 后端 v2 的业务实现。本阶段只实现客户端与用于客户端联调的 Mock。
+- 历史云同步、跨设备同步、服务端历史接口、音频归档或失败/取消请求归档。
 
 ## 3. 当前实现与 v2 的明确不一致
 
@@ -273,6 +283,25 @@ HTTP 账户与能力接口、一次性 ticket、`mindsurf.voice.v2` 长连接，
 - feedback、日志和诊断 ZIP 均不得包含 Authorization Code、PKCE verifier、access/refresh token、
   ticket、密码或完整文本正文。重复点击被合并时可以记录脱敏诊断，但不重复弹出成功提示。
 
+### 4.7 本地识别历史
+
+- 新增独立“历史”一级页面，位于原“权限”标签位置；权限页继续作为设置内二级页面，并可从录音页
+  权限汇总入口进入。
+- 历史只在合法 final snapshot 与紧邻的 `request.done` 完成双确认后写入。取消、失败、断线、协议
+  错误、文本不一致或已撤销提交资格的请求不得产生记录。
+- 每条记录使用原 request ID 作为本地幂等键，并保存 `user_id`、完成时间、mode、language、Pipeline、
+  录音时长、最终结果；`asr_llm` 额外保存进入 LLM stage 前最后一份完整 ASR snapshot 作为原文。
+- 历史不得保存音频、临时 delta、token、ticket、登录名或服务端错误 details；历史正文不得进入普通
+  诊断日志和诊断 ZIP。
+- 使用独立 `recognition-history.json` Store，不与设置 Store 混写。按 `user_id` 查询和清空，退出登录
+  不删除本地历史；“清除本地数据”删除设备上的全部账户历史。
+- 同一账户最多保留最近 500 条，新增时按完成时间淘汰最旧记录；读取时对持久化数据执行类型、长度、
+  mode 和时间戳校验，损坏条目跳过而不阻塞其余历史。
+- 历史页提供正文搜索、全部/识别/润色筛选、日期分组、详情、复制、重新注入、单条删除和当前账户
+  清空。重新注入是新的本地外部效果，不创建服务端请求，必须复用文本输出的长度限制和操作反馈。
+- 历史写入不得阻塞或改变请求终态。写入失败只更新历史存储错误和脱敏诊断，不能把已完成请求改为
+  failed，也不能重复执行文本注入。
+
 ## 5. 必须删除的内容
 
 ### 5.1 删除产品与 UI 能力
@@ -314,9 +343,10 @@ HTTP 账户与能力接口、一次性 ticket、`mindsurf.voice.v2` 长连接，
 
 ```text
 Vue Components
-  -> AuthController / VoiceRequestController / RecordingController
+  -> AuthController / VoiceRequestController / RecordingController / HistoryController
       -> authStore / accountStore / quotaStore / capabilitiesStore
       -> connectionStore / requestStore / settingsStore / diagnosticsStore
+      -> historyStore / RecognitionHistoryRepository
       -> VoiceApiClient / TokenManager / RealtimeTicketProvider
       -> VoiceTransport / ProtocolEventRouter / TextOutputController
           -> Tauri deep-link + single-instance + system browser + Keychain
@@ -329,6 +359,8 @@ Vue Components
 - `ProtocolEventRouter` 负责 event ID 去重、scope、request ID 和终态后的事件拒绝。
 - `VoiceRequestController` 负责请求状态、临时文本和提交资格，不直接管理底层 socket。
 - `TextOutputController` 只能由成功 `request.done` 路径调用，不接受中间 ASR/LLM 事件直接调用。
+- `RecognitionHistoryRepository` 只负责本地历史校验、幂等写入、账户过滤、容量淘汰和删除；不访问
+  Voice API，不拥有请求终态。
 
 ### 6.2 登录、初始化和长期连接时序
 
@@ -394,6 +426,7 @@ sequenceDiagram
     participant Request as VoiceRequestController
     participant WS as VoiceTransport
     participant Temp as requestStore 临时文本
+    participant History as 本地识别历史
     participant Target as TextOutputController/真实目标
 
     User->>UI: 按下快捷键
@@ -425,6 +458,7 @@ sequenceDiagram
     Request->>Temp: 保存 final snapshot，但暂不注入
     WS-->>Request: request.done(final_text, usage)
     Request->>Request: 校验下一请求级事件、文本一致和提交资格
+    Request-->>History: 异步保存已确认结果（request ID 幂等）
     Request->>Target: 一次性 output(final_text)
     Target-->>UI: succeeded 或可执行的失败原因
     Request-->>UI: 请求终态，连接继续保持 idle
@@ -442,6 +476,7 @@ sequenceDiagram
 | M3     | v2 请求、上行音频、状态机和临时文本       | 两种 mode 正常、取消、失败、断线均只有一个终态   |
 | M4     | 删除 TTS/Assistant/v1 设置和 UI           | 生产代码中无 v1 public surface 或 v2 禁止概念    |
 | M5     | v2 Mock、测试向量、跨平台验收和文档       | 自动化质量门与 Windows/macOS 人工清单通过        |
+| M6     | 本地识别历史、页面与隐私清理              | 成功结果唯一落库，账户隔离、容量和清理测试通过   |
 
 里程碑顺序不能颠倒：请求实现依赖有效 capabilities 和已认证长连接；删除旧 UI 可与 M3 后半段
 并行，但合并到主分支时必须保持可构建、可测试。
@@ -472,6 +507,10 @@ sequenceDiagram
 - 连续 100 次请求复用同一连接，无 request ID 重用、事件串线和无法开始下一请求。
 - 所有 4.6 所列操作都覆盖 pending/success/failure/cancelled；连续点击只产生一次副作用，旧异步响应
   不覆盖新状态，反馈内容通过敏感信息扫描。
+- 历史仓库覆盖损坏数据过滤、request ID 幂等、按账户隔离、500 条淘汰、单条删除和账户清空。
+- 请求控制器覆盖：两种 mode 仅成功 done 落库一次；取消、失败、断线、final/done 不一致均零落库；
+  `asr_llm` 保存 LLM stage 切换前的完整 ASR 原文和最终润色结果。
+- 历史搜索与模式筛选不修改源记录；复制、重新注入、删除和清空均有可访问反馈及重复操作防护。
 
 ### 8.3 Mock 要求
 
@@ -500,6 +539,7 @@ sequenceDiagram
 - code、verifier、token 和 ticket 不出现在应用日志、错误 details、诊断 ZIP 或 URL 展示中。
 - 自定义协议回跳由单实例接收；state 不匹配、过期和重复回跳均不改变登录态。
 - ticket response 不能改变 HTTP API authority；生产仅允许 HTTPS/WSS。
+- 本地历史按 `user_id` 隔离，不保存音频或凭据，不进入诊断 ZIP；清除本地数据后历史文件为空。
 
 ### 9.3 产品和清理验收
 
@@ -510,6 +550,8 @@ sequenceDiagram
 - Phase 2 的快捷键、麦克风选择、权限、悬浮窗、日志脱敏和直接文本注入在删减产品面后无回归。
 - 用户触发的保存、导出、连接和账户操作均有可访问的成功/失败/取消反馈；快速连续点击不会生成
   重复文件、重复授权窗口、重复连接或其他重复副作用。
+- “历史”作为独立一级页面展示当前账户最近 500 条成功结果；识别与润色可筛选，润色详情同时展示
+  ASR 原文和最终结果，失败或取消请求不出现在历史中。
 
 ## 10. 文档和交付更新
 

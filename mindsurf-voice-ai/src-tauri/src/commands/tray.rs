@@ -13,6 +13,7 @@ pub struct TrayMenuState<R: Runtime> {
     open: MenuItem<R>,
     pages: Submenu<R>,
     page_record: MenuItem<R>,
+    page_history: MenuItem<R>,
     page_connection: MenuItem<R>,
     page_settings: MenuItem<R>,
     modes: Submenu<R>,
@@ -33,6 +34,7 @@ impl<R: Runtime> TrayMenuState<R> {
         self.open.set_text(labels.open)?;
         self.pages.set_text(labels.pages)?;
         self.page_record.set_text(labels.record)?;
+        self.page_history.set_text(labels.history)?;
         self.page_connection.set_text(labels.diagnostics)?;
         self.page_connection.set_enabled(diagnostics_enabled)?;
         self.page_settings.set_text(labels.settings)?;
@@ -48,6 +50,7 @@ struct TrayLabels {
     open: &'static str,
     pages: &'static str,
     record: &'static str,
+    history: &'static str,
     diagnostics: &'static str,
     settings: &'static str,
     modes: &'static str,
@@ -63,6 +66,7 @@ impl TrayLabels {
                 open: "Open Main Window",
                 pages: "Open Page",
                 record: "Record",
+                history: "History",
                 diagnostics: "Diagnostics",
                 settings: "Settings",
                 modes: "Interaction Mode",
@@ -75,6 +79,7 @@ impl TrayLabels {
                 open: "打开主窗口",
                 pages: "打开页面",
                 record: "录音",
+                history: "历史",
                 diagnostics: "诊断",
                 settings: "设置",
                 modes: "交互模式",
@@ -90,6 +95,7 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
     let handle = app.handle();
     let open = MenuItem::with_id(handle, "open", "打开主窗口", true, None::<&str>)?;
     let page_record = MenuItem::with_id(handle, "page_record", "录音", true, None::<&str>)?;
+    let page_history = MenuItem::with_id(handle, "page_history", "历史", true, None::<&str>)?;
     let page_connection =
         MenuItem::with_id(handle, "page_connection", "诊断", false, None::<&str>)?;
     let page_settings = MenuItem::with_id(handle, "page_settings", "设置", true, None::<&str>)?;
@@ -97,7 +103,12 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
         handle,
         "打开页面",
         true,
-        &[&page_record, &page_connection, &page_settings],
+        &[
+            &page_record,
+            &page_history,
+            &page_connection,
+            &page_settings,
+        ],
     )?;
 
     let asr_only = CheckMenuItemBuilder::with_id("mode_asr_only", "识别")
@@ -116,6 +127,7 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
         open,
         pages,
         page_record,
+        page_history,
         page_connection,
         page_settings,
         modes,
@@ -150,6 +162,7 @@ pub fn initialize(app: &mut App) -> tauri::Result<()> {
     .on_menu_event(|app, event| match event.id().as_ref() {
         "open" => show_main_window(app),
         "page_record" => navigate(app, "record"),
+        "page_history" => navigate(app, "history"),
         "page_connection" => navigate(app, "connection"),
         "page_settings" => navigate(app, "settings"),
         "mode_asr_only" => request_mode(app, MODE_ASR_ONLY),
@@ -246,11 +259,13 @@ mod tests {
     fn localizes_every_tray_page() {
         let chinese = TrayLabels::for_locale("zh-CN");
         assert_eq!(chinese.record, "录音");
+        assert_eq!(chinese.history, "历史");
         assert_eq!(chinese.diagnostics, "诊断");
         assert_eq!(chinese.settings, "设置");
 
         let english = TrayLabels::for_locale("en-US");
         assert_eq!(english.record, "Record");
+        assert_eq!(english.history, "History");
         assert_eq!(english.diagnostics, "Diagnostics");
         assert_eq!(english.settings, "Settings");
     }

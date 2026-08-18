@@ -1,6 +1,7 @@
 export const MAIN_TAB_IDS = [
   "record",
   "connection",
+  "history",
   "permissions",
   "settings",
 ] as const;

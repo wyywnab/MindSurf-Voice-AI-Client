@@ -16,6 +16,8 @@ import {
 } from "../stores/capabilitiesStore";
 import { diagnosticsStoreActions } from "../stores/diagnosticsStore";
 import { requestStoreActions, useRequestStore } from "../stores/requestStore";
+import { useAccountStore } from "../stores/accountStore";
+import { historyStoreActions } from "../stores/historyStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import type {
   V2CancelReason,
@@ -43,7 +45,9 @@ export class VoiceRequestControllerV2 {
   private committedStatistics: V2InputStatistics | null = null;
   private asrSnapshotAfterCommit = false;
   private llmStarted = false;
+  private asrSourceText: string | null = null;
   private outputCommitted = false;
+  private readonly account = useAccountStore();
   private readonly capabilities = useCapabilitiesStore();
   private readonly request = useRequestStore();
   private readonly settings = useSettingsStore();
@@ -364,6 +368,7 @@ export class VoiceRequestControllerV2 {
         return;
       }
       this.llmStarted = true;
+      this.asrSourceText = this.request.state.temporaryText;
       requestStoreActions.replaceTemporaryText("llm", "");
       requestStoreActions.transition("processing_llm", "llm_stage_started");
       return;
@@ -388,6 +393,21 @@ export class VoiceRequestControllerV2 {
       this.request.state.commitEligible &&
       !this.request.state.cancelRequested &&
       !this.outputCommitted;
+    const requestId = this.request.state.activeRequestId;
+    const userId = this.account.state.user?.user_id;
+    if (mayOutput && requestId && userId && finalText !== null) {
+      void historyStoreActions.add({
+        id: requestId,
+        userId,
+        completedAtMs: Date.now(),
+        mode: snapshot.mode,
+        language: snapshot.language,
+        pipeline: snapshot.pipeline,
+        durationMs: this.committedStatistics?.duration_ms ?? 0,
+        sourceText: snapshot.mode === "asr_llm" ? this.asrSourceText : null,
+        resultText: finalText,
+      });
+    }
     this.outputCommitted = true;
     this.finishTerminal("completed", "request_done", true);
     if (mayOutput && snapshot.autoInjectionEnabled) {
@@ -519,6 +539,7 @@ export class VoiceRequestControllerV2 {
     this.committedStatistics = null;
     this.asrSnapshotAfterCommit = false;
     this.llmStarted = false;
+    this.asrSourceText = null;
     this.outputCommitted = false;
   }
 

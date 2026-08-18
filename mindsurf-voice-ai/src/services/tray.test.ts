@@ -41,13 +41,14 @@ describe("tray", () => {
     const onNavigate = vi.fn();
     await subscribeTrayActions({ onNavigate, onMode: vi.fn() });
 
-    for (const page of ["record", "connection", "settings"]) {
+    for (const page of ["record", "history", "connection", "settings"]) {
       listeners.get("tray://navigate")?.({ payload: page });
     }
     listeners.get("tray://navigate")?.({ payload: "unknown" });
 
     expect(onNavigate.mock.calls.map(([page]) => page)).toEqual([
       "record",
+      "history",
       "connection",
       "settings",
     ]);

@@ -9,6 +9,17 @@ let listener: {
 const sentControls: V2ControlEnvelope[] = [];
 const sendBinary = vi.fn();
 const refreshAccount = vi.fn(async () => undefined);
+const addHistory = vi.fn(async () => undefined);
+
+vi.mock("../stores/accountStore", () => ({
+  useAccountStore: () => ({
+    state: { user: { user_id: "user-a" } },
+  }),
+}));
+
+vi.mock("../stores/historyStore", () => ({
+  historyStoreActions: { add: addHistory },
+}));
 
 const hello = {
   session_id: "019d643e-1550-761a-b7a0-471791bcaf0c",
@@ -162,6 +173,16 @@ describe("VoiceRequestControllerV2", () => {
     );
     expect(output).toHaveBeenCalledOnce();
     expect(output).toHaveBeenCalledWith("Final text", 0, expect.any(Number));
+    expect(addHistory).toHaveBeenCalledOnce();
+    expect(addHistory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: requestId,
+        userId: "user-a",
+        mode: "asr_only",
+        sourceText: null,
+        resultText: "Final text",
+      }),
+    );
     expect(requestState.status).toBe("completed");
     expect(requestState.activeRequestId).toBeNull();
   });
@@ -206,6 +227,14 @@ describe("VoiceRequestControllerV2", () => {
       }),
     );
     expect(requestState.temporaryText).toBe("Polished.");
+    expect(addHistory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: requestId,
+        mode: "asr_llm",
+        sourceText: "raw",
+        resultText: "Polished.",
+      }),
+    );
     expect(requestState.status).toBe("completed");
   });
 
@@ -230,6 +259,7 @@ describe("VoiceRequestControllerV2", () => {
       }),
     );
     expect(output).not.toHaveBeenCalled();
+    expect(addHistory).not.toHaveBeenCalled();
     expect(requestState.status).toBe("completed");
   });
 
@@ -255,6 +285,7 @@ describe("VoiceRequestControllerV2", () => {
   it("fails an active request on disconnect without replay", async () => {
     await accept("asr_only");
     listener.onConnectionLost();
+    expect(addHistory).not.toHaveBeenCalled();
     expect(requestState.status).toBe("failed");
     expect(requestState.commitEligible).toBe(false);
     expect(requestState.activeRequestId).toBeNull();

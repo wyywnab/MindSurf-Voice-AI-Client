@@ -7,6 +7,7 @@ use crate::error::{AppError, CommandResult};
 use super::{credentials, diagnostics};
 
 const SETTINGS_STORE: &str = "settings.json";
+const HISTORY_STORE: &str = "recognition-history.json";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,6 +15,7 @@ pub struct ClearedLocalData {
     settings: bool,
     credentials: bool,
     diagnostic_logs: bool,
+    recognition_history: bool,
 }
 
 #[tauri::command]
@@ -31,12 +33,16 @@ fn clear_local_data(app: &AppHandle) -> Result<ClearedLocalData, AppError> {
     let settings = app.store(SETTINGS_STORE).map_err(local_data_error)?;
     settings.clear();
     settings.save().map_err(local_data_error)?;
+    let history = app.store(HISTORY_STORE).map_err(local_data_error)?;
+    history.clear();
+    history.save().map_err(local_data_error)?;
     credentials::clear_all_credentials(app)?;
     diagnostics::clear_logs(app)?;
     Ok(ClearedLocalData {
         settings: true,
         credentials: true,
         diagnostic_logs: true,
+        recognition_history: true,
     })
 }
 
