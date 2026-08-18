@@ -3,7 +3,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import {
   describeRecorderError,
+  MICROPHONE_ACCESS_CHANGED_EVENT,
   MicrophoneRecorder,
+  observedMicrophonePermission,
   type RecordingResult,
 } from "../services/recorder";
 import { NativeMicrophoneRecorder } from "../services/nativeRecorder";
@@ -100,7 +102,7 @@ export function useRecorder() {
       const result = await navigator.permissions.query({
         name: "microphone" as PermissionName,
       });
-      permissionState.value = result.state;
+      permissionState.value = observedMicrophonePermission(result.state);
     } catch {
       permissionState.value = "prompt";
     }
@@ -312,10 +314,12 @@ export function useRecorder() {
 
   onMounted(() => {
     globalThis.addEventListener("focus", handleWindowFocus);
+    globalThis.addEventListener(MICROPHONE_ACCESS_CHANGED_EVENT, handleWindowFocus);
   });
 
   onBeforeUnmount(() => {
     globalThis.removeEventListener("focus", handleWindowFocus);
+    globalThis.removeEventListener(MICROPHONE_ACCESS_CHANGED_EVENT, handleWindowFocus);
     operationId += 1;
     void Promise.all([nativeRecorder.dispose(), browserRecorder.dispose()]);
   });

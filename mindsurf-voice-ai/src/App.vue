@@ -20,6 +20,7 @@ import { syncMacOSAppMenu } from "./services/appMenu";
 import { useI18n } from "./services/i18n";
 import { hideOverlayWindow, setOverlayWindowPosition } from "./services/overlay";
 import { getSystemPermissionStatus } from "./services/permissions";
+import { describeRecorderError, prepareMicrophone } from "./services/recorder";
 import {
   subscribeTrayActions,
   syncTrayConfiguration,
@@ -187,6 +188,21 @@ async function logout() {
 }
 
 async function configureStartupPermissions(platform: string) {
+  if (platform === "windows") {
+    try {
+      await prepareMicrophone();
+    } catch (error) {
+      diagnosticsStoreActions.log(
+        "warn",
+        "permissions",
+        "permission.microphone_probe_failed",
+        describeRecorderError(error),
+      );
+    }
+    await settingsController.initializeRecordShortcut();
+    return;
+  }
+
   if (platform !== "macos") {
     await settingsController.initializeRecordShortcut();
     return;

@@ -6,7 +6,12 @@ import {
   openSystemPermissionSettings,
   requestSystemPermission,
 } from "../services/permissions";
-import { describeRecorderError, prepareMicrophone } from "../services/recorder";
+import {
+  describeRecorderError,
+  getMicrophoneAccessState,
+  MICROPHONE_ACCESS_CHANGED_EVENT,
+  prepareMicrophone,
+} from "../services/recorder";
 import { useI18n } from "../services/i18n";
 import { settingsController } from "../controllers/settingsController";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -35,9 +40,7 @@ const permissionStates = reactive<Record<SystemPermission, SystemPermissionState
 const permissionBusy = ref<SystemPermission | null>(null);
 const permissionInitializationBusy = ref(false);
 const permissionError = ref("");
-const microphoneProbeState = ref<"unknown" | "checking" | "ready" | "failed">(
-  "unknown",
-);
+const microphoneProbeState = ref(getMicrophoneAccessState());
 const shortcutReady = computed(
   () =>
     !settings.state.shortcutDesiredEnabled ||
@@ -105,6 +108,15 @@ async function refreshPermissions() {
     return;
   }
   await Promise.all(macPermissions.map(refreshPermission));
+}
+
+function syncMicrophoneProbeState() {
+  microphoneProbeState.value = getMicrophoneAccessState();
+}
+
+function refreshDisplayedPermissions() {
+  syncMicrophoneProbeState();
+  void refreshPermissions();
 }
 
 async function prepareWebViewMicrophone(notify = true) {
@@ -246,11 +258,20 @@ watch(
 );
 
 onMounted(() => {
-  globalThis.addEventListener("focus", refreshPermissions);
+  refreshDisplayedPermissions();
+  globalThis.addEventListener("focus", refreshDisplayedPermissions);
+  globalThis.addEventListener(
+    MICROPHONE_ACCESS_CHANGED_EVENT,
+    syncMicrophoneProbeState,
+  );
 });
 
 onBeforeUnmount(() => {
-  globalThis.removeEventListener("focus", refreshPermissions);
+  globalThis.removeEventListener("focus", refreshDisplayedPermissions);
+  globalThis.removeEventListener(
+    MICROPHONE_ACCESS_CHANGED_EVENT,
+    syncMicrophoneProbeState,
+  );
 });
 </script>
 

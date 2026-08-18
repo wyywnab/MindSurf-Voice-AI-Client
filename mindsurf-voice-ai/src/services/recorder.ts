@@ -22,15 +22,48 @@ export interface RecordingResult {
   wavBytes: Uint8Array;
 }
 
+export const MICROPHONE_ACCESS_CHANGED_EVENT = "mindsurf:microphone-access-changed";
+
+export type MicrophoneAccessState = "unknown" | "checking" | "ready" | "failed";
+
+let microphoneAccessState: MicrophoneAccessState = "unknown";
+
+export function getMicrophoneAccessState(): MicrophoneAccessState {
+  return microphoneAccessState;
+}
+
+function setMicrophoneAccessState(state: MicrophoneAccessState) {
+  if (microphoneAccessState === state) return;
+  microphoneAccessState = state;
+  if (typeof globalThis.dispatchEvent === "function") {
+    globalThis.dispatchEvent(new Event(MICROPHONE_ACCESS_CHANGED_EVENT));
+  }
+}
+
+export function observedMicrophonePermission(state: PermissionState): PermissionState {
+  // WebView2 can report `granted` before this unpackaged desktop app has ever
+  // attempted capture. Treat that as permission to ask, not proof of access.
+  return state === "granted" && microphoneAccessState !== "ready" ? "prompt" : state;
+}
+
 export async function prepareMicrophone() {
   if (!navigator.mediaDevices?.getUserMedia) {
+    setMicrophoneAccessState("failed");
     throw new Error("media_devices_unavailable");
   }
 
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: true,
-    video: false,
-  });
+  setMicrophoneAccessState("checking");
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: false,
+    });
+    setMicrophoneAccessState("ready");
+  } catch (error) {
+    setMicrophoneAccessState("failed");
+    throw error;
+  }
   for (const track of stream.getTracks()) {
     track.stop();
   }
@@ -103,9 +136,11 @@ export class MicrophoneRecorder {
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
+      setMicrophoneAccessState("failed");
       throw new Error("media_devices_unavailable");
     }
 
+    setMicrophoneAccessState("checking");
     try {
       if (
         this.stream ||
@@ -129,6 +164,7 @@ export class MicrophoneRecorder {
         },
         video: false,
       });
+      setMicrophoneAccessState("ready");
 
       this.audioContext = new AudioContext({ latencyHint: "interactive" });
       await this.audioContext.audioWorklet.addModule(
@@ -162,6 +198,7 @@ export class MicrophoneRecorder {
         await this.audioContext.resume();
       }
     } catch (error) {
+      setMicrophoneAccessState("failed");
       await this.cleanup();
       throw error;
     }

@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   describeRecorderError,
+  getMicrophoneAccessState,
   MicrophoneRecorder,
+  observedMicrophonePermission,
   prepareMicrophone,
 } from "./recorder";
 
@@ -70,6 +72,11 @@ afterEach(() => {
 });
 
 describe("MicrophoneRecorder cleanup", () => {
+  it("does not report WebView2 preflight access as granted before capture", () => {
+    expect(getMicrophoneAccessState()).toBe("unknown");
+    expect(observedMicrophonePermission("granted")).toBe("prompt");
+  });
+
   it("prepares microphone access and immediately releases every track", async () => {
     const stream = new FakeStream();
     const getUserMedia = vi.fn(async () => stream);
@@ -79,6 +86,8 @@ describe("MicrophoneRecorder cleanup", () => {
 
     expect(getUserMedia).toHaveBeenCalledWith({ audio: true, video: false });
     expect(stream.track.readyState).toBe("ended");
+    expect(getMicrophoneAccessState()).toBe("ready");
+    expect(observedMicrophonePermission("granted")).toBe("granted");
   });
 
   it("distinguishes native denial from a WebView capture failure", () => {

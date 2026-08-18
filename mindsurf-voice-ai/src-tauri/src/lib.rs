@@ -2,6 +2,8 @@ mod commands;
 mod error;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 use tauri::Manager;
+#[cfg(all(debug_assertions, any(target_os = "windows", target_os = "linux")))]
+use tauri_plugin_deep_link::DeepLinkExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -28,6 +30,11 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            // `tauri dev` does not run an installer, so Windows and Linux do not
+            // otherwise know which executable should handle the configured schemes.
+            #[cfg(all(debug_assertions, any(target_os = "windows", target_os = "linux")))]
+            app.deep_link().register_all()?;
+
             let _ = commands::credentials::purge_obsolete_credentials(app.handle());
             let _ = commands::diagnostics::initialize(app.handle());
             commands::shortcuts::initialize(app.handle().clone());
