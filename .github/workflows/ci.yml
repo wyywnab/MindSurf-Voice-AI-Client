@@ -101,3 +101,36 @@ jobs:
 
       - name: Build unsigned test bundle
         run: npm run tauri build -- --debug --bundles app
+
+  windows-bundle:
+    name: Windows installers
+    needs: quality
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: mindsurf-voice-ai
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mindsurf-voice-ai/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mindsurf-voice-ai/src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build unsigned test installers
+        run: npm run tauri build -- --debug --bundles nsis,msi

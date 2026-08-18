@@ -15,6 +15,7 @@ mindsurf-voice-mock/     HTTP + ticket + WebSocket v2 本地 Mock
 docs/v2/                 冻结的 OpenAPI、JSON Schema、协议和测试向量
 docs/DELIVERY.md         当前交付状态与待人工验收项
 docs/MACOS.md            macOS 权限、构建和发布说明
+docs/WINDOWS.md          Windows 构建、签名和发布说明
 ```
 
 ## 环境要求

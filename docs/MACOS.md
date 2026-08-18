@@ -75,8 +75,9 @@ cargo test --all-targets
 - `Windows quality gate`
 - `macOS quality gate`
 - `macOS application bundle`
+- `Windows installers`
 
-应在 GitHub 分支保护规则中将这三个检查设为 `main` 的必需状态检查。工作流
+应在 GitHub 分支保护规则中将这四个检查设为 `main` 的必需状态检查。工作流
 代码可以保证检查被创建，但分支保护仍需仓库管理员在 GitHub 设置中启用。
 
 生成本机架构的测试应用包：
@@ -107,9 +108,10 @@ npm run tauri build -- --target universal-apple-darwin --bundles app,dmg
 
 ## 签名与公证
 
-根目录 `.github/workflows/release-macos.yml` 会构建、签名、公证并创建草稿
-GitHub Release。tag 发布前会校验 tag、`tauri.conf.json`、`package.json` 和
-`Cargo.toml` 的版本一致；例如应用版本为 `0.1.0` 时只能使用 `v0.1.0` tag。
+根目录 `.github/workflows/release-desktop.yml` 会构建、签名、公证 macOS 产物，
+随后将签名后的 Windows 安装包追加到同一个草稿 GitHub Release。tag 发布前会
+校验 tag、`tauri.conf.json`、`package.json` 和 `Cargo.toml` 的版本一致；例如应用
+版本为 `0.2.0` 时只能使用 `v0.2.0` tag。
 仓库需要配置以下 Actions secrets：
 
 - `APPLE_CERTIFICATE`
@@ -118,6 +120,8 @@ GitHub Release。tag 发布前会校验 tag、`tauri.conf.json`、`package.json`
 - `APPLE_ID`
 - `APPLE_PASSWORD`
 - `APPLE_TEAM_ID`
+
+Windows 签名所需 Secrets 和发布步骤见 [Windows 说明](./WINDOWS.md)。
 
 发布前还应在常用编辑器、浏览器输入框、Terminal、Retina + 非 Retina 多显示器
 和全屏 Space 中手工验证快捷键、权限恢复、睡眠唤醒与服务重连，并分别使用

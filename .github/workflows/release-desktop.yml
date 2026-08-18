@@ -1,0 +1,193 @@
+name: Release Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate desktop release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate release version and signing secrets
+        working-directory: mindsurf-voice-ai
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          app_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          package_version="$(node -p "require('./package.json').version")"
+          cargo_version="$(cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).packages[0].version")"
+
+          if [[ "$package_version" != "$app_version" || "$cargo_version" != "$app_version" ]]; then
+            echo "Version mismatch: tauri=$app_version package=$package_version cargo=$cargo_version" >&2
+            exit 1
+          fi
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$app_version" ]]; then
+            echo "Release tag $GITHUB_REF_NAME must equal v$app_version" >&2
+            exit 1
+          fi
+
+          required_secrets=(
+            APPLE_CERTIFICATE
+            APPLE_CERTIFICATE_PASSWORD
+            APPLE_SIGNING_IDENTITY
+            APPLE_ID
+            APPLE_PASSWORD
+            APPLE_TEAM_ID
+            WINDOWS_CERTIFICATE
+            WINDOWS_CERTIFICATE_PASSWORD
+          )
+          for secret_name in "${required_secrets[@]}"; do
+            if [[ -z "${!secret_name}" ]]; then
+              echo "Required signing secret is missing: $secret_name" >&2
+              exit 1
+            fi
+          done
+
+  macos-release:
+    name: Signed universal macOS release
+    needs: validate
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mindsurf-voice-ai/package-lock.json
+
+      - name: Set up universal Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        working-directory: mindsurf-voice-ai
+        run: npm ci
+
+      - name: Build, sign, notarize, and publish macOS bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: mindsurf-voice-ai
+          tagName: v__VERSION__
+          releaseName: MindSurf Voice AI v__VERSION__
+          releaseBody: Signed macOS universal application and Windows x64 installers.
+          releaseDraft: true
+          prerelease: false
+          args: --target universal-apple-darwin --bundles app,dmg
+
+  windows-release:
+    name: Signed Windows x64 release
+    needs: macos-release
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mindsurf-voice-ai/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        working-directory: mindsurf-voice-ai
+        run: npm ci
+
+      - name: Import Windows signing certificate
+        working-directory: mindsurf-voice-ai
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $certificatePath = Join-Path $env:RUNNER_TEMP "mindsurf-code-signing.pfx"
+          $certificateBytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          [IO.File]::WriteAllBytes($certificatePath, $certificateBytes)
+
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate `
+            -FilePath $certificatePath `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -Password $password | Select-Object -First 1
+
+          if (-not $certificate -or -not $certificate.HasPrivateKey) {
+            throw "The imported Windows signing certificate has no private key."
+          }
+
+          "WINDOWS_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" | Out-File `
+            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          $releaseConfig = @{
+            bundle = @{
+              windows = @{
+                certificateThumbprint = $certificate.Thumbprint
+                digestAlgorithm = "sha256"
+                timestampUrl = "http://timestamp.digicert.com"
+              }
+            }
+          } | ConvertTo-Json -Depth 5
+          $releaseConfig | Set-Content src-tauri/tauri.windows-release.conf.json -Encoding utf8
+
+      - name: Build, sign, and publish Windows installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: mindsurf-voice-ai
+          tagName: v__VERSION__
+          releaseDraft: true
+          args: --bundles nsis,msi --config src-tauri/tauri.windows-release.conf.json
+
+      - name: Remove Windows signing certificate
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:WINDOWS_CERTIFICATE_THUMBPRINT) {
+            Remove-Item "Cert:\CurrentUser\My\$env:WINDOWS_CERTIFICATE_THUMBPRINT" -ErrorAction SilentlyContinue
+          }
+          Remove-Item "$env:RUNNER_TEMP\mindsurf-code-signing.pfx" -ErrorAction SilentlyContinue

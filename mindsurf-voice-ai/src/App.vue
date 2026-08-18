@@ -274,7 +274,7 @@ onMounted(async () => {
       globalThis.navigator.userAgent.includes("Mac OS") ? "macos" : "unknown",
     );
     await authController.initialize({
-      version: "0.1.0",
+      version: "0.2.0",
       platform: globalThis.navigator.userAgent.includes("Mac OS") ? "macos" : "unknown",
       arch: "unknown",
       buildProfile: "unknown",
