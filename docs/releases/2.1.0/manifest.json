@@ -1,0 +1,26 @@
+{
+  "contract_release": "2.1.0",
+  "status": "draft",
+  "http_path_major": 2,
+  "base": {
+    "name": "mindsurf-voice-http-core",
+    "version": "2.0.0",
+    "status": "frozen",
+    "document": "../../v2/openapi/openapi.yaml"
+  },
+  "extensions": [
+    {
+      "name": "polish-prompt-management",
+      "version": "1.0.0",
+      "status": "draft",
+      "document": "../../extensions/polish-prompt-v1/openapi.yaml"
+    }
+  ],
+  "websocket": {
+    "version": 2,
+    "subprotocol": "mindsurf.voice.v2",
+    "changed": false,
+    "document": "../../v2/docs/WS_PROTOCOL_V2.md"
+  },
+  "machine_contract": "./openapi.yaml"
+}

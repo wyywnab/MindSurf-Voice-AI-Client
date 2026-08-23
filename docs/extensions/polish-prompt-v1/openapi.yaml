@@ -1,0 +1,201 @@
+openapi: 3.1.0
+info:
+  title: MindSurf Polish Prompt Management Extension
+  version: 1.0.0
+  description: >-
+    MindSurf Voice HTTP Core 2.0.0 的向后兼容扩展。提供当前用户账户级润色提示词管理，
+    不修改 Voice WebSocket v2。
+servers:
+  - url: https://api.example.com
+  - url: http://127.0.0.1:8000
+security:
+  - bearerAuth: []
+tags:
+  - name: Polish Prompt
+
+paths:
+  /v2/users/me/polish-prompt:
+    get:
+      tags: [Polish Prompt]
+      operationId: getCurrentUserPolishPrompt
+      summary: 获取当前用户有效的润色提示词
+      responses:
+        '200':
+          $ref: '#/components/responses/PolishPromptSuccess'
+        '401':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/AccountSuspended'
+        '429':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/RateLimited'
+        '500':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/InternalError'
+        '503':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/ServiceUnavailable'
+    put:
+      tags: [Polish Prompt]
+      operationId: setCurrentUserPolishPrompt
+      summary: 设置当前用户的自定义润色提示词
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '../../v2/openapi/openapi.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolishPromptInput'
+      responses:
+        '200':
+          $ref: '#/components/responses/PolishPromptSuccess'
+        '400':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/BadRequest'
+        '401':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/AccountSuspended'
+        '409':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/IdempotencyConflict'
+        '412':
+          $ref: '#/components/responses/PolishPromptRevisionConflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/RateLimited'
+        '500':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/InternalError'
+        '503':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [Polish Prompt]
+      operationId: resetCurrentUserPolishPrompt
+      summary: 删除自定义值并恢复当前服务端默认提示词
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '../../v2/openapi/openapi.yaml#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          $ref: '#/components/responses/PolishPromptSuccess'
+        '401':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/AccountSuspended'
+        '409':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/IdempotencyConflict'
+        '412':
+          $ref: '#/components/responses/PolishPromptRevisionConflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/RateLimited'
+        '500':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/InternalError'
+        '503':
+          $ref: '../../v2/openapi/openapi.yaml#/components/responses/ServiceUnavailable'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: '../../v2/openapi/openapi.yaml#/components/securitySchemes/bearerAuth'
+  parameters:
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: 最近一次 GET 或成功 mutation 返回的强 ETag，必须包含双引号。
+      schema:
+        type: string
+        minLength: 3
+  responses:
+    PolishPromptSuccess:
+      description: 当前有效的润色提示词配置
+      headers:
+        ETag:
+          required: true
+          description: 当前有效配置的强校验器。
+          schema:
+            type: string
+            minLength: 3
+        Cache-Control:
+          required: true
+          schema:
+            const: private, no-cache
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PolishPromptResponse'
+    PolishPromptRevisionConflict:
+      description: If-Match 与当前有效配置版本不一致
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '../../v2/openapi/openapi.yaml#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        const: polish_prompt_revision_conflict
+    PreconditionRequired:
+      description: mutation 缺少必需的 If-Match
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '../../v2/openapi/openapi.yaml#/components/schemas/ErrorResponse'
+              - properties:
+                  error:
+                    properties:
+                      code:
+                        const: precondition_required
+  schemas:
+    PolishPromptInput:
+      type: object
+      additionalProperties: false
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: >-
+            用户润色指令；按 Unicode code point 限制长度，去除首尾 Unicode 空白后不得为空，
+            UTF-8 编码后不得超过 16384 字节，并且不得包含 U+0000。
+    PolishPromptConstraints:
+      type: object
+      additionalProperties: false
+      required: [max_code_points, max_utf8_bytes]
+      properties:
+        max_code_points:
+          type: integer
+          const: 4000
+        max_utf8_bytes:
+          type: integer
+          const: 16384
+    PolishPrompt:
+      type: object
+      additionalProperties: false
+      required: [revision, source, prompt, updated_at_ms, constraints]
+      properties:
+        revision:
+          type: string
+          minLength: 1
+        source:
+          enum: [default, custom]
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        updated_at_ms:
+          $ref: '../../v2/openapi/openapi.yaml#/components/schemas/TimestampMs'
+        constraints:
+          $ref: '#/components/schemas/PolishPromptConstraints'
+    PolishPromptResponse:
+      type: object
+      additionalProperties: false
+      required: [request_id, data]
+      properties:
+        request_id:
+          $ref: '../../v2/openapi/openapi.yaml#/components/schemas/RequestId'
+        data:
+          $ref: '#/components/schemas/PolishPrompt'

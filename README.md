@@ -2,7 +2,9 @@
 
 作为 MindSurf 项目的前端部分，MindSurf Voice AI 提供面向 Windows 和 macOS 的语音输入桌面客户端，基于 Tauri 2、Vue 3 和 TypeScript。当前版本为 `0.2.0`，与后端的对接协议版本为 `v2`，支持语音识别、LLM 润色、文本注入、全局按住说话快捷键、登录自启动、悬浮窗和系统托盘。
 
-Voice API v2 只返回单轮文本结果，不包含多轮对话或服务端下行音频。协议、接口和请求生命周期的权威入口为 [docs/v2](./docs/v2/README.md)。
+Voice API 只返回单轮文本结果，不包含多轮对话或服务端下行音频。冻结的 v2.0 核心协议入口为
+[docs/v2](./docs/v2/README.md)；包含账户级润色提示词管理的 HTTP 2.1 草案入口为
+[docs/releases/2.1.0](./docs/releases/2.1.0/README.md)。WebSocket 协议仍为 v2。
 
 ## 快速联调
 
@@ -87,6 +89,11 @@ Mock 参数、稳定故障名和接口明细见 [mindsurf-voice-mock/README.md](
 4. [Request 生命周期](./docs/v2/docs/request-lifecycle.md)
 5. [Schema 与测试向量](./docs/v2/schemas/README.md)
 
+润色提示词管理只增加独立 HTTP 接口，不修改 WebSocket 流程：
+
+- [HTTP 2.1 发布说明](./docs/releases/2.1.0/README.md)
+- [Polish Prompt Extension v1](./docs/extensions/polish-prompt-v1/README.md)
+
 ## 客户端操作
 
 - Windows 默认按住 `Ctrl + Win` 录音；
@@ -157,6 +164,8 @@ mindsurf-voice-ai/       Tauri 2 + Vue 3 桌面客户端
 mindsurf-voice-mock/     HTTP + ticket + WebSocket v2 本地 Mock
 scripts/                 协议与仓库级校验脚本
 docs/v2/                 冻结协议、OpenAPI、Schema 和测试向量
+docs/extensions/         不修改冻结核心的增量协议扩展
+docs/releases/           由核心与扩展组成的契约发布版本
 docs/DELIVERY.md         交付状态与人工验收项
 docs/MACOS.md            macOS 权限、构建和发布
 docs/WINDOWS.md          Windows 构建和发布

@@ -1,0 +1,41 @@
+openapi: 3.1.0
+info:
+  title: MindSurf Voice HTTP API
+  version: 2.1.0
+  description: >-
+    Voice HTTP Core 2.0.0 与 Polish Prompt Management Extension 1.0.0
+    组成的向后兼容发布契约。实时音频和文本事件仍由 WebSocket v2 定义。
+servers:
+  - url: https://api.example.com
+    description: Production example
+  - url: http://127.0.0.1:8000
+    description: Explicit development mode only
+security:
+  - bearerAuth: []
+
+paths:
+  /v2/auth/authorize:
+    $ref: '../../v2/openapi/openapi.yaml#/paths/~1v2~1auth~1authorize'
+  /v2/auth/token:
+    $ref: '../../v2/openapi/openapi.yaml#/paths/~1v2~1auth~1token'
+  /v2/auth/refresh:
+    $ref: '../../v2/openapi/openapi.yaml#/paths/~1v2~1auth~1refresh'
+  /v2/auth/logout:
+    $ref: '../../v2/openapi/openapi.yaml#/paths/~1v2~1auth~1logout'
+  /v2/users/me:
+    $ref: '../../v2/openapi/openapi.yaml#/paths/~1v2~1users~1me'
+  /v2/quota:
+    $ref: '../../v2/openapi/openapi.yaml#/paths/~1v2~1quota'
+  /v2/usage:
+    $ref: '../../v2/openapi/openapi.yaml#/paths/~1v2~1usage'
+  /v2/capabilities:
+    $ref: '../../v2/openapi/openapi.yaml#/paths/~1v2~1capabilities'
+  /v2/realtime/tickets:
+    $ref: '../../v2/openapi/openapi.yaml#/paths/~1v2~1realtime~1tickets'
+  /v2/users/me/polish-prompt:
+    $ref: '../../extensions/polish-prompt-v1/openapi.yaml#/paths/~1v2~1users~1me~1polish-prompt'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: '../../v2/openapi/openapi.yaml#/components/securitySchemes/bearerAuth'
