@@ -158,7 +158,8 @@ export class VoiceRequestControllerV2 {
 
   async cancelCurrentRequest(reason: V2CancelReason = "user_cancelled") {
     const requestId = this.request.state.activeRequestId;
-    if (!requestId || isTerminalRequestState(this.request.state.status)) return;
+    if (isTerminalRequestState(this.request.state.status)) return;
+    if (!requestId && this.request.state.status !== "preparing") return;
     this.clearAcceptedTimer();
     this.clearInputIdleTimer();
     this.rejectAccepted?.(new Error("请求已取消"));
@@ -167,6 +168,10 @@ export class VoiceRequestControllerV2 {
     requestStoreActions.revokeCommit(true);
     if (this.request.state.status !== "cancelling") {
       requestStoreActions.transition("cancelling", reason);
+    }
+    if (!requestId) {
+      requestStoreActions.transition("cancelled", reason);
+      return;
     }
     try {
       realtimeConnectionController.sendControl(createRequestCancel(requestId, reason));

@@ -155,6 +155,11 @@ body {
   animation: recording-pulse 1.5s ease-in-out infinite;
 }
 
+.voice-overlay[data-attention="true"] .overlay-status-dot {
+  background: var(--warning);
+  animation: none;
+}
+
 .overlay-status time {
   margin-left: auto;
   color: var(--text-secondary);
@@ -2315,6 +2320,24 @@ h1 {
   font-size: 0.76rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.toast-action {
+  min-height: 27px;
+  padding: 4px 9px;
+  margin-top: 9px;
+  border: 1px solid color-mix(in srgb, var(--toast-color) 45%, var(--border));
+  border-radius: 5px;
+  color: var(--toast-color);
+  background: color-mix(in srgb, var(--toast-color) 9%, transparent);
+  box-shadow: none;
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.toast-action:hover {
+  background: color-mix(in srgb, var(--toast-color) 16%, transparent);
 }
 
 .toast-close {

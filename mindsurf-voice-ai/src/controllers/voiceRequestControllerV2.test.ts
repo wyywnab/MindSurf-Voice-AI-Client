@@ -91,6 +91,7 @@ const capabilities: Capabilities = {
 
 let controller: typeof import("./voiceRequestControllerV2").voiceRequestControllerV2;
 let capabilityActions: typeof import("../stores/capabilitiesStore").capabilitiesStoreActions;
+let requestActions: typeof import("../stores/requestStore").requestStoreActions;
 let requestState: ReturnType<
   typeof import("../stores/requestStore").useRequestStore
 >["state"];
@@ -100,7 +101,9 @@ beforeAll(async () => {
     await import("./voiceRequestControllerV2"));
   ({ capabilitiesStoreActions: capabilityActions } =
     await import("../stores/capabilitiesStore"));
-  requestState = (await import("../stores/requestStore")).useRequestStore().state;
+  const requestStore = await import("../stores/requestStore");
+  requestActions = requestStore.requestStoreActions;
+  requestState = requestStore.useRequestStore().state;
 });
 
 beforeEach(() => {
@@ -151,6 +154,16 @@ async function sendAndCommit(requestId: string) {
 }
 
 describe("VoiceRequestControllerV2", () => {
+  it("cancels local preparation when no server request exists", async () => {
+    requestActions.beginPreparation();
+
+    await controller.cancelCurrentRequest("user_cancelled");
+
+    expect(requestState.status).toBe("cancelled");
+    expect(requestState.activeRequestId).toBeNull();
+    expect(sentControls).toHaveLength(0);
+  });
+
   it("commits asr_only exactly once after final snapshot and matching done", async () => {
     const requestId = await accept("asr_only");
     await sendAndCommit(requestId);

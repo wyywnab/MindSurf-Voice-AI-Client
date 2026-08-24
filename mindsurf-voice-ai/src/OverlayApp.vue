@@ -154,7 +154,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="voice-overlay" :data-active="snapshot.cancellable">
+  <main
+    class="voice-overlay"
+    :data-active="snapshot.cancellable"
+    :data-attention="snapshot.status === '需要授权'"
+  >
     <div class="overlay-status">
       <span class="overlay-status-dot" aria-hidden="true"></span>
       <strong>{{ t(snapshot.status) }}</strong>

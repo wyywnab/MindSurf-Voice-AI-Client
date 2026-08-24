@@ -33,7 +33,7 @@ import { useRealtimeConnectionStore } from "./stores/realtimeConnectionStore";
 import { useRequestStore } from "./stores/requestStore";
 import { diagnosticsStoreActions } from "./stores/diagnosticsStore";
 import { useSettingsStore } from "./stores/settingsStore";
-import { toast } from "./services/toast";
+import { dismissToast, toast } from "./services/toast";
 import type { AppInfo } from "./types/app";
 import type { MainTab, MainTabId } from "./types/navigation";
 import type { SystemPermission } from "./types/permissions";
@@ -85,6 +85,8 @@ const visibleActiveTab = computed<MainTabId>(() =>
 );
 let trayDisposed = false;
 let unlistenTray: (() => void) | null = null;
+let cancellationToastId: number | null = null;
+let permissionToastId: number | null = null;
 
 watch(diagnosticsPageVisible, (visible) => {
   if (!visible && activeTab.value === "connection") {
@@ -117,7 +119,7 @@ watch(
         durationMs: 0,
       });
     } else if (status === "cancelled") {
-      toast.info("当前录音和语音请求已取消");
+      cancellationToastId = toast.info("当前录音和语音请求已取消");
     }
   },
 );
@@ -178,9 +180,30 @@ function navigateTo(page: MainTabId) {
 }
 
 function openPermissions(returnTab: "record" | "settings") {
+  if (permissionToastId !== null) {
+    dismissToast(permissionToastId);
+    permissionToastId = null;
+  }
   accountUsageOpen.value = false;
   permissionsReturnTab.value = returnTab;
   activeTab.value = "permissions";
+}
+
+function showPermissionGuidance() {
+  if (cancellationToastId !== null) {
+    dismissToast(cancellationToastId);
+    cancellationToastId = null;
+  }
+  if (permissionToastId !== null) dismissToast(permissionToastId);
+  permissionToastId = toast.warning(
+    "录音需要麦克风权限，自动注入还需要辅助功能权限。",
+    {
+      title: "尚未完成系统授权",
+      actionLabel: "去授权",
+      durationMs: 0,
+      onAction: () => openPermissions("record"),
+    },
+  );
 }
 
 function retryRealtimeConnection() {
@@ -540,6 +563,7 @@ onBeforeUnmount(() => {
       <RecorderPanel
         v-else-if="activeTab === 'record'"
         @open-permissions="openPermissions('record')"
+        @permission-required="showPermissionGuidance"
       />
       <ConnectionPanel
         v-else-if="diagnosticsPageVisible && activeTab === 'connection'"

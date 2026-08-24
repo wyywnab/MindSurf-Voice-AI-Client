@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import { dismissToast, useToasts, type ToastType } from "../services/toast";
+import {
+  activateToast,
+  dismissToast,
+  useToasts,
+  type ToastType,
+} from "../services/toast";
 
 const toasts = useToasts();
 const typeLabels: Record<ToastType, string> = {
@@ -41,6 +46,14 @@ const typeLabels: Record<ToastType, string> = {
           <div class="toast-content">
             <strong>{{ item.title || typeLabels[item.type] }}</strong>
             <p>{{ item.message }}</p>
+            <button
+              v-if="item.actionLabel"
+              class="toast-action"
+              type="button"
+              @click="activateToast(item.id)"
+            >
+              {{ item.actionLabel }}
+            </button>
           </div>
           <button
             class="toast-close"

@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { clearToasts, dismissToast, showToast, toast, useToasts } from "./toast";
+import {
+  activateToast,
+  clearToasts,
+  dismissToast,
+  showToast,
+  toast,
+  useToasts,
+} from "./toast";
 
 describe("toast service", () => {
   afterEach(() => {
@@ -30,6 +37,20 @@ describe("toast service", () => {
     vi.advanceTimersByTime(999);
     expect(useToasts().items).toHaveLength(1);
     vi.advanceTimersByTime(1);
+    expect(useToasts().items).toHaveLength(0);
+  });
+
+  it("runs a notification action and dismisses it", () => {
+    const onAction = vi.fn();
+    const id = toast.warning("需要授权", {
+      actionLabel: "去授权",
+      durationMs: 0,
+      onAction,
+    });
+
+    activateToast(id!);
+
+    expect(onAction).toHaveBeenCalledOnce();
     expect(useToasts().items).toHaveLength(0);
   });
 

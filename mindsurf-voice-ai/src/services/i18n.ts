@@ -69,6 +69,7 @@ const enUS: Record<string, string> = {
   "正在等待语音输入…": "Waiting for voice input…",
   检查中: "Checking",
   等待授权: "Awaiting permission",
+  需要授权: "Permission required",
   已授权: "Granted",
   已拒绝: "Denied",
   不支持: "Unsupported",
@@ -84,6 +85,8 @@ const enUS: Record<string, string> = {
   录音不可用: "Recording unavailable",
   "请切换到目标窗口，稍后开始注入…":
     "Switch to the target window; injection will begin shortly…",
+  "请回到主界面完成麦克风与辅助功能授权。":
+    "Return to the main window to grant Microphone and Accessibility permissions.",
   "正在向当前前台窗口注入文本…": "Injecting text into the current foreground window…",
   文本注入完成: "Text injection complete",
   部分文本未能注入: "Some text could not be injected",

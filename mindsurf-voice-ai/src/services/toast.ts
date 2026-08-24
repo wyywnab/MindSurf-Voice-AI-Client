@@ -7,6 +7,8 @@ export interface ToastOptions {
   type?: ToastType;
   title?: string;
   durationMs?: number;
+  actionLabel?: string;
+  onAction?: () => void;
 }
 
 export interface ToastItem {
@@ -15,6 +17,8 @@ export interface ToastItem {
   type: ToastType;
   title?: string;
   durationMs: number;
+  actionLabel?: string;
+  onAction?: () => void;
 }
 
 const DEFAULT_DURATION_MS = 4_000;
@@ -34,6 +38,8 @@ export function showToast(options: ToastOptions | string) {
     type: normalized.type ?? "info",
     title: normalized.title?.trim() || undefined,
     durationMs: Math.max(0, normalized.durationMs ?? DEFAULT_DURATION_MS),
+    actionLabel: normalized.actionLabel?.trim() || undefined,
+    onAction: normalized.onAction,
   };
   state.items.push(item);
 
@@ -47,6 +53,16 @@ export function showToast(options: ToastOptions | string) {
     );
   }
   return item.id;
+}
+
+export function activateToast(id: number) {
+  const item = state.items.find((candidate) => candidate.id === id);
+  if (!item?.onAction) return;
+  try {
+    item.onAction();
+  } finally {
+    dismissToast(id);
+  }
 }
 
 export function dismissToast(id: number) {

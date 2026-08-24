@@ -7,6 +7,12 @@ import {
 import type { OverlaySnapshot } from "../types/overlay";
 
 const METER_INTERVAL_MS = 67;
+const DEFAULT_MESSAGE_DURATION_MS = 2_000;
+
+interface TemporaryOverlayMessage {
+  status: string;
+  transcript: string;
+}
 
 export class OverlaySyncController {
   private disposed = false;
@@ -15,6 +21,7 @@ export class OverlaySyncController {
   private meterTimer: ReturnType<typeof setInterval> | null = null;
   private pending: OverlaySnapshot | null = null;
   private shown = false;
+  private temporaryMessage: TemporaryOverlayMessage | null = null;
   private unlisten: (() => void) | null = null;
 
   constructor(
@@ -45,16 +52,34 @@ export class OverlaySyncController {
 
   publish() {
     if (this.disposed) return;
-    this.pending = this.options.createSnapshot();
+    this.pending = {
+      ...this.options.createSnapshot(),
+      ...(this.temporaryMessage ?? {}),
+    };
     void this.flush();
   }
 
   async showBeforeShortcut() {
     if (!this.options.isEnabled()) return;
+    this.clearHideTimer();
+    this.temporaryMessage = null;
     this.shown = true;
     this.publish();
     await showOverlayWindow();
     await new Promise<void>((resolve) => setTimeout(resolve, 120));
+  }
+
+  async showTemporaryMessage(
+    message: TemporaryOverlayMessage,
+    durationMs = DEFAULT_MESSAGE_DURATION_MS,
+  ) {
+    if (!this.options.isEnabled()) return;
+    this.clearHideTimer();
+    this.temporaryMessage = message;
+    this.shown = true;
+    this.publish();
+    await showOverlayWindow();
+    this.hideTimer = setTimeout(() => this.hide(), durationMs);
   }
 
   syncVisibility(active: boolean) {
@@ -81,6 +106,7 @@ export class OverlaySyncController {
   dispose() {
     this.disposed = true;
     this.pending = null;
+    this.temporaryMessage = null;
     this.clearHideTimer();
     if (this.meterTimer) clearInterval(this.meterTimer);
     this.meterTimer = null;
@@ -107,6 +133,7 @@ export class OverlaySyncController {
 
   private hide() {
     this.clearHideTimer();
+    this.temporaryMessage = null;
     this.shown = false;
     void hideOverlayWindow();
   }

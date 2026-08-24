@@ -38,6 +38,7 @@ export class RecordingController {
       try {
         await voiceRequestControllerV2.textOutput.prepareTarget();
       } catch {
+        await this.recorder.cancelRecording();
         await voiceRequestControllerV2.cancelCurrentRequest("user_cancelled");
         return false;
       }

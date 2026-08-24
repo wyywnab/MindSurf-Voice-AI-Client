@@ -23,7 +23,7 @@ import { VOICE_MODE_LABELS } from "../types/voice";
 import AudioMeter from "./AudioMeter.vue";
 
 const { t } = useI18n();
-const emit = defineEmits<{ openPermissions: [] }>();
+const emit = defineEmits<{ openPermissions: []; permissionRequired: [] }>();
 
 const recorder = useRecorder();
 const recordingController = new RecordingController(recorder);
@@ -191,9 +191,21 @@ async function startNetworkRecording(
     await overlaySync.showBeforeShortcut();
   }
   if (attempt === recordingAttempt) {
-    await recordingController.startPushToTalk(
+    const started = await recordingController.startPushToTalk(
       () => attempt === recordingAttempt && shouldContinue(),
     );
+    if (!started && attempt === recordingAttempt) {
+      await refreshRequiredPermissions();
+      if (requiredPermissionsState.value !== "granted") {
+        if (fromGlobalShortcut) {
+          await overlaySync.showTemporaryMessage({
+            status: "需要授权",
+            transcript: "请回到主界面完成麦克风与辅助功能授权。",
+          });
+        }
+        emit("permissionRequired");
+      }
+    }
   }
 }
 
