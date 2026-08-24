@@ -112,14 +112,20 @@ export class AuthController {
   private async performAccountRefresh() {
     const { api, tokens } = this.requireConfigured();
     if (!tokens.hasUsableAccessToken()) {
-      authStoreActions.setStatus("restoring");
-      const restored = await tokens.refresh();
-      if (!restored) {
-        authStoreActions.setStatus("signed_out", "请先登录");
-        return;
+      try {
+        const restored = await tokens.refresh();
+        if (!restored) {
+          throw new ReauthenticationRequiredError("请先登录");
+        }
+      } catch (error) {
+        if (error instanceof ReauthenticationRequiredError) {
+          this.clearAccountState();
+          authStoreActions.setStatus("signed_out", error.message);
+        }
+        throw error;
       }
     }
-    await this.loadAccountData(api);
+    await this.loadAccountData(api, false);
   }
 
   async logout() {
@@ -327,8 +333,8 @@ export class AuthController {
     }
   }
 
-  private async loadAccountData(api: VoiceApiClient) {
-    authStoreActions.setStatus("loading_account");
+  private async loadAccountData(api: VoiceApiClient, authenticationTransition = true) {
+    if (authenticationTransition) authStoreActions.setStatus("loading_account");
     diagnosticsStoreActions.log(
       "info",
       "auth",
@@ -351,7 +357,7 @@ export class AuthController {
           "保存的请求模式已不可用，请确认新的模式选择",
         );
       }
-      authStoreActions.setStatus("authenticated");
+      if (authenticationTransition) authStoreActions.setStatus("authenticated");
       diagnosticsStoreActions.log(
         "info",
         "auth",
@@ -362,7 +368,7 @@ export class AuthController {
       const message = describeError(error);
       quotaStoreActions.setError(message);
       capabilitiesStoreActions.invalidate(message);
-      authStoreActions.setStatus("error", message);
+      if (authenticationTransition) authStoreActions.setStatus("error", message);
       throw error;
     }
   }

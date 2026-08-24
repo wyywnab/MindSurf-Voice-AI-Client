@@ -267,8 +267,14 @@ button:focus-visible {
   cursor: pointer;
 }
 
-.account-trigger:hover {
+.account-trigger:hover,
+.account-trigger.is-open {
   background: var(--surface-hover);
+}
+
+.account-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .user-avatar {
@@ -303,6 +309,11 @@ button:focus-visible {
 .account-chevron {
   color: var(--text-muted);
   font-size: 0.72rem;
+  transition: transform 140ms ease;
+}
+
+.account-trigger.is-open .account-chevron {
+  transform: rotate(180deg);
 }
 
 .account-menu {
@@ -311,36 +322,158 @@ button:focus-visible {
   top: calc(100% + 7px);
   left: 0;
   display: grid;
-  width: 220px;
-  gap: 5px;
-  padding: 12px;
+  width: min(286px, calc(100vw - 28px));
+  gap: 0;
+  padding: 8px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 12px;
   background: var(--surface);
-  box-shadow: 0 10px 30px rgb(0 0 0 / 16%);
-  font-size: 0.74rem;
+  box-shadow: 0 14px 38px rgb(0 0 0 / 18%);
+  animation: account-menu-enter 120ms ease-out;
 }
 
-.account-menu > span {
+.account-menu-profile {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px 9px;
+}
+
+.account-menu-profile-signed-out {
+  grid-template-columns: 36px minmax(0, 1fr);
+}
+
+.account-menu-avatar {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.account-menu-avatar svg,
+.account-menu-item > svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.account-menu-identity {
+  min-width: 0;
+}
+
+.account-menu-identity strong,
+.account-menu-identity small,
+.account-menu-copy strong,
+.account-menu-copy small {
+  display: block;
+}
+
+.account-menu-identity strong {
   overflow: hidden;
-  color: var(--text-secondary);
+  font-size: 0.78rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.account-menu button {
-  margin-top: 6px;
+.account-menu-identity small {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-plan {
+  max-width: 72px;
+  overflow: hidden;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  font-size: 0.6rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.account-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.account-menu-group {
+  display: grid;
+  gap: 2px;
+}
+
+.account-menu-item {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
   padding: 7px 9px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 0;
+  border-radius: 7px;
   color: var(--text);
-  background: var(--surface-muted);
+  background: transparent;
   cursor: pointer;
   text-align: left;
 }
 
-.account-menu button:hover:not(:disabled) {
+.account-menu-item:hover:not(:disabled),
+.account-menu-item:focus-visible {
   background: var(--surface-hover);
+}
+
+.account-menu-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.account-menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.account-menu-copy strong {
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.account-menu-copy small {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  font-weight: 400;
+}
+
+.account-menu-item-danger {
+  color: var(--danger);
+}
+
+.account-menu-item-danger:hover:not(:disabled),
+.account-menu-item-danger:focus-visible {
+  background: var(--danger-soft);
+}
+
+@keyframes account-menu-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
 }
 
 .login-panel {
@@ -1095,7 +1228,7 @@ h1 {
 
 .polish-prompt-editor-card textarea {
   width: 100%;
-  min-height: 220px;
+  min-height: 150px;
   resize: vertical;
   padding: 11px 12px;
   border: 1px solid var(--border-strong);
