@@ -24,6 +24,10 @@ const MAX_RECORDING_MS = 120_000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEARTBEAT_TIMEOUT_MS = 5_000;
 const INPUT_IDLE_TIMEOUT_MS = 10_000;
+const POLISH_PROMPT_MAX_CODE_POINTS = 4_000;
+const POLISH_PROMPT_MAX_UTF8_BYTES = 16_384;
+const DEFAULT_POLISH_PROMPT =
+  "请在保持原意的前提下，使文本更加通顺、简洁、自然。";
 const USER = Object.freeze({
   user_id: "019d643e-1550-761a-b7a0-471791bcaf01",
   display_name: "Local Mock User",
@@ -136,6 +140,11 @@ function createState(faults) {
     refreshTokens: new Map(),
     rotatedRefreshTokens: new Set(),
     idempotency: new Map(),
+    polishPrompt: {
+      custom: null,
+      defaultRevision: "polish-prompt-default-1",
+      defaultUpdatedAtMs: Date.now(),
+    },
     tickets: new Map(),
     usedRequestIds: new Set(),
     usage: [],
@@ -144,6 +153,7 @@ function createState(faults) {
     creditsReserved: 0,
     destroyedTokenResponse: false,
     destroyedRefreshResponse: false,
+    destroyedPolishPromptResponse: false,
   };
 }
 
@@ -168,6 +178,17 @@ async function handleHttpRequest(state, request, response) {
   }
   if (request.method === "GET" && url.pathname === "/v2/users/me") {
     return sendData(response, USER);
+  }
+  if (url.pathname === "/v2/users/me/polish-prompt") {
+    if (request.method === "GET") {
+      return getPolishPrompt(state, response);
+    }
+    if (request.method === "PUT") {
+      return setPolishPrompt(state, request, response);
+    }
+    if (request.method === "DELETE") {
+      return resetPolishPrompt(state, request, response);
+    }
   }
   if (request.method === "GET" && url.pathname === "/v2/quota") {
     return sendData(response, quotaFor(state));
@@ -565,6 +586,223 @@ function revokeSession(state, sessionId) {
   }
 }
 
+function getPolishPrompt(state, response) {
+  if (hasFault(state, "polish_prompt_unavailable")) {
+    sendHttpError(
+      response,
+      503,
+      "service_unavailable",
+      "Polish prompt storage is unavailable",
+      true,
+    );
+    return;
+  }
+  sendPolishPromptData(response, effectivePolishPrompt(state));
+}
+
+async function setPolishPrompt(state, request, response) {
+  const idempotencyKey = idempotencyHeader(request, response);
+  if (!idempotencyKey) return;
+  const body = await readJson(request, response);
+  if (!body) return;
+  if (
+    replayPolishPromptMutation(
+      state,
+      idempotencyKey,
+      "polish-prompt-put",
+      body,
+      response,
+    )
+  ) {
+    return;
+  }
+  if (hasFault(state, "polish_prompt_unavailable")) {
+    sendHttpError(
+      response,
+      503,
+      "service_unavailable",
+      "Polish prompt storage is unavailable",
+      true,
+    );
+    return;
+  }
+  if (!validPolishPromptInput(body)) {
+    sendHttpError(
+      response,
+      400,
+      "invalid_request",
+      "Polish prompt is invalid",
+      false,
+    );
+    return;
+  }
+  const ifMatch = requireIfMatch(request, response);
+  if (!ifMatch) return;
+  if (ifMatch !== polishPromptEtag(effectivePolishPrompt(state))) {
+    sendHttpError(
+      response,
+      412,
+      "polish_prompt_revision_conflict",
+      "Polish prompt revision is stale",
+      false,
+    );
+    return;
+  }
+  if (state.polishPrompt.custom?.prompt !== body.prompt) {
+    state.polishPrompt.custom = {
+      revision: `polish-prompt-${randomUUID()}`,
+      source: "custom",
+      prompt: body.prompt,
+      updated_at_ms: Date.now(),
+      constraints: polishPromptConstraints(),
+    };
+  }
+  commitPolishPromptMutation(
+    state,
+    idempotencyKey,
+    "polish-prompt-put",
+    body,
+    response,
+  );
+}
+
+function resetPolishPrompt(state, request, response) {
+  const idempotencyKey = idempotencyHeader(request, response);
+  if (!idempotencyKey) return;
+  if (
+    replayPolishPromptMutation(
+      state,
+      idempotencyKey,
+      "polish-prompt-delete",
+      null,
+      response,
+    )
+  ) {
+    return;
+  }
+  if (hasFault(state, "polish_prompt_unavailable")) {
+    sendHttpError(
+      response,
+      503,
+      "service_unavailable",
+      "Polish prompt storage is unavailable",
+      true,
+    );
+    return;
+  }
+  const ifMatch = requireIfMatch(request, response);
+  if (!ifMatch) return;
+  if (ifMatch !== polishPromptEtag(effectivePolishPrompt(state))) {
+    sendHttpError(
+      response,
+      412,
+      "polish_prompt_revision_conflict",
+      "Polish prompt revision is stale",
+      false,
+    );
+    return;
+  }
+  state.polishPrompt.custom = null;
+  commitPolishPromptMutation(
+    state,
+    idempotencyKey,
+    "polish-prompt-delete",
+    null,
+    response,
+  );
+}
+
+function effectivePolishPrompt(state) {
+  return (
+    state.polishPrompt.custom ?? {
+      revision: state.polishPrompt.defaultRevision,
+      source: "default",
+      prompt: DEFAULT_POLISH_PROMPT,
+      updated_at_ms: state.polishPrompt.defaultUpdatedAtMs,
+      constraints: polishPromptConstraints(),
+    }
+  );
+}
+
+function polishPromptConstraints() {
+  return {
+    max_code_points: POLISH_PROMPT_MAX_CODE_POINTS,
+    max_utf8_bytes: POLISH_PROMPT_MAX_UTF8_BYTES,
+  };
+}
+
+function polishPromptEtag(configuration) {
+  return JSON.stringify(configuration.revision);
+}
+
+function validPolishPromptInput(body) {
+  if (
+    Object.keys(body).length !== 1 ||
+    typeof body.prompt !== "string" ||
+    !body.prompt.trim() ||
+    body.prompt.includes("\u0000")
+  ) {
+    return false;
+  }
+  return (
+    [...body.prompt].length <= POLISH_PROMPT_MAX_CODE_POINTS &&
+    Buffer.byteLength(body.prompt, "utf8") <= POLISH_PROMPT_MAX_UTF8_BYTES
+  );
+}
+
+function requireIfMatch(request, response) {
+  const value = request.headers["if-match"];
+  if (typeof value !== "string" || !value) {
+    sendHttpError(
+      response,
+      428,
+      "precondition_required",
+      "If-Match is required",
+      false,
+    );
+    return null;
+  }
+  return value;
+}
+
+function replayPolishPromptMutation(state, key, operation, body, response) {
+  const entry = state.idempotency.get(key);
+  if (!entry) return false;
+  if (entry.operation !== operation || entry.body !== stableJson(body)) {
+    sendHttpError(
+      response,
+      409,
+      "idempotency_conflict",
+      "Idempotency key conflict",
+      false,
+    );
+  } else {
+    sendPolishPromptEnvelope(response, entry.envelope, entry.etag);
+  }
+  return true;
+}
+
+function commitPolishPromptMutation(state, key, operation, body, response) {
+  const configuration = structuredClone(effectivePolishPrompt(state));
+  const etag = polishPromptEtag(configuration);
+  const envelope = dataEnvelope(configuration);
+  state.idempotency.set(key, {
+    operation,
+    body: stableJson(body),
+    envelope,
+    etag,
+  });
+  if (
+    hasFault(state, "polish_prompt_response_uncertain") &&
+    !state.destroyedPolishPromptResponse
+  ) {
+    state.destroyedPolishPromptResponse = true;
+    response.destroy();
+    return;
+  }
+  sendPolishPromptEnvelope(response, envelope, etag);
+}
+
 function listUsage(state, url, response) {
   const fromMs = Number(url.searchParams.get("from_ms"));
   const toMs = Number(url.searchParams.get("to_ms"));
@@ -860,9 +1098,27 @@ function startRequest(serverState, state, socket, message) {
       zeroUsage(),
       validation.details,
     );
+  if (
+    message.payload.mode === "asr_llm" &&
+    hasFault(serverState, "polish_prompt_unavailable")
+  ) {
+    return sendRequestError(
+      socket,
+      message.request_id,
+      "upstream_unavailable",
+      "Polish prompt storage is unavailable",
+      "routing",
+      true,
+      zeroUsage(),
+    );
+  }
   const request = {
     id: message.request_id,
     options: structuredClone(message.payload),
+    polishPrompt:
+      message.payload.mode === "asr_llm"
+        ? structuredClone(effectivePolishPrompt(serverState))
+        : null,
     sequence: 0,
     sampleCount: 0,
     chunkCount: 0,
@@ -1090,7 +1346,10 @@ function completeTextRequest(serverState, state, socket, request, statistics) {
       true,
       usageFor(request, statistics, true),
     );
-  const chunks = ["这是", "经过 Mock LLM 处理的", "最终文本。"];
+  const chunks =
+    request.polishPrompt?.source === "custom"
+      ? ["这是", "应用账户自定义提示词后的 ", "Mock 最终文本。"]
+      : ["这是", "经过 Mock LLM 处理的", "最终文本。"];
   chunks.forEach((delta, sequence) =>
     sendControl(socket, "output.text.delta", request.id, {
       stage: "llm",
@@ -1598,7 +1857,27 @@ async function readJson(request, response) {
 }
 
 function sendData(response, data, status = 200) {
-  sendJson(response, status, { request_id: randomUUID(), data });
+  sendJson(response, status, dataEnvelope(data));
+}
+
+function dataEnvelope(data) {
+  return { request_id: randomUUID(), data };
+}
+
+function sendPolishPromptData(response, configuration) {
+  sendPolishPromptEnvelope(
+    response,
+    dataEnvelope(configuration),
+    polishPromptEtag(configuration),
+  );
+}
+
+function sendPolishPromptEnvelope(response, envelope, etag) {
+  sendJson(response, 200, envelope, {
+    "Cache-Control": "private, no-cache",
+    ETag: etag,
+    "Access-Control-Expose-Headers": "ETag",
+  });
 }
 
 function sendHttpError(response, status, code, message, retryable) {
@@ -1612,12 +1891,13 @@ function errorEnvelope(code, message, retryable) {
   };
 }
 
-function sendJson(response, status, body) {
+function sendJson(response, status, body, headers = {}) {
   const json = JSON.stringify(body);
   response.writeHead(status, {
     "Content-Type": "application/json",
     "Content-Length": Buffer.byteLength(json),
     "Cache-Control": "no-store",
+    ...headers,
   });
   response.end(json);
 }

@@ -69,6 +69,226 @@ test("serves PKCE auth, token rotation, account, quota, usage and capabilities",
   });
 });
 
+test("manages account polish prompt with ETag, idempotency and request snapshots", async () => {
+  await withMock(async ({ origin }) => {
+    const auth = await authenticate(origin);
+    const authorization = `Bearer ${auth.tokens.access_token}`;
+    const promptUrl = `${origin}/v2/users/me/polish-prompt`;
+
+    const initial = await fetch(promptUrl, {
+      headers: { Authorization: authorization },
+    });
+    assert.equal(initial.status, 200);
+    assert.equal(initial.headers.get("cache-control"), "private, no-cache");
+    const defaultEtag = initial.headers.get("etag");
+    assert.match(defaultEtag, /^".+"$/);
+    const initialEnvelope = await initial.json();
+    assert.equal(initialEnvelope.data.source, "default");
+    assert.equal(initialEnvelope.data.constraints.max_code_points, 4_000);
+    assert.equal(initialEnvelope.data.constraints.max_utf8_bytes, 16_384);
+
+    const withoutPrecondition = await fetch(promptUrl, {
+      method: "PUT",
+      headers: {
+        Authorization: authorization,
+        "Content-Type": "application/json",
+        "Idempotency-Key": randomUUID(),
+      },
+      body: JSON.stringify({ prompt: "缺少版本条件" }),
+    });
+    assert.equal(withoutPrecondition.status, 428);
+    assert.equal(
+      (await withoutPrecondition.json()).error.code,
+      "precondition_required",
+    );
+
+    const secretPrompt = "SECRET_PROMPT_仅修正语病，不改变语气。";
+    const putKey = randomUUID();
+    const putHeaders = {
+      Authorization: authorization,
+      "Content-Type": "application/json",
+      "Idempotency-Key": putKey,
+      "If-Match": defaultEtag,
+    };
+    const firstPut = await fetch(promptUrl, {
+      method: "PUT",
+      headers: putHeaders,
+      body: JSON.stringify({ prompt: secretPrompt }),
+    });
+    assert.equal(firstPut.status, 200);
+    const customEtag = firstPut.headers.get("etag");
+    assert.notEqual(customEtag, defaultEtag);
+    const customEnvelope = await firstPut.json();
+    assert.equal(customEnvelope.data.source, "custom");
+    assert.equal(customEnvelope.data.prompt, secretPrompt);
+
+    const replay = await fetch(promptUrl, {
+      method: "PUT",
+      headers: putHeaders,
+      body: JSON.stringify({ prompt: secretPrompt }),
+    });
+    assert.equal(replay.status, 200);
+    assert.equal(replay.headers.get("etag"), customEtag);
+    assert.deepEqual(await replay.json(), customEnvelope);
+
+    const idempotencyConflict = await fetch(promptUrl, {
+      method: "PUT",
+      headers: { ...putHeaders, "If-Match": customEtag },
+      body: JSON.stringify({ prompt: "复用了错误的幂等键" }),
+    });
+    assert.equal(idempotencyConflict.status, 409);
+    assert.equal(
+      (await idempotencyConflict.json()).error.code,
+      "idempotency_conflict",
+    );
+
+    const stale = await fetch(promptUrl, {
+      method: "PUT",
+      headers: {
+        Authorization: authorization,
+        "Content-Type": "application/json",
+        "Idempotency-Key": randomUUID(),
+        "If-Match": defaultEtag,
+      },
+      body: JSON.stringify({ prompt: "尝试覆盖新版本" }),
+    });
+    assert.equal(stale.status, 412);
+    const staleText = await stale.text();
+    assert.match(staleText, /polish_prompt_revision_conflict/);
+    assert.doesNotMatch(staleText, /SECRET_PROMPT/);
+
+    const connection = await connect(origin, auth.tokens.access_token);
+    try {
+      const requestId = randomUUID();
+      connection.sendControl(
+        "request.start",
+        requestId,
+        requestPayload("asr_llm"),
+      );
+      const accepted = await connection.next(
+        (message) =>
+          message.request_id === requestId &&
+          message.type === "request.accepted",
+      );
+      assert.doesNotMatch(JSON.stringify(accepted), /SECRET_PROMPT/);
+
+      const deleteKey = randomUUID();
+      const reset = await fetch(promptUrl, {
+        method: "DELETE",
+        headers: {
+          Authorization: authorization,
+          "Idempotency-Key": deleteKey,
+          "If-Match": customEtag,
+        },
+      });
+      assert.equal(reset.status, 200);
+      assert.equal((await reset.clone().json()).data.source, "default");
+      const resetEnvelope = await reset.json();
+      const resetEtag = reset.headers.get("etag");
+
+      const resetReplay = await fetch(promptUrl, {
+        method: "DELETE",
+        headers: {
+          Authorization: authorization,
+          "Idempotency-Key": deleteKey,
+          "If-Match": customEtag,
+        },
+      });
+      assert.equal(resetReplay.headers.get("etag"), resetEtag);
+      assert.deepEqual(await resetReplay.json(), resetEnvelope);
+
+      const snapshotted = await completeAcceptedRequest(connection, requestId);
+      assert.equal(
+        snapshotted.done.payload.final_text,
+        "这是应用账户自定义提示词后的 Mock 最终文本。",
+      );
+      assert.doesNotMatch(
+        JSON.stringify(snapshotted.messages),
+        /SECRET_PROMPT/,
+      );
+
+      const afterReset = await runRequest(connection, "asr_llm");
+      assert.equal(
+        afterReset.done.payload.final_text,
+        "这是经过 Mock LLM 处理的最终文本。",
+      );
+    } finally {
+      connection.close();
+    }
+  });
+});
+
+test("exposes polish prompt unavailable and uncertain response fault paths", async () => {
+  await withMock(
+    async ({ origin }) => {
+      const auth = await authenticate(origin);
+      const accessToken = auth.tokens.access_token;
+      const unavailable = await fetch(`${origin}/v2/users/me/polish-prompt`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      assert.equal(unavailable.status, 503);
+      assert.equal(
+        (await unavailable.json()).error.code,
+        "service_unavailable",
+      );
+
+      const connection = await connect(origin, accessToken);
+      try {
+        const requestId = randomUUID();
+        connection.sendControl(
+          "request.start",
+          requestId,
+          requestPayload("asr_llm"),
+        );
+        const error = await connection.next(
+          (message) => message.request_id === requestId,
+        );
+        assert.equal(error.type, "error");
+        assert.equal(error.payload.code, "upstream_unavailable");
+        assert.equal(error.payload.terminal, true);
+
+        const asrOnly = await runRequest(connection, "asr_only");
+        assert.equal(asrOnly.done.payload.result, "success");
+      } finally {
+        connection.close();
+      }
+    },
+    ["polish_prompt_unavailable"],
+  );
+
+  await withMock(
+    async ({ origin }) => {
+      const auth = await authenticate(origin);
+      const promptUrl = `${origin}/v2/users/me/polish-prompt`;
+      const authorization = `Bearer ${auth.tokens.access_token}`;
+      const current = await fetch(promptUrl, {
+        headers: { Authorization: authorization },
+      });
+      const etag = current.headers.get("etag");
+      const key = randomUUID();
+      const options = {
+        method: "PUT",
+        headers: {
+          Authorization: authorization,
+          "Content-Type": "application/json",
+          "Idempotency-Key": key,
+          "If-Match": etag,
+        },
+        body: JSON.stringify({ prompt: "响应中断后应能安全恢复" }),
+      };
+      await assert.rejects(() => fetch(promptUrl, options));
+
+      const recovered = await fetch(promptUrl, options);
+      assert.equal(recovered.status, 200);
+      assert.equal(
+        (await recovered.json()).data.prompt,
+        "响应中断后应能安全恢复",
+      );
+    },
+    ["polish_prompt_response_uncertain"],
+  );
+});
+
 test("runs 100 requests including both modes over one long-lived connection", async () => {
   await withMock(async ({ origin }) => {
     const auth = await authenticate(origin);
@@ -385,6 +605,28 @@ async function runRequest(connection, mode) {
     ),
     done: messages.at(-1),
   };
+}
+
+async function completeAcceptedRequest(connection, requestId) {
+  connection.socket.send(createAudioFrame(requestId));
+  connection.sendControl("input.commit", requestId, {
+    last_sequence: 0,
+    chunk_count: 1,
+    sample_count: 320,
+    duration_ms: 20,
+  });
+  const messages = [];
+  while (true) {
+    const message = await connection.next(
+      (candidate) => candidate.request_id === requestId,
+    );
+    messages.push(message);
+    if (message.type === "request.done") break;
+    if (message.type === "error" || message.type === "request.cancelled") {
+      throw new Error(`Unexpected request terminal: ${message.type}`);
+    }
+  }
+  return { messages, done: messages.at(-1) };
 }
 
 function requestPayload(mode) {

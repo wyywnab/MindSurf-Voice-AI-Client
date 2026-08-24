@@ -76,6 +76,7 @@ open "src-tauri/target/debug/bundle/macos/MindSurf Voice AI.app"
 
 - `/v2/auth/*`：PKCE 授权、token 交换、轮换和登出；
 - `/v2/users/me`、`/v2/quota`、`/v2/usage`、`/v2/capabilities`；
+- `/v2/users/me/polish-prompt`：账户级润色提示词读取、更新和恢复默认；
 - `/v2/realtime/tickets`：一次性 realtime ticket；
 - `/v2/voice/ws`：`mindsurf.voice.v2` 长连接、心跳和单轮请求；
 - `asr_only` 与 `asr_llm` 两种模式；

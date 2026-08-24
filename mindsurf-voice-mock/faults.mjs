@@ -3,6 +3,8 @@ export const MOCK_FAULTS = Object.freeze([
   "token_response_uncertain",
   "refresh_response_uncertain",
   "refresh_token_reused",
+  "polish_prompt_unavailable",
+  "polish_prompt_response_uncertain",
   "capabilities_stale",
   "ticket_expired",
   "ticket_consumed",
