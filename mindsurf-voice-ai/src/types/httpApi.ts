@@ -40,6 +40,24 @@ export interface VoiceUser {
   created_at_ms: number;
 }
 
+export interface PolishPromptConstraints {
+  max_code_points: number;
+  max_utf8_bytes: number;
+}
+
+export interface PolishPromptConfiguration {
+  revision: string;
+  source: "default" | "custom";
+  prompt: string;
+  updated_at_ms: number;
+  constraints: PolishPromptConstraints;
+}
+
+export interface PolishPromptResource {
+  configuration: PolishPromptConfiguration;
+  etag: string;
+}
+
 export interface ResourceUsage {
   input_audio_ms: number;
   llm_input_tokens: number;

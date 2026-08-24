@@ -4,6 +4,7 @@ import type {
   GenerationControl,
   NamedOption,
   PipelineCapability,
+  PolishPromptConfiguration,
   Quota,
   ResourceUsage,
   RealtimeTicket,
@@ -59,6 +60,56 @@ export function parseUser(value: unknown): VoiceUser {
     status: item.status,
     plan: nonEmpty(item.plan, "user.plan"),
     created_at_ms: nonNegativeInteger(item.created_at_ms, "user.created_at_ms"),
+  };
+}
+
+export function parsePolishPrompt(value: unknown): PolishPromptConfiguration {
+  const item = record(value, "polish prompt");
+  exactKeys(
+    item,
+    ["revision", "source", "prompt", "updated_at_ms", "constraints"],
+    "polish prompt",
+  );
+  if (item.source !== "default" && item.source !== "custom") {
+    invalid("polish prompt.source");
+  }
+  const constraints = record(item.constraints, "polish prompt.constraints");
+  exactKeys(
+    constraints,
+    ["max_code_points", "max_utf8_bytes"],
+    "polish prompt.constraints",
+  );
+  const maxCodePoints = positiveInteger(
+    constraints.max_code_points,
+    "polish prompt.constraints.max_code_points",
+  );
+  const maxUtf8Bytes = positiveInteger(
+    constraints.max_utf8_bytes,
+    "polish prompt.constraints.max_utf8_bytes",
+  );
+  const prompt = nonEmpty(item.prompt, "polish prompt.prompt");
+  if (
+    maxCodePoints !== 4000 ||
+    maxUtf8Bytes !== 16384 ||
+    !prompt.trim() ||
+    [...prompt].length > maxCodePoints ||
+    new globalThis.TextEncoder().encode(prompt).byteLength > maxUtf8Bytes ||
+    prompt.includes("\u0000")
+  ) {
+    invalid("polish prompt.prompt");
+  }
+  return {
+    revision: nonEmpty(item.revision, "polish prompt.revision"),
+    source: item.source,
+    prompt,
+    updated_at_ms: nonNegativeInteger(
+      item.updated_at_ms,
+      "polish prompt.updated_at_ms",
+    ),
+    constraints: {
+      max_code_points: maxCodePoints,
+      max_utf8_bytes: maxUtf8Bytes,
+    },
   };
 }
 

@@ -2,6 +2,7 @@ import type {
   ApiErrorPayload,
   AuthorizationCodeInput,
   Capabilities,
+  PolishPromptResource,
   Quota,
   UsageEntry,
   VoiceUser,
@@ -13,6 +14,7 @@ import {
   InvalidApiResponseError,
   parseAuthData,
   parseCapabilities,
+  parsePolishPrompt,
   parseQuota,
   parseRealtimeTicket,
   parseUsageList,
@@ -44,6 +46,13 @@ export class VoiceApiNetworkError extends Error {
     super(message);
     this.name = "VoiceApiNetworkError";
     (this as Error & { cause?: unknown }).cause = cause;
+  }
+}
+
+export class VoiceApiExtensionUnsupportedError extends Error {
+  constructor(readonly extension: "polish-prompt") {
+    super("当前服务端不支持润色提示词管理");
+    this.name = "VoiceApiExtensionUnsupportedError";
   }
 }
 
@@ -109,6 +118,29 @@ export class VoiceApiClient {
 
   async getCurrentUser(): Promise<VoiceUser> {
     return this.request("/v2/users/me", { method: "GET", protected: true }, parseUser);
+  }
+
+  async getPolishPrompt(): Promise<PolishPromptResource> {
+    return this.requestPolishPrompt("GET");
+  }
+
+  async setPolishPrompt(
+    prompt: string,
+    etag: string,
+    idempotencyKey: string,
+  ): Promise<PolishPromptResource> {
+    return this.requestPolishPrompt("PUT", {
+      body: { prompt },
+      etag,
+      idempotencyKey,
+    });
+  }
+
+  async resetPolishPrompt(
+    etag: string,
+    idempotencyKey: string,
+  ): Promise<PolishPromptResource> {
+    return this.requestPolishPrompt("DELETE", { etag, idempotencyKey });
   }
 
   async getQuota(): Promise<Quota> {
@@ -181,8 +213,8 @@ export class VoiceApiClient {
     options: RequestOptions,
     parse: (data: unknown) => T,
   ) {
-    const value = await this.rawRequest(url, options);
-    const envelope = asRecord(value);
+    const result = await this.rawRequest(url, options);
+    const envelope = asRecord(result.payload);
     if (
       Object.keys(envelope).length !== 2 ||
       typeof envelope.request_id !== "string" ||
@@ -194,13 +226,42 @@ export class VoiceApiClient {
     return parse(envelope.data);
   }
 
+  private async requestPolishPrompt(
+    method: "GET" | "PUT" | "DELETE",
+    mutation?: { body?: unknown; etag: string; idempotencyKey: string },
+  ): Promise<PolishPromptResource> {
+    const result = await this.rawRequest("/v2/users/me/polish-prompt", {
+      method,
+      protected: true,
+      body: mutation?.body,
+      idempotencyKey: mutation?.idempotencyKey,
+      ifMatch: mutation?.etag,
+      unsupportedExtension: "polish-prompt",
+    });
+    const envelope = asRecord(result.payload);
+    if (
+      Object.keys(envelope).length !== 2 ||
+      typeof envelope.request_id !== "string" ||
+      !isUuid(envelope.request_id) ||
+      !("data" in envelope)
+    ) {
+      throw new InvalidApiResponseError("润色提示词响应信封无效");
+    }
+    const etag = result.headers.get("ETag");
+    if (!etag || etag.length < 3 || !etag.startsWith('"') || !etag.endsWith('"')) {
+      throw new InvalidApiResponseError("润色提示词响应缺少有效的强 ETag");
+    }
+    return { configuration: parsePolishPrompt(envelope.data), etag };
+  }
+
   private async rawRequest(
     path: string | URL,
     options: RequestOptions,
-  ): Promise<unknown> {
+  ): Promise<{ payload: unknown; headers: Headers }> {
     const headers = new Headers({ Accept: "application/json" });
     if (options.body !== undefined) headers.set("Content-Type", "application/json");
     if (options.idempotencyKey) headers.set("Idempotency-Key", options.idempotencyKey);
+    if (options.ifMatch) headers.set("If-Match", options.ifMatch);
     if (options.protected) {
       const token = this.accessToken();
       if (!token)
@@ -234,7 +295,12 @@ export class VoiceApiClient {
     } finally {
       globalThis.clearTimeout(timeout);
     }
-    if (options.expectEmpty && response.status === 204) return undefined;
+    if (response.status === 404 && options.unsupportedExtension) {
+      throw new VoiceApiExtensionUnsupportedError(options.unsupportedExtension);
+    }
+    if (options.expectEmpty && response.status === 204) {
+      return { payload: undefined, headers: response.headers };
+    }
     let payload: unknown;
     try {
       payload = await response.json();
@@ -242,7 +308,7 @@ export class VoiceApiClient {
       throw new InvalidApiResponseError("服务返回了无法解析的响应");
     }
     if (!response.ok) throw parseApiError(response.status, payload);
-    return payload;
+    return { payload, headers: response.headers };
   }
 }
 
@@ -257,10 +323,12 @@ function describeNetworkFailure(error: unknown) {
 }
 
 interface RequestOptions {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT" | "DELETE";
   protected: boolean;
   body?: unknown;
   idempotencyKey?: string;
+  ifMatch?: string;
+  unsupportedExtension?: "polish-prompt";
   expectEmpty?: boolean;
 }
 
@@ -302,6 +370,9 @@ function safeErrorMessage(code: string) {
     authorization_grant_invalid: "授权已失效，请重新登录",
     idempotency_conflict: "请求恢复信息冲突，请重新登录",
     idempotency_result_expired: "无法恢复登录结果，请重新登录",
+    invalid_request: "请求内容无效，请检查后重试",
+    polish_prompt_revision_conflict: "账户提示词已在其他设备更新",
+    precondition_required: "提示词版本信息缺失，请刷新后重试",
     rate_limit_exceeded: "操作过于频繁，请稍后重试",
     refresh_token_reused: "检测到登录凭据重放，请重新登录",
     service_unavailable: "服务暂时不可用，请稍后重试",

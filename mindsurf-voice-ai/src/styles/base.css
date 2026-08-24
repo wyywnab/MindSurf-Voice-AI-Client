@@ -938,7 +938,8 @@ h1 {
   grid-template-areas:
     "connection interface"
     "recording request"
-    "developer permissions";
+    "account permissions"
+    "developer developer";
   gap: 10px;
 }
 
@@ -960,6 +961,10 @@ h1 {
 
 .settings-card-developer {
   grid-area: developer;
+}
+
+.settings-card-account {
+  grid-area: account;
 }
 
 .settings-card-permissions {
@@ -1020,6 +1025,154 @@ h1 {
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
+}
+
+.polish-prompt-heading-actions,
+.polish-prompt-actions,
+.polish-prompt-conflict > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.polish-prompt-body {
+  padding-bottom: 32px;
+}
+
+.polish-prompt-editor-card,
+.polish-prompt-state {
+  width: min(760px, 100%);
+  margin-inline: auto;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.polish-prompt-state {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  color: var(--text-secondary);
+}
+
+.polish-prompt-state p {
+  margin: 0;
+  font-size: 0.76rem;
+}
+
+.polish-prompt-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.polish-prompt-source {
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  font-weight: 600;
+}
+
+.polish-prompt-source[data-source="custom"] {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.polish-prompt-editor-card > label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.polish-prompt-editor-card textarea {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  padding: 11px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.polish-prompt-editor-card textarea:focus {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent-soft);
+}
+
+.polish-prompt-counts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin: 6px 0 12px;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+}
+
+.polish-prompt-counts.has-error {
+  color: var(--danger);
+}
+
+.polish-prompt-conflict {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--warning);
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  font-size: 0.72rem;
+}
+
+.polish-prompt-conflict p {
+  margin: 5px 0 10px;
+  line-height: 1.5;
+}
+
+.polish-prompt-remote-preview {
+  display: block !important;
+  margin-bottom: 12px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.polish-prompt-remote-preview span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+}
+
+.polish-prompt-remote-preview pre {
+  max-height: 120px;
+  margin: 0;
+  overflow: auto;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.polish-prompt-actions {
+  margin-top: 16px;
+}
+
+.polish-prompt-actions .button-danger {
+  margin-left: auto;
 }
 
 .history-panel {
@@ -2088,6 +2241,7 @@ h1 {
       "interface"
       "recording"
       "request"
+      "account"
       "developer"
       "permissions";
   }

@@ -6,6 +6,7 @@ import ConnectionPanel from "./components/ConnectionPanel.vue";
 import HistoryPanel from "./components/HistoryPanel.vue";
 import LoginPanel from "./components/LoginPanel.vue";
 import PermissionsPanel from "./components/PermissionsPanel.vue";
+import PolishPromptPanel from "./components/PolishPromptPanel.vue";
 import RecorderPanel from "./components/RecorderPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import UsagePanel from "./components/UsagePanel.vue";
@@ -45,6 +46,7 @@ const appInfoError = ref("");
 const auth = useAuthStore();
 const account = useAccountStore();
 const accountMenuOpen = ref(false);
+const accountPromptOpen = ref(false);
 const accountUsageOpen = ref(false);
 const permissionsReturnTab = ref<"record" | "settings">("settings");
 const realtimeConnection = useRealtimeConnectionStore();
@@ -166,6 +168,7 @@ watch(
 function navigateTo(page: MainTabId) {
   if (page === "connection" && !diagnosticsPageVisible.value) return;
   accountUsageOpen.value = false;
+  accountPromptOpen.value = false;
   activeTab.value = page;
 }
 
@@ -183,6 +186,7 @@ function retryRealtimeConnection() {
 async function logout() {
   accountMenuOpen.value = false;
   accountUsageOpen.value = false;
+  accountPromptOpen.value = false;
   activeTab.value = "record";
   await authController.logout();
 }
@@ -323,10 +327,22 @@ onBeforeUnmount(() => {
               role="menuitem"
               @click="
                 accountMenuOpen = false;
+                accountPromptOpen = false;
                 accountUsageOpen = true;
               "
             >
               用量与额度
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              @click="
+                accountMenuOpen = false;
+                accountUsageOpen = false;
+                accountPromptOpen = true;
+              "
+            >
+              润色提示词
             </button>
             <button
               type="button"
@@ -371,6 +387,10 @@ onBeforeUnmount(() => {
         v-if="accountUsageOpen && account.state.user"
         @close="accountUsageOpen = false"
       />
+      <PolishPromptPanel
+        v-else-if="accountPromptOpen && account.state.user"
+        @close="accountPromptOpen = false"
+      />
       <LoginPanel v-else-if="activeTab === 'record' && !account.state.user" />
       <RecorderPanel
         v-else-if="activeTab === 'record'"
@@ -390,6 +410,10 @@ onBeforeUnmount(() => {
         :app-info="appInfo"
         :app-info-error="appInfoError"
         @open-permissions="openPermissions('settings')"
+        @open-polish-prompt="
+          accountUsageOpen = false;
+          accountPromptOpen = true;
+        "
       />
     </main>
 

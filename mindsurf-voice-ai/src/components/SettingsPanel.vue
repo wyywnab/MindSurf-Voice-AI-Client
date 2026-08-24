@@ -17,6 +17,7 @@ import {
   useCapabilitiesStore,
 } from "../stores/capabilitiesStore";
 import { useRequestStore } from "../stores/requestStore";
+import { useAccountStore } from "../stores/accountStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import type { AppInfo } from "../types/app";
 import type { VoiceModeV2 } from "../types/httpApi";
@@ -24,9 +25,10 @@ import type { InterfaceTheme } from "../types/settings";
 import { VOICE_MODE_LABELS, type OverlayPosition } from "../types/voice";
 
 const props = defineProps<{ appInfo: AppInfo | null; appInfoError: string }>();
-const emit = defineEmits<{ openPermissions: [] }>();
+const emit = defineEmits<{ openPermissions: []; openPolishPrompt: [] }>();
 const { t } = useI18n();
 const capabilities = useCapabilitiesStore().state;
+const account = useAccountStore().state;
 const request = useRequestStore().state;
 const settings = useSettingsStore().state;
 const shortcutStatus = ref<"idle" | "recording" | "saving">("idle");
@@ -436,6 +438,25 @@ onBeforeUnmount(() => {
           @click="emit('openPermissions')"
         >
           {{ t("管理系统权限") }}
+        </button>
+      </article>
+
+      <article class="settings-card settings-card-account">
+        <h2>{{ t("账户配置") }}</h2>
+        <p class="settings-hint">
+          {{
+            account.user
+              ? "润色提示词保存在账户中，并在登录同一账户的所有设备间共享。"
+              : "登录后可管理在所有设备间共享的润色提示词。"
+          }}
+        </p>
+        <button
+          class="button button-secondary"
+          type="button"
+          :disabled="!account.user"
+          @click="emit('openPolishPrompt')"
+        >
+          管理润色提示词
         </button>
       </article>
 
