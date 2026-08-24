@@ -26,6 +26,8 @@ paths:
           $ref: '../../v2/openapi/openapi.yaml#/components/responses/Unauthorized'
         '403':
           $ref: '../../v2/openapi/openapi.yaml#/components/responses/AccountSuspended'
+        '404':
+          $ref: '#/components/responses/ExtensionNotSupported'
         '429':
           $ref: '../../v2/openapi/openapi.yaml#/components/responses/RateLimited'
         '500':
@@ -107,6 +109,11 @@ components:
         type: string
         minLength: 3
   responses:
+    ExtensionNotSupported:
+      description: >-
+        当前服务端未实现 Polish Prompt Extension。该响应仅用于兼容旧版服务端；符合本扩展的
+        服务端不得因为用户没有自定义值而返回 404。响应正文格式不作约束，客户端不得尝试按
+        Core v2 ErrorResponse 解析。
     PolishPromptSuccess:
       description: 当前有效的润色提示词配置
       headers:
